@@ -189,22 +189,30 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
 
     const queryClient = useQueryClient();
 
-    // Apply a conflict resolution by mutating the editor and bookkeeping refs.
-    // - "local": no-op; the existing onUpdate debounce will persist local edits.
-    // - "external"/"merged": cancel any pending local save, replace content
-    //   with `emitUpdate: false` (so we don't re-fire onUpdate), and update
-    //   `lastEmittedRef` so the next typed character is detected as dirty.
-    //   "merged" additionally emits onUpdate so the merged version is saved.
+    // Apply a conflict resolution by mutating the editor and explicitly
+    // emitting onUpdate when the chosen content needs to land on the server.
+    //
+    // The caller MUST cancel any pending onUpdate debounce before invoking
+    // this function — once we're on the conflict path, the only writes to
+    // the server come from here, not from the debounce.
+    //
+    // - "local":   editor already holds the user's text; emit it explicitly
+    //              so the server receives the local version.
+    // - "external": setContent to the external snapshot; no emit needed —
+    //              the server already has external (that's where it came
+    //              from); we just sync the editor view.
+    // - "merged":  setContent to the merged content + emit so the server
+    //              stores the merged version.
     function applyResolution(
       ed: Editor,
       r: ContentEditorResolution,
       externalSnapshot: string,
+      localSnapshot: string,
     ) {
-      if (r.type === "local") return;
-
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-        debounceRef.current = undefined;
+      if (r.type === "local") {
+        lastEmittedRef.current = localSnapshot;
+        onUpdateRef.current?.(localSnapshot);
+        return;
       }
 
       const newContent =
@@ -227,6 +235,13 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     //   local === baseline    → user didn't type; apply external silently.
     //   local === external    → user happened to converge on external; no-op.
     //   otherwise             → real conflict; defer to onExternalConflict.
+    //
+    // When we reach the resolver path we MUST cancel the pending onUpdate
+    // debounce before awaiting, otherwise the dialog dwell would let the
+    // debounce timer fire and push the user's local content to the server —
+    // a later "external"/"merged" resolution would then silently lose the
+    // server-side conflict choice (the editor would update locally but the
+    // server would keep the prematurely-saved local version).
     async function handleBlurConflict(ed: Editor) {
       const baseline = focusBaselineRef.current;
       focusBaselineRef.current = null;
@@ -239,15 +254,21 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
 
       if (external === baseline) return;
       if (local === baseline) {
-        applyResolution(ed, { type: "external" }, external);
+        applyResolution(ed, { type: "external" }, external, local);
         return;
       }
       if (local === external) return;
 
       const resolver = onExternalConflictRef.current;
       if (!resolver) return;
+
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = undefined;
+      }
+
       const resolution = await resolver({ local, external, baseline });
-      applyResolution(ed, resolution, external);
+      applyResolution(ed, resolution, external, local);
     }
 
     const editor = useEditor({

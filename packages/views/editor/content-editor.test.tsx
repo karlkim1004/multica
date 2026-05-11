@@ -35,6 +35,7 @@ const onCreateFired = vi.hoisted(() => ({ value: false }));
 const capturedHandlers = vi.hoisted<{
   onFocus?: (args: { editor: unknown }) => void;
   onBlur?: (args: { editor: unknown }) => void;
+  onUpdate?: (args: { editor: unknown }) => void;
 }>(() => ({}));
 
 vi.mock("@tiptap/react", () => ({
@@ -42,6 +43,7 @@ vi.mock("@tiptap/react", () => ({
     onCreate?: (args: { editor: unknown }) => void;
     onFocus?: (args: { editor: unknown }) => void;
     onBlur?: (args: { editor: unknown }) => void;
+    onUpdate?: (args: { editor: unknown }) => void;
   }) => {
     if (!editorRef.current) {
       editorRef.current = {
@@ -66,6 +68,7 @@ vi.mock("@tiptap/react", () => ({
     }
     capturedHandlers.onFocus = options?.onFocus;
     capturedHandlers.onBlur = options?.onBlur;
+    capturedHandlers.onUpdate = options?.onUpdate;
     if (!onCreateFired.value) {
       onCreateFired.value = true;
       options?.onCreate?.({ editor: editorRef.current });
@@ -87,6 +90,10 @@ function fireBlur() {
   capturedHandlers.onBlur?.({ editor: editorRef.current });
 }
 
+function fireOnUpdate() {
+  capturedHandlers.onUpdate?.({ editor: editorRef.current });
+}
+
 import { ContentEditor } from "./content-editor";
 
 describe("ContentEditor", () => {
@@ -99,6 +106,7 @@ describe("ContentEditor", () => {
     onCreateFired.value = false;
     capturedHandlers.onFocus = undefined;
     capturedHandlers.onBlur = undefined;
+    capturedHandlers.onUpdate = undefined;
   });
 
   it("focuses the editor when clicking the empty container area", () => {
@@ -248,7 +256,8 @@ describe("ContentEditor", () => {
     });
   });
 
-  it("resolution=local: leaves editor content and does not call setContent", async () => {
+  it("resolution=local: leaves editor content alone but emits local via onUpdate", async () => {
+    const onUpdate = vi.fn();
     const onExternalConflict = vi
       .fn()
       .mockResolvedValue({ type: "local" });
@@ -257,7 +266,7 @@ describe("ContentEditor", () => {
     const { rerender } = render(
       <ContentEditor
         defaultValue="baseline"
-        onUpdate={() => {}}
+        onUpdate={onUpdate}
         onExternalConflict={onExternalConflict}
       />,
     );
@@ -267,7 +276,7 @@ describe("ContentEditor", () => {
     rerender(
       <ContentEditor
         defaultValue="external"
-        onUpdate={() => {}}
+        onUpdate={onUpdate}
         onExternalConflict={onExternalConflict}
       />,
     );
@@ -278,6 +287,85 @@ describe("ContentEditor", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(mockSetContent).not.toHaveBeenCalled();
+    // Debounce is cancelled when we enter the conflict path, so the existing
+    // onUpdate-via-debounce never fires; the resolver branch must emit
+    // local explicitly so the server gets it.
+    expect(onUpdate).toHaveBeenCalledWith("user typed");
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let the pending debounce fire while the conflict resolver is awaiting", async () => {
+    vi.useFakeTimers();
+    try {
+      const onUpdate = vi.fn();
+      let resolveConflict!: (r: { type: string; content?: string }) => void;
+      const onExternalConflict = vi.fn(
+        () =>
+          new Promise<{ type: string; content?: string }>((resolve) => {
+            resolveConflict = resolve;
+          }),
+      );
+      editorState.markdown = "baseline";
+
+      const { rerender } = render(
+        <ContentEditor
+          defaultValue="baseline"
+          onUpdate={onUpdate}
+          debounceMs={1500}
+          onExternalConflict={
+            onExternalConflict as unknown as React.ComponentProps<
+              typeof ContentEditor
+            >["onExternalConflict"]
+          }
+        />,
+      );
+
+      fireFocus();
+      editorState.isFocused = true;
+
+      // External update arrives mid-edit.
+      rerender(
+        <ContentEditor
+          defaultValue="external value"
+          onUpdate={onUpdate}
+          debounceMs={1500}
+          onExternalConflict={
+            onExternalConflict as unknown as React.ComponentProps<
+              typeof ContentEditor
+            >["onExternalConflict"]
+          }
+        />,
+      );
+
+      // User types — internal onUpdate sets a 1500ms debounce that would
+      // normally fire onUpdate(local) at the end of the window.
+      editorState.markdown = "user typed";
+      fireOnUpdate();
+
+      // User blurs — conflict path triggers, resolver promise is pending.
+      editorState.isFocused = false;
+      fireBlur();
+      await Promise.resolve();
+
+      // Walk the clock well past the debounce window; the timer must have
+      // been cancelled when we entered the conflict path.
+      vi.advanceTimersByTime(5000);
+      expect(onUpdate).not.toHaveBeenCalled();
+
+      // Resolve with external; expect a setContent for external and NO
+      // onUpdate write (server already has external).
+      resolveConflict({ type: "external" });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockSetContent).toHaveBeenCalledWith(
+        "external value",
+        expect.objectContaining({ emitUpdate: false, contentType: "markdown" }),
+      );
+      expect(onUpdate).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("resolution=external: setContent with external, no onUpdate emit", async () => {
