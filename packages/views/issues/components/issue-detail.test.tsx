@@ -552,7 +552,31 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByText("Status")).toBeInTheDocument();
     expect(screen.getByText("Priority")).toBeInTheDocument();
     expect(screen.getByText("Assignee")).toBeInTheDocument();
+    // due_date is set in the fixture, so the optional row is visible.
     expect(screen.getByText("Due date")).toBeInTheDocument();
+    // project_id and parent_issue_id are null in the fixture — those
+    // optional rows must stay hidden by default.
+    expect(screen.queryByText("Project")).not.toBeInTheDocument();
+    expect(screen.queryByText("Parent")).not.toBeInTheDocument();
+    // The "+ Add property" affordance is always offered while any
+    // optional field is still hidden.
+    expect(screen.getByText("Add property")).toBeInTheDocument();
+  });
+
+  it("hides every optional property row when none are set", async () => {
+    // Override the default fixture: nothing optional set.
+    mockApiObj.getIssue.mockResolvedValue({ ...mockIssue, due_date: null });
+
+    renderIssueDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText("Properties")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Due date")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project")).not.toBeInTheDocument();
+    expect(screen.queryByText("Parent")).not.toBeInTheDocument();
+    expect(screen.getByText("Add property")).toBeInTheDocument();
   });
 
   it("uses a non-resizable layout with the sidebar sheet closed by default on mobile", async () => {

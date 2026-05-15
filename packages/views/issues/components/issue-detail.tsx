@@ -265,6 +265,33 @@ function formatTokenCount(n: number): string {
 // new array on every render and bust React.memo on CommentCard / ResolvedThreadBar.
 const EMPTY_REPLIES: TimelineEntry[] = [];
 
+// ---------------------------------------------------------------------------
+// Sidebar progressive disclosure
+// ---------------------------------------------------------------------------
+//
+// Properties shown in the sidebar split into two groups:
+//   - core: always rendered (status / priority / assignee / labels)
+//   - optional: rendered only when the issue has a value for that field OR
+//     the user explicitly added it via "+ Add property" in this session
+//
+// `OPTIONAL_PROP_KEYS` is the open set — adding a new optional field
+// (e.g. `start_date`) means appending here, wiring its row in the JSX
+// switch below, and adding a locale key. The picker, visibility rules,
+// and add-property menu all flow from this one list.
+const OPTIONAL_PROP_KEYS = ["due_date", "project", "parent"] as const;
+type OptionalPropKey = (typeof OPTIONAL_PROP_KEYS)[number];
+
+function isOptionalPropSet(issue: Issue, key: OptionalPropKey): boolean {
+  switch (key) {
+    case "due_date":
+      return !!issue.due_date;
+    case "project":
+      return !!issue.project_id;
+    case "parent":
+      return !!issue.parent_issue_id;
+  }
+}
+
 // Shallow array equality by element identity. Used to reuse the previous
 // render's per-thread reply slice when nothing in *this* thread changed,
 // even if the surrounding `timeline` array was rebuilt by a WS event in
@@ -590,9 +617,21 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const sidebarOpen = isMobile ? mobileSidebarOpen : desktopSidebarOpen;
   const [propertiesOpen, setPropertiesOpen] = useState(true);
   const [detailsOpen, setDetailsOpen] = useState(true);
-  const [parentIssueOpen, setParentIssueOpen] = useState(true);
   const [pullRequestsOpen, setPullRequestsOpen] = useState(true);
   const [tokenUsageOpen, setTokenUsageOpen] = useState(true);
+
+  // Per-issue, per-session set of optional properties currently visible in
+  // the sidebar Properties section. Seeded on issue switch with whichever
+  // fields are already set; "+ Add property" adds an entry, clearing a
+  // value does *not* remove one (avoids row-flicker on edit → clear).
+  // Resets when the user navigates to a different issue.
+  const [visibleOptionalProps, setVisibleOptionalProps] = useState<Set<OptionalPropKey>>(
+    () => new Set(),
+  );
+  // Optional property to auto-open as soon as it's mounted (the user just
+  // picked it from "+ Add property" and we want them dropped straight into
+  // edit state). Consumed by the row that matches this key, cleared after.
+  const [autoOpenProp, setAutoOpenProp] = useState<OptionalPropKey | null>(null);
   // Virtuoso's `customScrollParent` wants the HTMLElement, not a ref. A plain
   // `useRef.current` does not trigger a re-render when it populates, so the
   // Virtuoso prop would never receive the element. Callback ref + state fixes
@@ -1002,6 +1041,69 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const actions = useIssueActions(issue);
   const handleUpdateField = actions.updateField;
 
+  // Seed the visible-optional-props set:
+  //   - on issue switch, reset to whichever fields are currently set
+  //   - on the SAME issue, additively pick up fields the user just set
+  //     (so the row stays visible after they edit + clear in one session)
+  // Removal happens only on issue switch — never on clear.
+  const seededIssueIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!issue) return;
+    if (seededIssueIdRef.current !== issue.id) {
+      seededIssueIdRef.current = issue.id;
+      setAutoOpenProp(null);
+      const seed = new Set<OptionalPropKey>();
+      for (const k of OPTIONAL_PROP_KEYS) {
+        if (isOptionalPropSet(issue, k)) seed.add(k);
+      }
+      setVisibleOptionalProps(seed);
+      return;
+    }
+    setVisibleOptionalProps((prev) => {
+      let next = prev;
+      for (const k of OPTIONAL_PROP_KEYS) {
+        if (isOptionalPropSet(issue, k) && !next.has(k)) {
+          if (next === prev) next = new Set(prev);
+          next.add(k);
+        }
+      }
+      return next;
+    });
+  }, [issue]);
+
+  const addOptionalProp = useCallback(
+    (key: OptionalPropKey) => {
+      // Parent has no in-sidebar picker — open the existing set-parent
+      // modal directly. Row still appears for visual feedback.
+      if (key === "parent") {
+        setVisibleOptionalProps((prev) => {
+          if (prev.has(key)) return prev;
+          const next = new Set(prev);
+          next.add(key);
+          return next;
+        });
+        actions.openSetParent();
+        return;
+      }
+      setVisibleOptionalProps((prev) => {
+        if (prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+      setAutoOpenProp(key);
+    },
+    [actions],
+  );
+
+  // Clear the auto-open flag after the next render so pickers (which read
+  // `defaultOpen` once via a useState initializer) keep the open state they
+  // captured on mount, but later interactions don't re-trigger it.
+  useEffect(() => {
+    if (autoOpenProp === null) return;
+    setAutoOpenProp(null);
+  }, [autoOpenProp]);
+
   const handleToggleSidebar = useCallback(() => {
     if (isMobile) {
       setMobileSidebarOpen((open) => !open);
@@ -1090,6 +1192,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${propertiesOpen ? "rotate-90" : ""}`} />
         </button>
         {propertiesOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
+          {/* Core props — always rendered. */}
           <PropRow label={t(($) => $.detail.prop_status)}>
             <StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" />
           </PropRow>
@@ -1099,40 +1202,88 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <PropRow label={t(($) => $.detail.prop_assignee)}>
             <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" />
           </PropRow>
-          <PropRow label={t(($) => $.detail.prop_due_date)}>
-            <DueDatePicker dueDate={issue.due_date} onUpdate={handleUpdateField} />
-          </PropRow>
-          <PropRow label={t(($) => $.detail.prop_project)}>
-            <ProjectPicker projectId={issue.project_id} onUpdate={handleUpdateField} />
-          </PropRow>
           <PropRow label={t(($) => $.detail.prop_labels)}>
             <LabelPicker issueId={issue.id} align="start" />
           </PropRow>
+
+          {/* Optional props — rendered only when set on the issue OR added
+              via "+ Add property" in this session. Row order follows the
+              order of `OPTIONAL_PROP_KEYS`. */}
+          {visibleOptionalProps.has("due_date") && (
+            <PropRow label={t(($) => $.detail.prop_due_date)}>
+              <DueDatePicker
+                dueDate={issue.due_date}
+                onUpdate={handleUpdateField}
+                defaultOpen={autoOpenProp === "due_date"}
+              />
+            </PropRow>
+          )}
+          {visibleOptionalProps.has("project") && (
+            <PropRow label={t(($) => $.detail.prop_project)}>
+              <ProjectPicker
+                projectId={issue.project_id}
+                onUpdate={handleUpdateField}
+                defaultOpen={autoOpenProp === "project"}
+              />
+            </PropRow>
+          )}
+          {visibleOptionalProps.has("parent") && (
+            <PropRow label={t(($) => $.detail.prop_parent)}>
+              {parentIssue ? (
+                <AppLink
+                  href={paths.issueDetail(parentIssue.id)}
+                  className="flex min-w-0 items-center gap-1.5 rounded px-1 -mx-1 hover:bg-accent/30 transition-colors overflow-hidden"
+                >
+                  <StatusIcon status={parentIssue.status} className="h-3.5 w-3.5 shrink-0" />
+                  <span className="text-muted-foreground shrink-0">{parentIssue.identifier}</span>
+                  <span className="truncate">{parentIssue.title}</span>
+                </AppLink>
+              ) : (
+                <button
+                  type="button"
+                  onClick={actions.openSetParent}
+                  className="flex items-center gap-1.5 rounded px-1 -mx-1 hover:bg-accent/30 transition-colors text-muted-foreground"
+                >
+                  {t(($) => $.detail.set_parent_action)}
+                </button>
+              )}
+            </PropRow>
+          )}
+
+          {/* "+ Add property" — opens a Popover listing optional fields
+              not yet displayed. Hidden once every optional field is on
+              screen. Sits inside the same grid as a full-row, with its
+              own padding so the visual rhythm follows the rows above. */}
+          {OPTIONAL_PROP_KEYS.some((k) => !visibleOptionalProps.has(k)) && (
+            <div className="col-span-2 mt-1">
+              <Popover>
+                <PopoverTrigger
+                  className="flex items-center gap-1.5 rounded-md px-2 py-1 -mx-2 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                >
+                  <Plus className="h-3 w-3 shrink-0" />
+                  <span>{t(($) => $.detail.add_property_action)}</span>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-48 p-1">
+                  {OPTIONAL_PROP_KEYS.filter((k) => !visibleOptionalProps.has(k)).map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => addOptionalProp(k)}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent transition-colors"
+                    >
+                      <span className="truncate">
+                        {k === "due_date" && t(($) => $.detail.prop_due_date)}
+                        {k === "project" && t(($) => $.detail.prop_project)}
+                        {k === "parent" && t(($) => $.detail.prop_parent)}
+                      </span>
+                    </button>
+                  ))}
+                </PopoverContent>
+              </Popover>
+            </div>
+          )}
         </div>}
       </div>
-
-      {/* Parent issue */}
-      {parentIssue && (
-        <div>
-          <button
-            className={`flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors mb-2 hover:bg-accent/70 ${parentIssueOpen ? "" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={() => setParentIssueOpen(!parentIssueOpen)}
-          >
-            {t(($) => $.detail.section_parent_issue)}
-            <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${parentIssueOpen ? "rotate-90" : ""}`} />
-          </button>
-          {parentIssueOpen && <div className="pl-2">
-            <AppLink
-              href={paths.issueDetail(parentIssue.id)}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1.5 -mx-2 text-xs hover:bg-accent/50 transition-colors group"
-            >
-              <StatusIcon status={parentIssue.status} className="h-3.5 w-3.5 shrink-0" />
-              <span className="text-muted-foreground shrink-0">{parentIssue.identifier}</span>
-              <span className="truncate group-hover:text-foreground">{parentIssue.title}</span>
-            </AppLink>
-          </div>}
-        </div>
-      )}
 
       {/* Pull requests */}
       <div>
