@@ -255,7 +255,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 
 	// MULTICA_AGENT_IDLE_WATCHDOG=0 disables the per-task idle watchdog. We
 	// route 0 through durationFromEnv so the operator can opt out without
-	// patching the binary; any positive duration overrides the 5-minute default.
+	// patching the binary; any positive duration overrides DefaultAgentIdleWatchdog.
 	agentIdleWatchdog, err := durationFromEnv("MULTICA_AGENT_IDLE_WATCHDOG", DefaultAgentIdleWatchdog)
 	if err != nil {
 		return Config{}, err
