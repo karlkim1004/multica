@@ -737,7 +737,7 @@ func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request
 	if att.SizeBytes >= 0 {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", att.SizeBytes))
 	}
-	w.Header().Set("Content-Disposition", storage.ContentDisposition(att.ContentType, att.Filename))
+	w.Header().Set("Content-Disposition", storage.AttachmentContentDisposition(att.Filename))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if _, err := io.Copy(w, reader); err != nil {
