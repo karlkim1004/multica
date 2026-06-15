@@ -487,7 +487,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                             name={workspace?.name ?? "M"}
                             avatarUrl={workspace?.avatar_url}
                             size={isNexAIWorkspace ? "xl" : "sm"}
-                            className={isNexAIWorkspace ? "object-contain" : undefined}
+                            className={isNexAIWorkspace ? "h-10 w-auto object-contain" : undefined}
                           />
                         </span>
                         {myInvitations.length > 0 && (
