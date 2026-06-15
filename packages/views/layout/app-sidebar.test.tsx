@@ -77,7 +77,23 @@ vi.mock("../navigation", () => ({
   useNavigation: () => ({ pathname: "/acme/issues", push: vi.fn() }),
 }));
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
-vi.mock("../workspace/workspace-avatar", () => ({ WorkspaceAvatar: () => <span /> }));
+vi.mock("../workspace/workspace-avatar", () => ({
+  WorkspaceAvatar: ({
+    name,
+    avatarUrl,
+    size,
+  }: {
+    name: string;
+    avatarUrl?: string | null;
+    size?: string;
+  }) => (
+    <img
+      alt={name}
+      data-avatar-url={avatarUrl ?? ""}
+      data-avatar-size={size ?? "sm"}
+    />
+  ),
+}));
 vi.mock("@multica/ui/components/common/actor-avatar", () => ({ ActorAvatar: () => <span /> }));
 
 vi.mock("@multica/core/auth", () => ({
@@ -165,17 +181,18 @@ describe("PinRow", () => {
     expect(await screen.findByText("MUL-123 Keep this pin")).toBeInTheDocument();
   });
 
-  it("renders the original full-size NexAI brand lockup for the NexAI workspace", () => {
+  it("keeps the uploaded NexAI logo image and renders it at double size", () => {
     workspace.current = { id: "ws-1", name: "NexAI", slug: "nexai", avatar_url: "/uploads/workspace-logo.png" };
     render(<AppSidebar />);
 
     const icon = document.querySelector("[data-acceptance='nexai-nt-icon']");
     const wordmark = document.querySelector("[data-acceptance='nexai-wordmark']");
+    const logo = icon?.querySelector("img");
 
     expect(icon).toBeTruthy();
-    expect(icon?.className).toContain("size-9");
+    expect(logo).toHaveAttribute("data-avatar-url", "/uploads/workspace-logo.png");
+    expect(logo).toHaveAttribute("data-avatar-size", "xl");
     expect(wordmark).toBeTruthy();
     expect(wordmark?.textContent).toBe("NexAI");
-    expect(wordmark?.className).toContain("text-[1.625rem]");
   });
 });

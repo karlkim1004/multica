@@ -13,6 +13,7 @@ import {
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
 import { useT } from "../../i18n";
+import { LlmRemainingBadge } from "./llm-remaining-badge";
 
 const logger = createLogger("chat.ui");
 
@@ -43,7 +44,7 @@ export function ChatFab() {
 
   return (
     <>
-      <ChatFabTokenBadges />
+      <LlmRemainingBadge className="absolute bottom-2 right-14 z-50 bg-card shadow-sm" />
       <Tooltip>
       <TooltipTrigger
         onClick={handleClick}
@@ -64,19 +65,5 @@ export function ChatFab() {
       <TooltipContent side="top" sideOffset={10}>{tooltip}</TooltipContent>
       </Tooltip>
     </>
-  );
-}
-
-function ChatFabTokenBadges() {
-  return (
-    <div
-      data-acceptance="chat-token-remaining-badge"
-      className="absolute bottom-2 right-14 z-50 hidden items-center gap-1.5 rounded-md border bg-card px-2 py-1 text-[11px] text-muted-foreground shadow-sm sm:flex"
-      aria-label="채팅 LLM 잔량"
-    >
-      <span data-acceptance="chat-claude-token-remaining-badge">Claude 잔량 49%</span>
-      <span className="text-border">·</span>
-      <span data-acceptance="chat-gpt-token-remaining-badge">GPT 잔량 100%</span>
-    </div>
   );
 }

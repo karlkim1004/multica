@@ -481,23 +481,22 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                 <DropdownMenuTrigger
                   render={
                     <SidebarMenuButton>
-                      {isNexAIWorkspace ? (
-                        <NexAIBrand hasInvitations={myInvitations.length > 0} />
-                      ) : (
-                        <>
-                          <span className="relative">
-                            <span data-acceptance="nexai-nt-icon">
-                              <WorkspaceAvatar name={workspace?.name ?? "M"} avatarUrl={workspace?.avatar_url} size="sm" />
-                            </span>
-                            {myInvitations.length > 0 && (
-                              <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-brand ring-1 ring-sidebar" />
-                            )}
-                          </span>
-                          <span data-acceptance="nexai-wordmark" className="flex-1 truncate font-medium">
-                            {workspace?.name ?? "Multica"}
-                          </span>
-                        </>
-                      )}
+                      <span className="relative">
+                        <span data-acceptance="nexai-nt-icon">
+                          <WorkspaceAvatar
+                            name={workspace?.name ?? "M"}
+                            avatarUrl={workspace?.avatar_url}
+                            size={isNexAIWorkspace ? "xl" : "sm"}
+                            className={isNexAIWorkspace ? "object-contain" : undefined}
+                          />
+                        </span>
+                        {myInvitations.length > 0 && (
+                          <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-brand ring-1 ring-sidebar" />
+                        )}
+                      </span>
+                      <span data-acceptance="nexai-wordmark" className="flex-1 truncate font-medium">
+                        {workspace?.name ?? "Multica"}
+                      </span>
                       <ChevronDown className="size-3 text-muted-foreground" />
                     </SidebarMenuButton>
                   }
@@ -749,31 +748,5 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>
-  );
-}
-
-function NexAIBrand({ hasInvitations }: { hasInvitations: boolean }) {
-  return (
-    <>
-      <span className="relative">
-        <span
-          data-acceptance="nexai-nt-icon"
-          className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-[#14f1d9]/20 bg-[#0c3f3b] text-[#42ffe5] shadow-sm"
-          aria-hidden="true"
-        >
-          <span className="font-mono text-xl leading-none tracking-normal">N</span>
-          <span className="-ml-0.5 -mt-3 font-mono text-[10px] leading-none tracking-normal">T</span>
-        </span>
-        {hasInvitations && (
-          <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-brand ring-1 ring-sidebar" />
-        )}
-      </span>
-      <span
-        data-acceptance="nexai-wordmark"
-        className="flex-1 truncate text-[1.625rem] font-normal leading-none tracking-normal text-sidebar-foreground"
-      >
-        Nex<span className="font-semibold text-[#42ffe5]">AI</span>
-      </span>
-    </>
   );
 }

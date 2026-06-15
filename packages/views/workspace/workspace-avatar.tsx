@@ -5,6 +5,7 @@ const sizeMap = {
   sm: "h-5 w-5 text-xs rounded",
   md: "h-7 w-7 text-xs rounded-md",
   lg: "h-9 w-9 text-sm rounded-md",
+  xl: "h-10 w-10 text-base rounded-md",
 } as const;
 
 interface WorkspaceAvatarProps {

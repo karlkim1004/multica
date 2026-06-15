@@ -50,6 +50,7 @@ import { ChatInput } from "./chat-input";
 import { ChatResizeHandles } from "./chat-resize-handles";
 import { useChatContextItems } from "./use-chat-context-items";
 import { useChatResize } from "./use-chat-resize";
+import { LlmRemainingBadge } from "./llm-remaining-badge";
 import { createLogger } from "@multica/core/logger";
 import type { Agent, ChatMessage, ChatMessagesPage, ChatPendingTask, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
 import { useT } from "../../i18n";
@@ -792,17 +793,7 @@ export function ChatWindow() {
 }
 
 function ChatTokenBadges() {
-  return (
-    <div
-      data-acceptance="chat-token-remaining-badge"
-      className="hidden items-center gap-1.5 rounded-md border bg-background/50 px-2 py-1 text-[11px] text-muted-foreground sm:flex"
-      aria-label="채팅 LLM 잔량"
-    >
-      <span data-acceptance="chat-claude-token-remaining-badge">Claude 잔량 49%</span>
-      <span className="text-border">·</span>
-      <span data-acceptance="chat-gpt-token-remaining-badge">GPT 잔량 100%</span>
-    </div>
-  );
+  return <LlmRemainingBadge className="bg-background/50" />;
 }
 
 /**
