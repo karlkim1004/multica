@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { AppSidebar } from "./app-sidebar";
 
-const { detail, deletePin, pins } = vi.hoisted(() => ({
+const { detail, deletePin, pins, workspace } = vi.hoisted(() => ({
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
   pins: {
@@ -18,6 +18,9 @@ const { detail, deletePin, pins } = vi.hoisted(() => ({
         created_at: "2026-05-06T00:00:00Z",
       },
     ],
+  },
+  workspace: {
+    current: { id: "ws-1", name: "Acme", slug: "acme", avatar_url: null as string | null },
   },
 }));
 
@@ -82,7 +85,7 @@ vi.mock("@multica/core/auth", () => ({
 }));
 vi.mock("@multica/core/paths", () => ({
   paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues` }) },
-  useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
+  useCurrentWorkspace: () => workspace.current,
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     myIssues: () => "/acme/my-issues",
@@ -141,6 +144,7 @@ describe("PinRow", () => {
   beforeEach(() => {
     deletePin.mockReset();
     detail.current = { isPending: false, isError: false, data: null, error: null };
+    workspace.current = { id: "ws-1", name: "Acme", slug: "acme", avatar_url: null };
   });
 
   it("unpins missing details", async () => {
@@ -159,5 +163,19 @@ describe("PinRow", () => {
     detail.current = { isPending: false, isError: false, data: { identifier: "MUL-123", title: "Keep this pin", status: "todo" }, error: null };
     render(<AppSidebar />);
     expect(await screen.findByText("MUL-123 Keep this pin")).toBeInTheDocument();
+  });
+
+  it("renders the original full-size NexAI brand lockup for the NexAI workspace", () => {
+    workspace.current = { id: "ws-1", name: "NexAI", slug: "nexai", avatar_url: "/uploads/workspace-logo.png" };
+    render(<AppSidebar />);
+
+    const icon = document.querySelector("[data-acceptance='nexai-nt-icon']");
+    const wordmark = document.querySelector("[data-acceptance='nexai-wordmark']");
+
+    expect(icon).toBeTruthy();
+    expect(icon?.className).toContain("size-9");
+    expect(wordmark).toBeTruthy();
+    expect(wordmark?.textContent).toBe("NexAI");
+    expect(wordmark?.className).toContain("text-[1.625rem]");
   });
 });
