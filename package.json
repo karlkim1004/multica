@@ -14,7 +14,9 @@
     "lint": "turbo lint",
     "clean": "turbo clean && rm -rf node_modules",
     "ui:add": "cd packages/ui && npx shadcn@latest add",
-    "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs"
+    "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs",
+    "live-acceptance-gate": "node scripts/live-feature-acceptance-gate.mjs",
+    "test:live-acceptance-gate": "bash scripts/tests/test_live_feature_acceptance_gate.sh"
   },
   "packageManager": "pnpm@10.28.2",
   "pnpm": {

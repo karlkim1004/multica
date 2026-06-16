@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "baseUrl": "https://multica.nexai.co.kr",
+  "cssColors": ["#0ea5a0", "#05070b"],
+  "routes": [
+    {
+      "path": "/nexai/dashboard",
+      "name": "dashboard",
+      "requiresDarkRender": true
+    },
+    {
+      "path": "/nexai/my-issues",
+      "name": "my issues",
+      "requiresDarkRender": true
+    },
+    {
+      "path": "/nexai/issues",
+      "name": "issues",
+      "requiresDarkRender": true
+    },
+    {
+      "path": "/nexai/usage",
+      "name": "usage",
+      "requiresDarkRender": true
+    }
+  ],
+  "methodChecks": [
+    {
+      "path": "/favicon.ico",
+      "method": "POST",
+      "forbiddenStatuses": [405]
+    },
+    {
+      "path": "/api/chat/messages",
+      "method": "POST",
+      "forbiddenStatuses": [405]
+    }
+  ],
+  "forbiddenText": ["$"],
+  "uiContracts": [
+    {
+      "name": "weekly token tracker",
+      "path": "/nexai/usage",
+      "selectors": [
+        "[data-acceptance=\"weekly-token-tracker\"]",
+        "[data-testid=\"weekly-token-tracker\"]",
+        "[aria-label*=\"Weekly token\"]"
+      ],
+      "text": ["weekly token", "tokens this week"]
+    },
+    {
+      "name": "chat input",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"chat-input\"]",
+        "[data-testid=\"chat-input\"]",
+        "[contenteditable=\"true\"]"
+      ]
+    },
+    {
+      "name": "send button",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"send-button\"]",
+        "[data-testid=\"send-button\"]",
+        "button[aria-label*=\"Send\"]"
+      ],
+      "text": ["send"]
+    },
+    {
+      "name": "assistant response without refresh",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"assistant-message\"]",
+        "[data-testid=\"assistant-message\"]",
+        "[data-role=\"assistant-message\"]"
+      ],
+      "text": ["assistant response"]
+    },
+    {
+      "name": "response progress state",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"chat-response-in-progress\"]",
+        "[data-testid=\"chat-response-in-progress\"]",
+        "[aria-live=\"polite\"]"
+      ],
+      "text": ["responding", "streaming", "stop"]
+    },
+    {
+      "name": "chat header token display",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"chat-header-token-display\"]",
+        "[data-testid=\"chat-header-token-display\"]",
+        "[aria-label*=\"token\"]"
+      ]
+    },
+    {
+      "name": "chat header refresh button",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"chat-header-refresh\"]",
+        "[data-testid=\"chat-header-refresh\"]",
+        "button[aria-label*=\"Refresh\"]"
+      ],
+      "text": ["refresh"]
+    },
+    {
+      "name": "bot selector",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"bot-selector\"]",
+        "[data-testid=\"bot-selector\"]",
+        "[aria-label*=\"agent\"]"
+      ]
+    },
+    {
+      "name": "multi chat",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"multi-chat\"]",
+        "[data-testid=\"multi-chat\"]"
+      ],
+      "text": ["multi chat"]
+    },
+    {
+      "name": "favicon graphic",
+      "path": "/favicon.ico",
+      "kind": "asset"
+    },
+    {
+      "name": "top-left brand",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"top-left-brand\"]",
+        "[data-testid=\"top-left-brand\"]",
+        "[aria-label*=\"Multica\"]"
+      ]
+    },
+    {
+      "name": "llm token gauge",
+      "path": "/nexai/dashboard",
+      "selectors": [
+        "[data-acceptance=\"llm-token-gauge\"]",
+        "[data-testid=\"llm-token-gauge\"]",
+        "[aria-label*=\"remaining\"]"
+      ]
+    }
+  ]
+}
