@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
 const mockFocus = vi.hoisted(() => vi.fn());
+const mockUseEditor = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({}),
@@ -24,23 +25,26 @@ vi.mock("./bubble-menu", () => ({
 }));
 
 vi.mock("@tiptap/react", () => ({
-  useEditor: () => ({
-    commands: {
-      focus: mockFocus,
-      clearContent: vi.fn(),
-    },
-    getMarkdown: () => "",
-    state: {
-      doc: {
-        content: {
-          size: 0,
+  useEditor: (options: unknown) => {
+    mockUseEditor(options);
+    return {
+      commands: {
+        focus: mockFocus,
+        clearContent: vi.fn(),
+      },
+      getMarkdown: () => "",
+      state: {
+        doc: {
+          content: {
+            size: 0,
+          },
+        },
+        selection: {
+          empty: true,
         },
       },
-      selection: {
-        empty: true,
-      },
-    },
-  }),
+    };
+  },
   EditorContent: ({ className }: { className?: string }) => (
     <div className={className} data-testid="editor-content">
       <div className="ProseMirror rich-text-editor" data-testid="prosemirror" />
@@ -72,5 +76,21 @@ describe("ContentEditor", () => {
     fireEvent.mouseDown(screen.getByTestId("prosemirror"));
 
     expect(mockFocus).not.toHaveBeenCalled();
+  });
+
+  it("disables browser spellcheck and autocorrection for IME and fullwidth input", () => {
+    render(<ContentEditor placeholder="Add description..." />);
+
+    expect(mockUseEditor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        editorProps: expect.objectContaining({
+          attributes: expect.objectContaining({
+            spellcheck: "false",
+            autocorrect: "off",
+            autocapitalize: "off",
+          }),
+        }),
+      }),
+    );
   });
 });
