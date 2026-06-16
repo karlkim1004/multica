@@ -45,6 +45,7 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
   const gptRemaining = data
     ? limitingRemaining(data.gpt_five_hour_pct, data.gpt_seven_day_pct)
     : null;
+  const fiveHourRemaining = remainingFromUsage(data?.five_hour_pct);
 
   if (!data) return null;
 
@@ -52,14 +53,25 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
     <div
       data-acceptance="chat-token-remaining-badge"
       className={cn(
-        "hidden items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] text-muted-foreground sm:flex",
+        "hidden min-w-44 flex-col gap-1 rounded-md border px-2 py-1 text-[11px] text-muted-foreground sm:flex",
         className,
       )}
       aria-label="채팅 LLM 잔량"
     >
-      <span data-acceptance="chat-claude-token-remaining-badge">Claude 잔량 {claudeRemaining}%</span>
-      <span className="text-border">·</span>
-      <span data-acceptance="chat-gpt-token-remaining-badge">GPT 잔량 {gptRemaining}%</span>
+      <div className="flex items-center gap-1.5">
+        <span data-acceptance="chat-claude-token-remaining-badge">Claude 잔량 {claudeRemaining}%</span>
+        <span className="text-border">·</span>
+        <span data-acceptance="chat-gpt-token-remaining-badge">GPT 잔량 {gptRemaining}%</span>
+      </div>
+      <div data-acceptance="chat-five-hour-remaining-gauge" className="w-full">
+        <div className="mb-0.5 flex items-center justify-between">
+          <span>5h 잔량</span>
+          <span className="tabular-nums">{fiveHourRemaining}%</span>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+          <div className="h-full rounded-full bg-brand" style={{ width: `${fiveHourRemaining}%` }} />
+        </div>
+      </div>
     </div>
   );
 }

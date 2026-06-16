@@ -41,7 +41,10 @@ describe("LlmRemainingBadge", () => {
     await waitFor(() => {
       expect(screen.getByText("Claude 잔량 40%")).toBeInTheDocument();
       expect(screen.getByText("GPT 잔량 70%")).toBeInTheDocument();
+      expect(screen.getByText("5h 잔량")).toBeInTheDocument();
+      expect(screen.getByText("75%")).toBeInTheDocument();
     });
+    expect(document.querySelector("[data-acceptance='chat-five-hour-remaining-gauge']")).toBeTruthy();
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/dashboard/llm-limit-status",
       expect.objectContaining({ cache: "no-store" }),

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { BarChart3, FolderKanban, RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -107,6 +108,13 @@ type LlmLimitStatus = {
   gpt_five_hour_pct: number;
   gpt_seven_day_pct: number;
   weekly_progress_pct: number;
+  week_day_index?: number;
+  reset_label?: string;
+  five_hour_reset_label?: string;
+  seven_day_reset_label?: string;
+  sonnet_reset_label?: string;
+  gpt_five_reset_label?: string;
+  gpt_seven_reset_label?: string;
   updated_at?: string;
 };
 
@@ -476,12 +484,13 @@ function LlmLimitGauge({
   isFetching: boolean;
   onRefresh: () => void;
 }) {
+  const weekDayIndex = Math.max(0, Math.min(6, Math.round(data.week_day_index ?? 0)));
   const cards = [
-    { label: "세션 (5h)", pct: data.five_hour_pct },
-    { label: "주간 전체모델 (7d)", pct: data.seven_day_pct },
-    { label: "Sonnet만", pct: data.sonnet_pct },
-    { label: "GPT 5h limit", pct: data.gpt_five_hour_pct },
-    { label: "GPT 7d limit", pct: data.gpt_seven_day_pct },
+    { label: "세션 (5h)", pct: data.five_hour_pct, reset: data.five_hour_reset_label },
+    { label: "주간 전체모델 (7d)", pct: data.seven_day_pct, reset: data.seven_day_reset_label },
+    { label: "Sonnet만", pct: data.sonnet_pct, reset: data.sonnet_reset_label },
+    { label: "GPT 5h limit", pct: data.gpt_five_hour_pct, reset: data.gpt_five_reset_label },
+    { label: "GPT 7d limit", pct: data.gpt_seven_day_pct, reset: data.gpt_seven_reset_label },
   ];
 
   return (
@@ -522,6 +531,7 @@ function LlmLimitGauge({
                 <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
               </div>
               <p className="mt-2 text-xs text-muted-foreground">잔량 {remaining}%</p>
+              <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{card.reset ?? "—"}</p>
             </div>
           );
         })}
@@ -529,22 +539,30 @@ function LlmLimitGauge({
       <div className="mt-4">
         <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
           <span>주간 진행률</span>
-          <span className="tabular-nums">{clampPct(data.weekly_progress_pct)}%</span>
+          <span>{data.reset_label ?? `${clampPct(data.weekly_progress_pct)}%`}</span>
         </div>
         <div className="grid grid-cols-7 gap-1">
           {["금", "토", "일", "월", "화", "수", "목"].map((day, index) => (
             <div key={day} className="space-y-1">
-              <div className="h-2 rounded-full bg-muted">
+              <div className="relative h-2 rounded-full bg-muted">
                 <div
-                  className="h-full rounded-full bg-brand/70"
-                  style={{
-                    width: `${index <= Math.floor((clampPct(data.weekly_progress_pct) / 100) * 6) ? 100 : 0}%`,
-                  }}
+                  className={cn(
+                    "h-full rounded-full",
+                    index < weekDayIndex ? "bg-brand/55" : index === weekDayIndex ? "bg-brand" : "bg-transparent",
+                  )}
+                  style={{ width: index <= weekDayIndex ? "100%" : "0%" }}
                 />
+                {index === weekDayIndex && (
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] leading-none text-brand">▼</span>
+                )}
               </div>
-              <div className="text-center text-[11px] text-muted-foreground">{day}</div>
+              <div className={cn("text-center text-[11px]", index === weekDayIndex ? "font-medium text-foreground" : "text-muted-foreground")}>{day}</div>
             </div>
           ))}
+        </div>
+        <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
+          <span>▼ Claude</span>
+          <span>▲ GPT</span>
         </div>
       </div>
     </section>

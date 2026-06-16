@@ -28,6 +28,9 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 				five_hour_utilization: 3,
 				seven_day_utilization: 57,
 				sonnet_pct: 4,
+				five_hour_resets_at: "2026-06-16T01:00:00+00:00",
+				seven_day_resets_at: "2026-06-18T15:00:00+00:00",
+				seven_day_sonnet_resets_at: "2026-06-18T15:00:00+00:00",
 				weekly_progress_pct: 10,
 				updated_at: "2026-06-16T00:00:00.000Z",
 			}),
@@ -37,6 +40,8 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 			JSON.stringify({
 				five_hour_left_pct: 64,
 				seven_day_left_pct: 94,
+				five_hour_reset_label: "resets 10:45 PM",
+				seven_day_reset_label: "resets May 17",
 			}),
 		);
 
@@ -51,7 +56,14 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 			gpt_five_hour_pct: 36,
 			gpt_seven_day_pct: 6,
 			weekly_progress_pct: 10,
+			five_hour_reset_label: "(화) 오전 10:00에 재설정",
+			seven_day_reset_label: "(금) 오전 12:00에 재설정",
+			sonnet_reset_label: "(금) 오전 12:00에 재설정",
+			gpt_five_reset_label: "resets 10:45 PM",
+			gpt_seven_reset_label: "resets May 17",
 			updated_at: "2026-06-16T00:00:00.000Z",
 		});
+		expect(data.week_day_index).toBeTypeOf("number");
+		expect(data.reset_label).toBeTypeOf("string");
 	});
 });
