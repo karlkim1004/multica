@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LlmRemainingBadge } from "./llm-remaining-badge";
@@ -35,16 +35,28 @@ describe("LlmRemainingBadge", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders live remaining values from the token snapshot API", async () => {
+  it("renders provider-specific 5h and 7d remaining values from the token snapshot API", async () => {
     renderBadge();
 
     await waitFor(() => {
-      expect(screen.getByText("Claude 잔량 40%")).toBeInTheDocument();
-      expect(screen.getByText("GPT 잔량 70%")).toBeInTheDocument();
-      expect(screen.getByText("5h 잔량")).toBeInTheDocument();
-      expect(screen.getByText("75%")).toBeInTheDocument();
+      expect(screen.getByLabelText("Claude 5h 잔량 75%")).toBeInTheDocument();
+      expect(screen.getByLabelText("Claude 7d 잔량 40%")).toBeInTheDocument();
+      expect(screen.getByLabelText("GPT 5h 잔량 90%")).toBeInTheDocument();
+      expect(screen.getByLabelText("GPT 7d 잔량 70%")).toBeInTheDocument();
     });
-    expect(document.querySelector("[data-acceptance='chat-five-hour-remaining-gauge']")).toBeTruthy();
+    expect(document.querySelector("[data-testid='chat-llm-gauge-claude-5h']")).toBeTruthy();
+    expect(document.querySelector("[data-testid='chat-llm-gauge-claude-7d']")).toBeTruthy();
+    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-5h']")).toBeTruthy();
+    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-7d']")).toBeTruthy();
+    expect(document.querySelector("[data-acceptance='chat-claude-token-remaining-badge']")).toHaveTextContent(
+      "Claude5h75%7d40%",
+    );
+    expect(document.querySelector("[data-acceptance='chat-gpt-token-remaining-badge']")).toHaveTextContent(
+      "GPT5h90%7d70%",
+    );
+    expect(screen.getByLabelText("채팅 LLM 잔량: Claude 5시간 75%, Claude 7일 40%, GPT 5시간 90%, GPT 7일 70%")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("채팅 LLM 잔량 새로고침"));
+    expect(document.querySelector("[data-acceptance='chat-llm-gauge-manual-refresh']")).toBeTruthy();
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/dashboard/llm-limit-status",
       expect.objectContaining({ cache: "no-store" }),

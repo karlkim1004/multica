@@ -1,7 +1,9 @@
 "use client";
 
+import { RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
+import { Button } from "@multica/ui/components/ui/button";
 
 interface LlmLimitStatus {
   five_hour_pct: number;
@@ -32,46 +34,108 @@ function limitingRemaining(...usageValues: Array<number | undefined>): number {
 }
 
 export function LlmRemainingBadge({ className }: { className?: string }) {
-  const { data } = useQuery({
+  const { data, isFetching, refetch } = useQuery({
     queryKey: ["chat-llm-limit-status"],
     queryFn: fetchLlmLimitStatus,
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
 
-  const claudeRemaining = data
-    ? limitingRemaining(data.five_hour_pct, data.seven_day_pct, data.sonnet_pct)
-    : null;
-  const gptRemaining = data
-    ? limitingRemaining(data.gpt_five_hour_pct, data.gpt_seven_day_pct)
-    : null;
-  const fiveHourRemaining = remainingFromUsage(data?.five_hour_pct);
-
   if (!data) return null;
+
+  const claudeFiveHourRemaining = remainingFromUsage(data.five_hour_pct);
+  const claudeSevenDayRemaining = limitingRemaining(data.seven_day_pct, data.sonnet_pct);
+  const gptFiveHourRemaining = remainingFromUsage(data.gpt_five_hour_pct);
+  const gptSevenDayRemaining = remainingFromUsage(data.gpt_seven_day_pct);
+
+  const ariaLabel = [
+    `채팅 LLM 잔량: Claude 5시간 ${claudeFiveHourRemaining}%`,
+    `Claude 7일 ${claudeSevenDayRemaining}%`,
+    `GPT 5시간 ${gptFiveHourRemaining}%`,
+    `GPT 7일 ${gptSevenDayRemaining}%`,
+  ].join(", ");
 
   return (
     <div
       data-acceptance="chat-token-remaining-badge"
       className={cn(
-        "hidden min-w-44 flex-col gap-1 rounded-md border px-2 py-1 text-[11px] text-muted-foreground sm:flex",
+        "hidden min-w-[13.5rem] items-stretch gap-1.5 rounded-md border px-2 py-1 text-[11px] text-muted-foreground sm:flex",
         className,
       )}
-      aria-label="채팅 LLM 잔량"
+      aria-label={ariaLabel}
     >
-      <div className="flex items-center gap-1.5">
-        <span data-acceptance="chat-claude-token-remaining-badge">Claude 잔량 {claudeRemaining}%</span>
-        <span className="text-border">·</span>
-        <span data-acceptance="chat-gpt-token-remaining-badge">GPT 잔량 {gptRemaining}%</span>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <ProviderRemainingGroup
+          provider="Claude"
+          dataAcceptance="chat-claude-token-remaining-badge"
+          fiveHour={claudeFiveHourRemaining}
+          sevenDay={claudeSevenDayRemaining}
+        />
+        <ProviderRemainingGroup
+          provider="GPT"
+          dataAcceptance="chat-gpt-token-remaining-badge"
+          fiveHour={gptFiveHourRemaining}
+          sevenDay={gptSevenDayRemaining}
+        />
       </div>
-      <div data-acceptance="chat-five-hour-remaining-gauge" className="w-full">
-        <div className="mb-0.5 flex items-center justify-between">
-          <span>5h 잔량</span>
-          <span className="tabular-nums">{fiveHourRemaining}%</span>
-        </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-          <div className="h-full rounded-full bg-brand" style={{ width: `${fiveHourRemaining}%` }} />
-        </div>
-      </div>
+      <Button
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+        className="self-center"
+        data-acceptance="chat-llm-gauge-manual-refresh"
+        aria-label="채팅 LLM 잔량 새로고침"
+        onClick={() => void refetch()}
+      >
+        <RefreshCw className={cn("h-3 w-3", isFetching && "animate-spin")} />
+      </Button>
+    </div>
+  );
+}
+
+function ProviderRemainingGroup({
+  provider,
+  dataAcceptance,
+  fiveHour,
+  sevenDay,
+}: {
+  provider: "Claude" | "GPT";
+  dataAcceptance: string;
+  fiveHour: number;
+  sevenDay: number;
+}) {
+  const prefix = provider === "Claude" ? "claude" : "gpt";
+  return (
+    <div
+      data-acceptance={dataAcceptance}
+      className="flex min-w-0 items-center justify-between gap-2 rounded border bg-background/40 px-1.5 py-0.5"
+    >
+      <span className="font-medium text-foreground">{provider}</span>
+      <RemainingRow provider={provider} period="5h" value={fiveHour} testId={`chat-llm-gauge-${prefix}-5h`} />
+      <RemainingRow provider={provider} period="7d" value={sevenDay} testId={`chat-llm-gauge-${prefix}-7d`} />
+    </div>
+  );
+}
+
+function RemainingRow({
+  provider,
+  period,
+  value,
+  testId,
+}: {
+  provider: "Claude" | "GPT";
+  period: "5h" | "7d";
+  value: number;
+  testId: string;
+}) {
+  return (
+    <div
+      data-testid={testId}
+      aria-label={`${provider} ${period} 잔량 ${value}%`}
+      className="flex items-center gap-0.5 whitespace-nowrap leading-4"
+    >
+      <span>{period}</span>
+      <span className="tabular-nums">{value}%</span>
     </div>
   );
 }
