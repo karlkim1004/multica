@@ -4,6 +4,7 @@ import type { Attachment } from "@multica/core/types";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 
 const mockFocus = vi.hoisted(() => vi.fn());
+const mockUseEditor = vi.hoisted(() => vi.fn());
 const mockSetContent = vi.hoisted(() => vi.fn());
 const mockSetTextSelection = vi.hoisted(() => vi.fn());
 const editorState = vi.hoisted(() => ({
@@ -60,6 +61,7 @@ const onCreateFired = vi.hoisted(() => ({ value: false }));
 
 vi.mock("@tiptap/react", () => ({
   useEditor: (options: { onCreate?: (args: { editor: unknown }) => void }) => {
+    mockUseEditor(options);
     if (!editorRef.current) {
       editorRef.current = {
         get isFocused() {
@@ -124,6 +126,22 @@ describe("ContentEditor", () => {
     fireEvent.mouseDown(screen.getByTestId("prosemirror"));
 
     expect(mockFocus).not.toHaveBeenCalled();
+  });
+
+  it("disables browser spellcheck and autocorrection for IME and fullwidth input", () => {
+    render(<ContentEditor placeholder="Add description..." />);
+
+    expect(mockUseEditor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        editorProps: expect.objectContaining({
+          attributes: expect.objectContaining({
+            spellcheck: "false",
+            autocorrect: "off",
+            autocapitalize: "off",
+          }),
+        }),
+      }),
+    );
   });
 
   it("syncs editor content when defaultValue changes externally and editor is unfocused", () => {
