@@ -329,6 +329,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
           spellcheck: "false",
           autocorrect: "off",
           autocapitalize: "off",
+          "data-acceptance": "chat-input",
         },
       },
     });
