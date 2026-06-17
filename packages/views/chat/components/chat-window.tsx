@@ -691,7 +691,6 @@ export function ChatWindow() {
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
           />
-          <ChatTokenBadges />
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <Tooltip>
@@ -727,6 +726,9 @@ export function ChatWindow() {
             <TooltipContent side="top">{t(($) => $.window.minimize_tooltip)}</TooltipContent>
           </Tooltip>
         </div>
+      </div>
+      <div className="flex border-b px-4 py-2">
+        <ChatTokenBadges />
       </div>
 
       {/* Messages / skeleton / empty state */}
@@ -793,7 +795,7 @@ export function ChatWindow() {
 }
 
 function ChatTokenBadges() {
-  return <LlmRemainingBadge className="bg-background/50" />;
+  return <LlmRemainingBadge className="w-full max-w-[22rem] bg-background/50" />;
 }
 
 /**
