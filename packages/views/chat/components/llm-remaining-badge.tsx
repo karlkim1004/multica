@@ -11,6 +11,11 @@ interface LlmLimitStatus {
   sonnet_pct: number;
   gpt_five_hour_pct: number;
   gpt_seven_day_pct: number;
+  five_hour_reset_label?: string;
+  seven_day_reset_label?: string;
+  sonnet_reset_label?: string;
+  gpt_five_reset_label?: string;
+  gpt_seven_reset_label?: string;
 }
 
 async function fetchLlmLimitStatus(): Promise<LlmLimitStatus> {
@@ -33,6 +38,20 @@ function limitingRemaining(...usageValues: Array<number | undefined>): number {
   return Math.min(...usageValues.map(remainingFromUsage));
 }
 
+function compactResetLabel(label: string | undefined): string {
+  if (!label || label === "—" || label === "-") return "-";
+  return label
+    .replace(/^resets\s+/i, "")
+    .replace(/에 재설정$/, "")
+    .trim();
+}
+
+function limitingClaudeSevenDayResetLabel(data: LlmLimitStatus): string | undefined {
+  const sevenDayRemaining = remainingFromUsage(data.seven_day_pct);
+  const sonnetRemaining = remainingFromUsage(data.sonnet_pct);
+  return sonnetRemaining < sevenDayRemaining ? data.sonnet_reset_label : data.seven_day_reset_label;
+}
+
 export function LlmRemainingBadge({ className }: { className?: string }) {
   const { data, isFetching, refetch } = useQuery({
     queryKey: ["chat-llm-limit-status"],
@@ -47,19 +66,23 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
   const claudeSevenDayRemaining = limitingRemaining(data.seven_day_pct, data.sonnet_pct);
   const gptFiveHourRemaining = remainingFromUsage(data.gpt_five_hour_pct);
   const gptSevenDayRemaining = remainingFromUsage(data.gpt_seven_day_pct);
+  const claudeFiveHourReset = compactResetLabel(data.five_hour_reset_label);
+  const claudeSevenDayReset = compactResetLabel(limitingClaudeSevenDayResetLabel(data));
+  const gptFiveHourReset = compactResetLabel(data.gpt_five_reset_label);
+  const gptSevenDayReset = compactResetLabel(data.gpt_seven_reset_label);
 
   const ariaLabel = [
-    `채팅 LLM 잔량: Claude 5시간 ${claudeFiveHourRemaining}%`,
-    `Claude 7일 ${claudeSevenDayRemaining}%`,
-    `GPT 5시간 ${gptFiveHourRemaining}%`,
-    `GPT 7일 ${gptSevenDayRemaining}%`,
+    `채팅 LLM 잔량: Claude 5시간 ${claudeFiveHourRemaining}%, 리셋 ${claudeFiveHourReset}`,
+    `Claude 1주 ${claudeSevenDayRemaining}%, 리셋 ${claudeSevenDayReset}`,
+    `GPT 5시간 ${gptFiveHourRemaining}%, 리셋 ${gptFiveHourReset}`,
+    `GPT 1주 ${gptSevenDayRemaining}%, 리셋 ${gptSevenDayReset}`,
   ].join(", ");
 
   return (
     <div
       data-acceptance="chat-token-remaining-badge"
       className={cn(
-        "hidden min-w-[13.75rem] items-stretch gap-1.5 rounded-md border px-2 py-1 text-[10px] text-muted-foreground sm:flex",
+        "hidden min-w-[21rem] items-stretch gap-1.5 rounded-md border px-2 py-1 text-[10px] text-muted-foreground sm:flex",
         className,
       )}
       aria-label={ariaLabel}
@@ -67,29 +90,33 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
       <div className="grid min-w-0 flex-1 grid-cols-2 gap-1">
         <RemainingRow
           provider="Claude"
-          period="5h"
+          periodLabel="5시간"
           value={claudeFiveHourRemaining}
+          reset={claudeFiveHourReset}
           dataAcceptance="chat-claude-token-remaining-badge"
           testId="chat-llm-gauge-claude-5h"
         />
         <RemainingRow
           provider="Claude"
-          period="7d"
+          periodLabel="1주"
           value={claudeSevenDayRemaining}
+          reset={claudeSevenDayReset}
           dataAcceptance="chat-claude-token-remaining-badge"
           testId="chat-llm-gauge-claude-7d"
         />
         <RemainingRow
           provider="GPT"
-          period="5h"
+          periodLabel="5시간"
           value={gptFiveHourRemaining}
+          reset={gptFiveHourReset}
           dataAcceptance="chat-gpt-token-remaining-badge"
           testId="chat-llm-gauge-gpt-5h"
         />
         <RemainingRow
           provider="GPT"
-          period="7d"
+          periodLabel="1주"
           value={gptSevenDayRemaining}
+          reset={gptSevenDayReset}
           dataAcceptance="chat-gpt-token-remaining-badge"
           testId="chat-llm-gauge-gpt-7d"
         />
@@ -111,14 +138,16 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
 
 function RemainingRow({
   provider,
-  period,
+  periodLabel,
   value,
+  reset,
   dataAcceptance,
   testId,
 }: {
   provider: "Claude" | "GPT";
-  period: "5h" | "7d";
+  periodLabel: "5시간" | "1주";
   value: number;
+  reset: string;
   dataAcceptance: string;
   testId: string;
 }) {
@@ -126,11 +155,14 @@ function RemainingRow({
     <div
       data-acceptance={dataAcceptance}
       data-testid={testId}
-      aria-label={`${provider} ${period} 잔량 ${value}%`}
-      className="flex min-w-0 items-center justify-between gap-1 rounded border bg-background/40 px-1 py-0.5 leading-4"
+      aria-label={`${provider} ${periodLabel} 잔량 ${value}%, 리셋 ${reset}`}
+      className="min-w-0 rounded border bg-background/40 px-1.5 py-1 leading-4"
     >
-      <span className="whitespace-nowrap font-medium text-foreground">{provider} {period}</span>
-      <span className="tabular-nums">{value}%</span>
+      <div className="flex items-center justify-between gap-1">
+        <span className="whitespace-nowrap font-medium text-foreground">{provider} {periodLabel}</span>
+        <span className="tabular-nums">{value}%</span>
+      </div>
+      <div className="whitespace-nowrap text-[9px] leading-3 text-muted-foreground">리셋 {reset}</div>
     </div>
   );
 }
