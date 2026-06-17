@@ -105,8 +105,8 @@ type LlmLimitStatus = {
   five_hour_pct: number;
   seven_day_pct: number;
   sonnet_pct: number;
-  gpt_five_hour_pct: number;
-  gpt_seven_day_pct: number;
+  gpt_five_hour_pct: number | null;
+  gpt_seven_day_pct: number | null;
   weekly_progress_pct: number;
   week_day_index?: number;
   reset_label?: string;
@@ -519,18 +519,22 @@ function LlmLimitGauge({
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {cards.map((card) => {
-          const pct = clampPct(card.pct);
-          const remaining = Math.max(0, 100 - pct);
+          const rawPct = card.pct;
+          const hasPct = typeof rawPct === "number" && Number.isFinite(rawPct);
+          const pct = hasPct ? clampPct(rawPct) : 0;
+          const remaining = hasPct ? Math.max(0, 100 - pct) : null;
           return (
             <div key={card.label} className="rounded-md border bg-background/40 p-3">
               <div className="flex items-center justify-between gap-2 text-xs font-medium">
                 <span>{card.label}</span>
-                <span className="tabular-nums">{remaining}%</span>
+                <span className="tabular-nums">{remaining === null ? "확인 불가" : `${remaining}%`}</span>
               </div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
                 <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">잔량 {remaining}%</p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {remaining === null ? "잔량 확인 불가" : `잔량 ${remaining}%`}
+              </p>
               <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{card.reset ?? "—"}</p>
             </div>
           );

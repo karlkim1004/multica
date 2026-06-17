@@ -9,8 +9,8 @@ interface LlmLimitStatus {
   five_hour_pct: number;
   seven_day_pct: number;
   sonnet_pct: number;
-  gpt_five_hour_pct: number;
-  gpt_seven_day_pct: number;
+  gpt_five_hour_pct: number | null;
+  gpt_seven_day_pct: number | null;
   five_hour_reset_label?: string;
   seven_day_reset_label?: string;
   sonnet_reset_label?: string;
@@ -29,13 +29,16 @@ async function fetchLlmLimitStatus(): Promise<LlmLimitStatus> {
   return response.json() as Promise<LlmLimitStatus>;
 }
 
-function remainingFromUsage(value: number | undefined): number {
-  if (!Number.isFinite(value)) return 100;
+function remainingFromUsage(value: number | null | undefined): number | null {
+  if (!Number.isFinite(value)) return null;
   return Math.max(0, Math.min(100, 100 - Math.round(value ?? 0)));
 }
 
-function limitingRemaining(...usageValues: Array<number | undefined>): number {
-  return Math.min(...usageValues.map(remainingFromUsage));
+function limitingRemaining(...usageValues: Array<number | null | undefined>): number | null {
+  const remainingValues = usageValues
+    .map(remainingFromUsage)
+    .filter((value): value is number => value !== null);
+  return remainingValues.length > 0 ? Math.min(...remainingValues) : null;
 }
 
 function compactResetLabel(label: string | undefined): string {
@@ -49,6 +52,8 @@ function compactResetLabel(label: string | undefined): string {
 function limitingClaudeSevenDayResetLabel(data: LlmLimitStatus): string | undefined {
   const sevenDayRemaining = remainingFromUsage(data.seven_day_pct);
   const sonnetRemaining = remainingFromUsage(data.sonnet_pct);
+  if (sevenDayRemaining === null) return data.sonnet_reset_label;
+  if (sonnetRemaining === null) return data.seven_day_reset_label;
   return sonnetRemaining < sevenDayRemaining ? data.sonnet_reset_label : data.seven_day_reset_label;
 }
 
@@ -74,8 +79,8 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
   const ariaLabel = [
     `채팅 LLM 잔량: Claude 5시간 ${claudeFiveHourRemaining}%, 리셋 ${claudeFiveHourReset}`,
     `Claude 1주 ${claudeSevenDayRemaining}%, 리셋 ${claudeSevenDayReset}`,
-    `GPT 5시간 ${gptFiveHourRemaining}%, 리셋 ${gptFiveHourReset}`,
-    `GPT 1주 ${gptSevenDayRemaining}%, 리셋 ${gptSevenDayReset}`,
+    `GPT 5시간 ${gptFiveHourRemaining === null ? "확인 불가" : `${gptFiveHourRemaining}%`}, 리셋 ${gptFiveHourReset}`,
+    `GPT 1주 ${gptSevenDayRemaining === null ? "확인 불가" : `${gptSevenDayRemaining}%`}, 리셋 ${gptSevenDayReset}`,
   ].join(", ");
 
   return (
@@ -146,7 +151,7 @@ function RemainingRow({
 }: {
   provider: "Claude" | "GPT";
   periodLabel: "5시간" | "1주";
-  value: number;
+  value: number | null;
   reset: string;
   dataAcceptance: string;
   testId: string;
@@ -155,12 +160,12 @@ function RemainingRow({
     <div
       data-acceptance={dataAcceptance}
       data-testid={testId}
-      aria-label={`${provider} ${periodLabel} 잔량 ${value}%, 리셋 ${reset}`}
+      aria-label={`${provider} ${periodLabel} 잔량 ${value === null ? "확인 불가" : `${value}%`}, 리셋 ${reset}`}
       className="min-w-0 rounded border bg-background/40 px-1.5 py-1 leading-4"
     >
       <div className="flex items-center justify-between gap-1">
         <span className="whitespace-nowrap font-medium text-foreground">{provider} {periodLabel}</span>
-        <span className="tabular-nums">{value}%</span>
+        <span className="tabular-nums">{value === null ? "확인 불가" : `${value}%`}</span>
       </div>
       <div className="whitespace-nowrap text-[9px] leading-3 text-muted-foreground">리셋 {reset}</div>
     </div>

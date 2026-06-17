@@ -65,4 +65,35 @@ describe("LlmRemainingBadge", () => {
       expect.objectContaining({ cache: "no-store" }),
     );
   });
+
+  it("does not turn unavailable GPT limits into fake 100 percent remaining", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          five_hour_pct: 25,
+          seven_day_pct: 60,
+          sonnet_pct: 27,
+          gpt_five_hour_pct: null,
+          gpt_seven_day_pct: null,
+          five_hour_reset_label: "(수) 오후 9:30에 재설정",
+          seven_day_reset_label: "(금) 오전 12:00에 재설정",
+          sonnet_reset_label: "(토) 오전 9:00에 재설정",
+          gpt_five_reset_label: "—",
+          gpt_seven_reset_label: "—",
+        }),
+      })),
+    );
+
+    renderBadge();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("GPT 5시간 잔량 확인 불가, 리셋 -")).toBeInTheDocument();
+      expect(screen.getByLabelText("GPT 1주 잔량 확인 불가, 리셋 -")).toBeInTheDocument();
+    });
+    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-5h']")).toHaveTextContent("GPT 5시간확인 불가리셋 -");
+    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-7d']")).toHaveTextContent("GPT 1주확인 불가리셋 -");
+    expect(screen.queryByText("100%")).not.toBeInTheDocument();
+  });
 });
