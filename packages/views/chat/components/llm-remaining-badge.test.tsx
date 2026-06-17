@@ -44,16 +44,10 @@ describe("LlmRemainingBadge", () => {
       expect(screen.getByLabelText("GPT 5h 잔량 90%")).toBeInTheDocument();
       expect(screen.getByLabelText("GPT 7d 잔량 70%")).toBeInTheDocument();
     });
-    expect(document.querySelector("[data-testid='chat-llm-gauge-claude-5h']")).toBeTruthy();
-    expect(document.querySelector("[data-testid='chat-llm-gauge-claude-7d']")).toBeTruthy();
-    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-5h']")).toBeTruthy();
-    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-7d']")).toBeTruthy();
-    expect(document.querySelector("[data-acceptance='chat-claude-token-remaining-badge']")).toHaveTextContent(
-      "Claude5h75%7d40%",
-    );
-    expect(document.querySelector("[data-acceptance='chat-gpt-token-remaining-badge']")).toHaveTextContent(
-      "GPT5h90%7d70%",
-    );
+    expect(document.querySelector("[data-testid='chat-llm-gauge-claude-5h']")).toHaveTextContent("Claude 5h75%");
+    expect(document.querySelector("[data-testid='chat-llm-gauge-claude-7d']")).toHaveTextContent("Claude 7d40%");
+    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-5h']")).toHaveTextContent("GPT 5h90%");
+    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-7d']")).toHaveTextContent("GPT 7d70%");
     expect(screen.getByLabelText("채팅 LLM 잔량: Claude 5시간 75%, Claude 7일 40%, GPT 5시간 90%, GPT 7일 70%")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("채팅 LLM 잔량 새로고침"));
     expect(document.querySelector("[data-acceptance='chat-llm-gauge-manual-refresh']")).toBeTruthy();

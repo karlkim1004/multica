@@ -59,23 +59,39 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
     <div
       data-acceptance="chat-token-remaining-badge"
       className={cn(
-        "hidden min-w-[13.5rem] items-stretch gap-1.5 rounded-md border px-2 py-1 text-[11px] text-muted-foreground sm:flex",
+        "hidden min-w-[13.75rem] items-stretch gap-1.5 rounded-md border px-2 py-1 text-[10px] text-muted-foreground sm:flex",
         className,
       )}
       aria-label={ariaLabel}
     >
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <ProviderRemainingGroup
+      <div className="grid min-w-0 flex-1 grid-cols-2 gap-1">
+        <RemainingRow
           provider="Claude"
+          period="5h"
+          value={claudeFiveHourRemaining}
           dataAcceptance="chat-claude-token-remaining-badge"
-          fiveHour={claudeFiveHourRemaining}
-          sevenDay={claudeSevenDayRemaining}
+          testId="chat-llm-gauge-claude-5h"
         />
-        <ProviderRemainingGroup
+        <RemainingRow
+          provider="Claude"
+          period="7d"
+          value={claudeSevenDayRemaining}
+          dataAcceptance="chat-claude-token-remaining-badge"
+          testId="chat-llm-gauge-claude-7d"
+        />
+        <RemainingRow
           provider="GPT"
+          period="5h"
+          value={gptFiveHourRemaining}
           dataAcceptance="chat-gpt-token-remaining-badge"
-          fiveHour={gptFiveHourRemaining}
-          sevenDay={gptSevenDayRemaining}
+          testId="chat-llm-gauge-gpt-5h"
+        />
+        <RemainingRow
+          provider="GPT"
+          period="7d"
+          value={gptSevenDayRemaining}
+          dataAcceptance="chat-gpt-token-remaining-badge"
+          testId="chat-llm-gauge-gpt-7d"
         />
       </div>
       <Button
@@ -93,48 +109,27 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
   );
 }
 
-function ProviderRemainingGroup({
-  provider,
-  dataAcceptance,
-  fiveHour,
-  sevenDay,
-}: {
-  provider: "Claude" | "GPT";
-  dataAcceptance: string;
-  fiveHour: number;
-  sevenDay: number;
-}) {
-  const prefix = provider === "Claude" ? "claude" : "gpt";
-  return (
-    <div
-      data-acceptance={dataAcceptance}
-      className="flex min-w-0 items-center justify-between gap-2 rounded border bg-background/40 px-1.5 py-0.5"
-    >
-      <span className="font-medium text-foreground">{provider}</span>
-      <RemainingRow provider={provider} period="5h" value={fiveHour} testId={`chat-llm-gauge-${prefix}-5h`} />
-      <RemainingRow provider={provider} period="7d" value={sevenDay} testId={`chat-llm-gauge-${prefix}-7d`} />
-    </div>
-  );
-}
-
 function RemainingRow({
   provider,
   period,
   value,
+  dataAcceptance,
   testId,
 }: {
   provider: "Claude" | "GPT";
   period: "5h" | "7d";
   value: number;
+  dataAcceptance: string;
   testId: string;
 }) {
   return (
     <div
+      data-acceptance={dataAcceptance}
       data-testid={testId}
       aria-label={`${provider} ${period} 잔량 ${value}%`}
-      className="flex items-center gap-0.5 whitespace-nowrap leading-4"
+      className="flex min-w-0 items-center justify-between gap-1 rounded border bg-background/40 px-1 py-0.5 leading-4"
     >
-      <span>{period}</span>
+      <span className="whitespace-nowrap font-medium text-foreground">{provider} {period}</span>
       <span className="tabular-nums">{value}%</span>
     </div>
   );
