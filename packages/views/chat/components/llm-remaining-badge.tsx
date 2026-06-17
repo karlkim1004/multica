@@ -82,87 +82,39 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
     <div
       data-acceptance="chat-token-remaining-badge"
       className={cn(
-        "hidden min-w-[21rem] items-stretch gap-1.5 rounded-md border px-2 py-1 text-[10px] text-muted-foreground sm:flex",
+        "hidden h-6 shrink-0 items-center gap-1 rounded-md border bg-background/50 px-1.5 text-[11px] leading-none text-muted-foreground sm:flex",
         className,
       )}
       aria-label={ariaLabel}
     >
-      <div className="grid min-w-0 flex-1 grid-cols-2 gap-1">
-        <RemainingRow
-          provider="Claude"
-          periodLabel="5시간"
-          value={claudeFiveHourRemaining}
-          reset={claudeFiveHourReset}
-          dataAcceptance="chat-claude-token-remaining-badge"
-          testId="chat-llm-gauge-claude-5h"
-        />
-        <RemainingRow
-          provider="Claude"
-          periodLabel="1주"
-          value={claudeSevenDayRemaining}
-          reset={claudeSevenDayReset}
-          dataAcceptance="chat-claude-token-remaining-badge"
-          testId="chat-llm-gauge-claude-7d"
-        />
-        <RemainingRow
-          provider="GPT"
-          periodLabel="5시간"
-          value={gptFiveHourRemaining}
-          reset={gptFiveHourReset}
-          dataAcceptance="chat-gpt-token-remaining-badge"
-          testId="chat-llm-gauge-gpt-5h"
-        />
-        <RemainingRow
-          provider="GPT"
-          periodLabel="1주"
-          value={gptSevenDayRemaining}
-          reset={gptSevenDayReset}
-          dataAcceptance="chat-gpt-token-remaining-badge"
-          testId="chat-llm-gauge-gpt-7d"
-        />
-      </div>
+      <span
+        data-acceptance="chat-claude-token-remaining-badge"
+        data-testid="chat-llm-gauge-claude"
+        aria-label={`Claude 5시간 잔량 ${claudeFiveHourRemaining}%, Claude 1주 잔량 ${claudeSevenDayRemaining}%`}
+        className="whitespace-nowrap font-medium tabular-nums text-foreground"
+      >
+        C:5h{claudeFiveHourRemaining}%/7d{claudeSevenDayRemaining}%
+      </span>
+      <span className="w-1.5" aria-hidden="true" />
+      <span
+        data-acceptance="chat-gpt-token-remaining-badge"
+        data-testid="chat-llm-gauge-gpt"
+        aria-label={`GPT 5시간 잔량 ${gptFiveHourRemaining}%, GPT 1주 잔량 ${gptSevenDayRemaining}%`}
+        className="whitespace-nowrap font-medium tabular-nums text-foreground"
+      >
+        G:5h{gptFiveHourRemaining}%/7d{gptSevenDayRemaining}%
+      </span>
       <Button
         type="button"
         size="icon-xs"
         variant="ghost"
-        className="self-center"
+        className="ml-0.5 size-5 rounded"
         data-acceptance="chat-llm-gauge-manual-refresh"
         aria-label="채팅 LLM 잔량 새로고침"
         onClick={() => void refetch()}
       >
         <RefreshCw className={cn("h-3 w-3", isFetching && "animate-spin")} />
       </Button>
-    </div>
-  );
-}
-
-function RemainingRow({
-  provider,
-  periodLabel,
-  value,
-  reset,
-  dataAcceptance,
-  testId,
-}: {
-  provider: "Claude" | "GPT";
-  periodLabel: "5시간" | "1주";
-  value: number;
-  reset: string;
-  dataAcceptance: string;
-  testId: string;
-}) {
-  return (
-    <div
-      data-acceptance={dataAcceptance}
-      data-testid={testId}
-      aria-label={`${provider} ${periodLabel} 잔량 ${value}%, 리셋 ${reset}`}
-      className="min-w-0 rounded border bg-background/40 px-1.5 py-1 leading-4"
-    >
-      <div className="flex items-center justify-between gap-1">
-        <span className="whitespace-nowrap font-medium text-foreground">{provider} {periodLabel}</span>
-        <span className="tabular-nums">{value}%</span>
-      </div>
-      <div className="whitespace-nowrap text-[9px] leading-3 text-muted-foreground">리셋 {reset}</div>
     </div>
   );
 }

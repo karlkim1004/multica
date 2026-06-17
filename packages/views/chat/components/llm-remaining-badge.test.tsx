@@ -40,19 +40,15 @@ describe("LlmRemainingBadge", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders provider-specific 5h and 7d remaining values from the token snapshot API", async () => {
+  it("renders a compact single-line provider-specific quota summary", async () => {
     renderBadge();
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Claude 5시간 잔량 75%, 리셋 (수) 오후 9:30")).toBeInTheDocument();
-      expect(screen.getByLabelText("Claude 1주 잔량 40%, 리셋 (금) 오전 12:00")).toBeInTheDocument();
-      expect(screen.getByLabelText("GPT 5시간 잔량 90%, 리셋 10:45 PM")).toBeInTheDocument();
-      expect(screen.getByLabelText("GPT 1주 잔량 70%, 리셋 May 17")).toBeInTheDocument();
+      expect(screen.getByText("C:5h75%/7d40%")).toBeInTheDocument();
+      expect(screen.getByText("G:5h90%/7d70%")).toBeInTheDocument();
     });
-    expect(document.querySelector("[data-testid='chat-llm-gauge-claude-5h']")).toHaveTextContent("Claude 5시간75%리셋 (수) 오후 9:30");
-    expect(document.querySelector("[data-testid='chat-llm-gauge-claude-7d']")).toHaveTextContent("Claude 1주40%리셋 (금) 오전 12:00");
-    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-5h']")).toHaveTextContent("GPT 5시간90%리셋 10:45 PM");
-    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt-7d']")).toHaveTextContent("GPT 1주70%리셋 May 17");
+    expect(document.querySelector("[data-testid='chat-llm-gauge-claude']")).toHaveTextContent("C:5h75%/7d40%");
+    expect(document.querySelector("[data-testid='chat-llm-gauge-gpt']")).toHaveTextContent("G:5h90%/7d70%");
     expect(
       screen.getByLabelText(
         "채팅 LLM 잔량: Claude 5시간 75%, 리셋 (수) 오후 9:30, Claude 1주 40%, 리셋 (금) 오전 12:00, GPT 5시간 90%, 리셋 10:45 PM, GPT 1주 70%, 리셋 May 17",
@@ -60,6 +56,9 @@ describe("LlmRemainingBadge", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("채팅 LLM 잔량 새로고침"));
     expect(document.querySelector("[data-acceptance='chat-llm-gauge-manual-refresh']")).toBeTruthy();
+    expect(document.querySelector("[data-acceptance='chat-token-remaining-badge']")).toHaveTextContent(
+      "C:5h75%/7d40%G:5h90%/7d70%",
+    );
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/dashboard/llm-limit-status",
       expect.objectContaining({ cache: "no-store" }),

@@ -666,7 +666,7 @@ export function ChatWindow() {
     >
       <ChatResizeHandles onDragStart={startDrag} />
       {/* Header — ⊕ new + session dropdown | window tools */}
-      <div className="flex items-center justify-between border-b px-4 py-2.5 gap-2">
+      <div className="flex items-center justify-between border-b px-4 py-1.5 gap-2">
         <div className="flex items-center gap-1 min-w-0">
           <Tooltip>
             <TooltipTrigger
@@ -692,6 +692,7 @@ export function ChatWindow() {
             onSelectSession={handleSelectSession}
           />
         </div>
+        <ChatTokenBadges />
         <div className="flex items-center gap-0.5 shrink-0">
           <Tooltip>
             <TooltipTrigger
@@ -727,10 +728,6 @@ export function ChatWindow() {
           </Tooltip>
         </div>
       </div>
-      <div className="flex border-b px-4 py-2">
-        <ChatTokenBadges />
-      </div>
-
       {/* Messages / skeleton / empty state */}
       {showSkeleton ? (
         <ChatMessageSkeleton />
@@ -795,7 +792,7 @@ export function ChatWindow() {
 }
 
 function ChatTokenBadges() {
-  return <LlmRemainingBadge className="w-full max-w-[22rem] bg-background/50" />;
+  return <LlmRemainingBadge />;
 }
 
 /**
