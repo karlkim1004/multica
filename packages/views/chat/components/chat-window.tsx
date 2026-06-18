@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square, RefreshCw } from "lucide-react";
+import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
@@ -196,8 +196,6 @@ export function ChatWindow() {
   const {
     data: rawMessagePages,
     isLoading: messagesLoading,
-    isFetching: isFetchingMessages,
-    refetch: refetchMessages,
     fetchNextPage: fetchOlderMessages,
     hasNextPage: hasOlderMessages,
     isFetchingNextPage: isFetchingOlderMessages,

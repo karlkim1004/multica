@@ -167,7 +167,7 @@ function RemainingRow({
         <span className="whitespace-nowrap font-medium text-foreground">{provider} {periodLabel}</span>
         <span className="tabular-nums">{value === null ? "확인 불가" : `${value}%`}</span>
       </div>
-      <div className="whitespace-nowrap text-[9px] leading-3 text-muted-foreground">리셋 {reset}</div>
+      <div className="whitespace-nowrap text-[9px] leading-3 text-muted-foreground">{`리셋 ${reset}`}</div>
     </div>
   );
 }

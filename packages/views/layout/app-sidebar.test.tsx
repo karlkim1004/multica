@@ -82,13 +82,16 @@ vi.mock("../workspace/workspace-avatar", () => ({
     name,
     avatarUrl,
     size,
+    className,
   }: {
     name: string;
     avatarUrl?: string | null;
     size?: string;
+    className?: string;
   }) => (
     <img
       alt={name}
+      className={className}
       data-avatar-url={avatarUrl ?? ""}
       data-avatar-size={size ?? "sm"}
     />
@@ -181,7 +184,7 @@ describe("PinRow", () => {
     expect(await screen.findByText("MUL-123 Keep this pin")).toBeInTheDocument();
   });
 
-  it("keeps the uploaded NexAI logo image and renders it at double size", () => {
+  it("renders only the enlarged uploaded NexAI logo without a duplicate wordmark", () => {
     workspace.current = { id: "ws-1", name: "NexAI", slug: "nexai", avatar_url: "/uploads/workspace-logo.png" };
     render(<AppSidebar />);
 
@@ -192,7 +195,7 @@ describe("PinRow", () => {
     expect(icon).toBeTruthy();
     expect(logo).toHaveAttribute("data-avatar-url", "/uploads/workspace-logo.png");
     expect(logo).toHaveAttribute("data-avatar-size", "xl");
-    expect(wordmark).toBeTruthy();
-    expect(wordmark?.textContent).toBe("NexAI");
+    expect(logo).toHaveClass("h-12");
+    expect(wordmark).toBeNull();
   });
 });

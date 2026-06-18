@@ -487,16 +487,18 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                             name={workspace?.name ?? "M"}
                             avatarUrl={workspace?.avatar_url}
                             size={isNexAIWorkspace ? "xl" : "sm"}
-                            className={isNexAIWorkspace ? "h-10 w-auto object-contain" : undefined}
+                            className={isNexAIWorkspace ? "h-12 w-auto object-contain" : undefined}
                           />
                         </span>
                         {myInvitations.length > 0 && (
                           <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-brand ring-1 ring-sidebar" />
                         )}
                       </span>
-                      <span data-acceptance="nexai-wordmark" className="flex-1 truncate font-medium">
-                        {workspace?.name ?? "Multica"}
-                      </span>
+                      {!isNexAIWorkspace && (
+                        <span data-acceptance="nexai-wordmark" className="flex-1 truncate font-medium">
+                          {workspace?.name ?? "Multica"}
+                        </span>
+                      )}
                       <ChevronDown className="size-3 text-muted-foreground" />
                     </SidebarMenuButton>
                   }
