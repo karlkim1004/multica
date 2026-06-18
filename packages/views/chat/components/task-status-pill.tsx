@@ -165,6 +165,8 @@ export function TaskStatusPill({
   return (
     <div
       className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground"
+      data-acceptance="chat-response-in-progress"
+      aria-busy="true"
       aria-live="polite"
     >
       {!stage.static && (

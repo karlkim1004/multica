@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square } from "lucide-react";
+import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square, RefreshCw } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
@@ -58,6 +58,7 @@ import { useT } from "../../i18n";
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
+const CHAT_MESSAGES_REFRESH_LABEL = "메시지 새로고침";
 
 function seedChatMessagesPageCache(
   qc: ReturnType<typeof useQueryClient>,
@@ -196,6 +197,8 @@ export function ChatWindow() {
   const {
     data: rawMessagePages,
     isLoading: messagesLoading,
+    isFetching: isFetchingMessages,
+    refetch: refetchMessages,
     fetchNextPage: fetchOlderMessages,
     hasNextPage: hasOlderMessages,
     isFetchingNextPage: isFetchingOlderMessages,
@@ -691,6 +694,23 @@ export function ChatWindow() {
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
           />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground"
+                  data-acceptance="chat-messages-manual-refresh"
+                  onClick={() => void refetchMessages()}
+                  disabled={isFetchingMessages}
+                />
+              }
+            >
+              <RefreshCw className={cn("size-3.5", isFetchingMessages && "animate-spin")} />
+            </TooltipTrigger>
+            <TooltipContent side="top">{CHAT_MESSAGES_REFRESH_LABEL}</TooltipContent>
+          </Tooltip>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <Tooltip>

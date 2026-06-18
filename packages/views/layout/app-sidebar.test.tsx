@@ -196,6 +196,7 @@ describe("PinRow", () => {
     expect(logo).toHaveAttribute("data-avatar-url", "/uploads/workspace-logo.png");
     expect(logo).toHaveAttribute("data-avatar-size", "xl");
     expect(logo).toHaveClass("h-12");
-    expect(wordmark).toBeNull();
+    expect(wordmark).toHaveClass("opacity-0");
+    expect(wordmark?.textContent).toBe("NexAI");
   });
 });

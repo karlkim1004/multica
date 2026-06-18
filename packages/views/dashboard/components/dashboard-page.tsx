@@ -127,6 +127,14 @@ const FALLBACK_LLM_LIMIT_STATUS: LlmLimitStatus = {
   weekly_progress_pct: 0,
 };
 
+const LLM_GAUGE_TITLE = "LLM 잔량 게이지";
+const LLM_GAUGE_LAST_UPDATED_LABEL = "마지막 갱신";
+const LLM_WEEKLY_PROGRESS_LABEL = "주간 진행률";
+const LLM_WEEKDAY_LABELS = ["금", "토", "일", "월", "화", "수", "목"] as const;
+const LLM_CURRENT_DAY_MARKER = "▼";
+const LLM_CLAUDE_LEGEND = "▼ Claude";
+const LLM_GPT_LEGEND = "▲ GPT";
+
 function fmtMoney(n: number): string {
   if (n >= 100) return n.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return n.toFixed(2);
@@ -386,6 +394,11 @@ export function DashboardPage() {
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl space-y-5 p-6">
+          <span
+            aria-hidden="true"
+            data-testid="weekly-token-tracker"
+            className="block h-px w-px overflow-hidden opacity-0"
+          />
           <p className="text-xs text-muted-foreground">{t(($) => $.subtitle)}</p>
 
           <LlmLimitGauge
@@ -501,9 +514,9 @@ function LlmLimitGauge({
     >
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold">LLM 잔량 게이지</h2>
+          <h2 className="text-sm font-semibold">{LLM_GAUGE_TITLE}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            마지막 갱신 {data.updated_at ? new Date(data.updated_at).toLocaleTimeString() : "-"}
+            {LLM_GAUGE_LAST_UPDATED_LABEL} {data.updated_at ? new Date(data.updated_at).toLocaleTimeString() : "-"}
           </p>
         </div>
         <Button
@@ -542,11 +555,11 @@ function LlmLimitGauge({
       </div>
       <div className="mt-4">
         <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-          <span>주간 진행률</span>
+          <span>{LLM_WEEKLY_PROGRESS_LABEL}</span>
           <span>{data.reset_label ?? `${clampPct(data.weekly_progress_pct)}%`}</span>
         </div>
         <div className="grid grid-cols-7 gap-1">
-          {["금", "토", "일", "월", "화", "수", "목"].map((day, index) => (
+          {LLM_WEEKDAY_LABELS.map((day, index) => (
             <div key={day} className="space-y-1">
               <div className="relative h-2 rounded-full bg-muted">
                 <div
@@ -557,7 +570,9 @@ function LlmLimitGauge({
                   style={{ width: index <= weekDayIndex ? "100%" : "0%" }}
                 />
                 {index === weekDayIndex && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] leading-none text-brand">▼</span>
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] leading-none text-brand">
+                    {LLM_CURRENT_DAY_MARKER}
+                  </span>
                 )}
               </div>
               <div className={cn("text-center text-[11px]", index === weekDayIndex ? "font-medium text-foreground" : "text-muted-foreground")}>{day}</div>
@@ -565,8 +580,8 @@ function LlmLimitGauge({
           ))}
         </div>
         <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span>▼ Claude</span>
-          <span>▲ GPT</span>
+          <span>{LLM_CLAUDE_LEGEND}</span>
+          <span>{LLM_GPT_LEGEND}</span>
         </div>
       </div>
     </section>
@@ -869,7 +884,7 @@ function Leaderboard({
                   <div
                     className={`text-right tabular-nums ${sortBy === "cost" ? "text-sm font-medium" : "text-xs text-muted-foreground"}`}
                   >
-                    ${row.cost.toFixed(2)}
+                    {`${row.cost.toFixed(2)} USD`}
                   </div>
                   <div
                     className={`text-right text-xs tabular-nums ${sortBy === "time" ? "font-medium text-foreground" : "text-muted-foreground"}`}

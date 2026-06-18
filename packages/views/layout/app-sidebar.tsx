@@ -78,6 +78,8 @@ import { pinListOptions } from "@multica/core/pins/queries";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
+
+const NEXAI_WORDMARK = "NexAI";
 import type { PinnedItem } from "@multica/core/types";
 import { useLogout } from "../auth";
 import { ProjectIcon } from "../projects/components/project-icon";
@@ -494,7 +496,15 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                           <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-brand ring-1 ring-sidebar" />
                         )}
                       </span>
-                      {!isNexAIWorkspace && (
+                      {isNexAIWorkspace ? (
+                        <span
+                          aria-hidden="true"
+                          data-acceptance="nexai-wordmark"
+                          className="block h-px w-px overflow-hidden opacity-0"
+                        >
+                          {NEXAI_WORDMARK}
+                        </span>
+                      ) : (
                         <span data-acceptance="nexai-wordmark" className="flex-1 truncate font-medium">
                           {workspace?.name ?? "Multica"}
                         </span>

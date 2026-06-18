@@ -112,8 +112,8 @@ function Segmented<T extends string | number>({
 }
 
 function fmtMoney(n: number): string {
-  if (n >= 100) return `$${n.toFixed(0)}`;
-  return `$${n.toFixed(2)}`;
+  if (n >= 100) return `${n.toFixed(0)} USD`;
+  return `${n.toFixed(2)} USD`;
 }
 
 // ---------------------------------------------------------------------------
@@ -870,4 +870,3 @@ function computeTotals(rows: RuntimeUsage[]): UsageTotals {
     { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, cacheSavings: 0 },
   );
 }
-

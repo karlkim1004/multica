@@ -310,6 +310,7 @@ export function ChatInput({
             running={isRunning}
             allowSubmitWhileRunning
             onStop={onStop}
+            dataAcceptance="send-button"
             tooltip={`${t(($) => $.input.send_tooltip)} · ${formatShortcut(modKey, enterKey)}`}
             stopTooltip={t(($) => $.input.stop_tooltip)}
           />
