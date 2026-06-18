@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { AppSidebar } from "./app-sidebar";
 
-const { detail, deletePin, pins } = vi.hoisted(() => ({
+const { detail, deletePin, pins, workspace } = vi.hoisted(() => ({
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
   pins: {
@@ -18,6 +18,9 @@ const { detail, deletePin, pins } = vi.hoisted(() => ({
         created_at: "2026-05-06T00:00:00Z",
       },
     ],
+  },
+  workspace: {
+    current: { id: "ws-1", name: "Acme", slug: "acme", avatar_url: null as string | null },
   },
 }));
 
@@ -74,7 +77,26 @@ vi.mock("../navigation", () => ({
   useNavigation: () => ({ pathname: "/acme/issues", push: vi.fn() }),
 }));
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
-vi.mock("../workspace/workspace-avatar", () => ({ WorkspaceAvatar: () => <span /> }));
+vi.mock("../workspace/workspace-avatar", () => ({
+  WorkspaceAvatar: ({
+    name,
+    avatarUrl,
+    size,
+    className,
+  }: {
+    name: string;
+    avatarUrl?: string | null;
+    size?: string;
+    className?: string;
+  }) => (
+    <img
+      alt={name}
+      className={className}
+      data-avatar-url={avatarUrl ?? ""}
+      data-avatar-size={size ?? "sm"}
+    />
+  ),
+}));
 vi.mock("@multica/ui/components/common/actor-avatar", () => ({ ActorAvatar: () => <span /> }));
 
 vi.mock("@multica/core/auth", () => ({
@@ -82,7 +104,7 @@ vi.mock("@multica/core/auth", () => ({
 }));
 vi.mock("@multica/core/paths", () => ({
   paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues` }) },
-  useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
+  useCurrentWorkspace: () => workspace.current,
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     myIssues: () => "/acme/my-issues",
@@ -99,7 +121,16 @@ vi.mock("@multica/core/paths", () => ({
     projectDetail: (id: string) => `/acme/projects/${id}`,
   }),
 }));
-vi.mock("@multica/core/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@multica/core/api")>()), api: {} }));
+vi.mock("@multica/core/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@multica/core/api")>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getBaseUrl: () => "http://127.0.0.1:8080",
+    },
+  };
+});
 vi.mock("@multica/core/inbox/queries", () => ({ deduplicateInboxItems: (items: unknown[]) => items, inboxKeys: { list: () => ["inbox"] } }));
 vi.mock("@multica/core/issues/queries", () => ({ issueDetailOptions: () => ({ queryKey: ["issue"] }) }));
 vi.mock("@multica/core/issues/stores/create-mode-store", () => ({
@@ -132,6 +163,7 @@ describe("PinRow", () => {
   beforeEach(() => {
     deletePin.mockReset();
     detail.current = { isPending: false, isError: false, data: null, error: null };
+    workspace.current = { id: "ws-1", name: "Acme", slug: "acme", avatar_url: null };
   });
 
   it("unpins missing details", async () => {
@@ -150,5 +182,21 @@ describe("PinRow", () => {
     detail.current = { isPending: false, isError: false, data: { identifier: "MUL-123", title: "Keep this pin", status: "todo" }, error: null };
     render(<AppSidebar />);
     expect(await screen.findByText("MUL-123 Keep this pin")).toBeInTheDocument();
+  });
+
+  it("renders only the enlarged uploaded NexAI logo without a duplicate wordmark", () => {
+    workspace.current = { id: "ws-1", name: "NexAI", slug: "nexai", avatar_url: "/uploads/workspace-logo.png" };
+    render(<AppSidebar />);
+
+    const icon = document.querySelector("[data-acceptance='nexai-nt-icon']");
+    const wordmark = document.querySelector("[data-acceptance='nexai-wordmark']");
+    const logo = icon?.querySelector("img");
+
+    expect(icon).toBeTruthy();
+    expect(logo).toHaveAttribute("data-avatar-url", "/uploads/workspace-logo.png");
+    expect(logo).toHaveAttribute("data-avatar-size", "xl");
+    expect(logo).toHaveClass("h-12");
+    expect(wordmark).toHaveClass("opacity-0");
+    expect(wordmark?.textContent).toBe("NexAI");
   });
 });

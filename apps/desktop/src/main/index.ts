@@ -1,15 +1,23 @@
-import { app, BrowserWindow, ipcMain, nativeImage, Notification } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from "electron";
 import { homedir } from "os";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import fixPath from "fix-path";
 import { setupAutoUpdater } from "./updater";
 import { setupDaemonManager } from "./daemon-manager";
+import { setupLocalDirectory } from "./local-directory";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
 import { installContextMenu } from "./context-menu";
+import { handleAppShortcut } from "./keyboard-shortcuts";
+import { installNavigationGestures } from "./navigation-gestures";
 import { getAppVersion } from "./app-version";
 import { loadRuntimeConfig } from "./runtime-config-loader";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
+import {
+  createElectronReloadPrompt,
+  installRendererRecoveryHandlers,
+  type RendererRecoveryWindow,
+} from "./renderer-recovery";
 
 // Bundled icon used for dock/taskbar branding. macOS/Windows production
 // builds let the OS pick up the icon from the .app bundle / .exe resources,
@@ -157,10 +165,15 @@ function createWindow(): void {
       additionalArguments: [`--multica-locale=${systemLocale}`],
     },
   });
+  const window = mainWindow;
+
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = null;
+  });
 
   // Strip Origin header from WebSocket upgrade requests so the server's
   // origin whitelist doesn't reject connections from localhost dev origins.
-  mainWindow.webContents.session.webRequest.onBeforeSendHeaders(
+  window.webContents.session.webRequest.onBeforeSendHeaders(
     { urls: ["wss://*/*", "ws://*/*"] },
     (details, callback) => {
       delete details.requestHeaders["Origin"];
@@ -168,8 +181,8 @@ function createWindow(): void {
     },
   );
 
-  mainWindow.on("ready-to-show", () => {
-    mainWindow?.show();
+  window.on("ready-to-show", () => {
+    window.show();
   });
 
   // Detect OS language changes while the app is running. Electron has no
@@ -177,40 +190,80 @@ function createWindow(): void {
   // catches the common case where users switch System Settings → Language
   // and bring the app back. The renderer decides whether to act (it ignores
   // the signal when the user has an explicit Settings choice).
-  mainWindow.on("focus", () => {
+  window.on("focus", () => {
     const current = getSystemLocale();
     if (current === lastKnownSystemLocale) return;
     lastKnownSystemLocale = current;
-    mainWindow?.webContents.send("locale:system-changed", current);
+    window.webContents.send("locale:system-changed", current);
   });
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
+  window.webContents.setWindowOpenHandler((details) => {
     openExternalSafely(details.url);
     return { action: "deny" };
   });
 
-  // Prevent Cmd+R / Ctrl+R / Shift+Cmd+R / Shift+Ctrl+R / F5 from
-  // reloading the page. In a desktop app an accidental reload destroys
-  // in-memory state (tabs, drafts, WS connections) with no URL bar to
-  // navigate back. DevTools refresh (via the DevTools UI) still works.
-  mainWindow.webContents.on("before-input-event", (_event, input) => {
-    if (input.type !== "keyDown") return;
-    const cmdOrCtrl =
-      process.platform === "darwin" ? input.meta : input.control;
-    if (
-      (cmdOrCtrl && input.key.toLowerCase() === "r") ||
-      input.key === "F5"
-    ) {
-      _event.preventDefault();
+  // Window-level keyboard shortcuts. Calling preventDefault here prevents
+  // both the renderer keydown AND the application menu accelerator, so
+  // anything we own here (reload-block, zoom) is the sole handler for
+  // that combination — no double-fire with the macOS default View menu.
+  window.webContents.on("before-input-event", (event, input) => {
+    if (handleAppShortcut(input, window.webContents)) {
+      event.preventDefault();
     }
   });
 
-  installContextMenu(mainWindow.webContents);
+  // Dev-mode renderer diagnostics. When the renderer crashes hard enough
+  // that DevTools can't be opened (white screen with no clickable surface),
+  // the only way to recover the actual JS error is to forward it from the
+  // main process to the terminal running `make dev`. Without these, the
+  // user sees only the daemon-manager polling noise (`Render frame was
+  // disposed before WebFrameMain could be accessed`) which is a downstream
+  // symptom, not the cause.
+  //
+  // Gated by `is.dev` to keep production stderr clean — packaged builds
+  // don't have a terminal anyway, and we ship to crash-reporting separately.
+  if (is.dev) {
+    const log = (tag: string, ...args: unknown[]) =>
+      process.stderr.write(`[renderer ${tag}] ${args.map(String).join(" ")}\n`);
+
+    // Forward every renderer-side console.* call. The detail object also
+    // carries source URL + line — included so a thrown stack trace from
+    // window.onerror is traceable back to a file.
+    window.webContents.on("console-message", (details) => {
+      const { level, message, sourceId, lineNumber } = details;
+      log(level, `${message} (${sourceId}:${lineNumber})`);
+    });
+
+    // Fires when loadURL / loadFile can't reach its target (dev server
+    // not up yet, network blip, file missing). errorCode is a Chromium
+    // net error number; -3 = ABORTED is normal during HMR and skipped.
+    window.webContents.on(
+      "did-fail-load",
+      (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (errorCode === -3) return;
+        log(
+          "did-fail-load",
+          `code=${errorCode} desc=${errorDescription} url=${validatedURL} mainFrame=${isMainFrame}`,
+        );
+      },
+    );
+
+  }
+
+  installRendererRecoveryHandlers(window as unknown as RendererRecoveryWindow, {
+    isDev: is.dev,
+    showReloadPrompt: createElectronReloadPrompt((options) =>
+      dialog.showMessageBox(window, options),
+    ),
+  });
+
+  installContextMenu(window.webContents);
+  installNavigationGestures(window);
 
   if (is.dev && process.env["ELECTRON_RENDERER_URL"]) {
-    mainWindow.loadURL(process.env["ELECTRON_RENDERER_URL"]);
+    window.loadURL(process.env["ELECTRON_RENDERER_URL"]);
   } else {
-    mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+    window.loadFile(join(__dirname, "../renderer/index.html"));
   }
 }
 
@@ -412,6 +465,7 @@ if (!gotTheLock) {
 
     setupAutoUpdater(() => mainWindow);
     setupDaemonManager(() => mainWindow);
+    setupLocalDirectory(() => mainWindow);
 
     // macOS: deep link arrives via open-url event
     app.on("open-url", (_event, url) => {

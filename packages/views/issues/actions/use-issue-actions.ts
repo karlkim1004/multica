@@ -10,6 +10,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { useModalStore } from "@multica/core/modals";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { pinListOptions, useCreatePin, useDeletePin } from "@multica/core/pins";
+import { copyText } from "@multica/ui/lib/clipboard";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 
@@ -65,7 +66,14 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
       if (!issueId) return;
       updateIssue.mutate(
         { id: issueId, ...updates },
-        { onError: () => toast.error(t(($) => $.detail.update_failed)) },
+        {
+          onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t(($) => $.detail.update_failed),
+            ),
+        },
       );
       // Hint: assigning an agent to a backlog issue won't trigger execution
       // until the issue is moved to an active status.
@@ -94,10 +102,9 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
   const copyLink = useCallback(async () => {
     if (!issueId) return;
     const url = navigation.getShareableUrl(paths.issueDetail(issueId));
-    try {
-      await navigator.clipboard.writeText(url);
+    if (await copyText(url)) {
       toast.success(t(($) => $.detail.link_copied));
-    } catch {
+    } else {
       toast.error(t(($) => $.detail.link_copy_failed));
     }
   }, [paths, issueId, navigation, t]);
