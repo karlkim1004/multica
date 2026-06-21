@@ -149,13 +149,20 @@ function MessageBubble({ message, isPending }: { message: ChatMessage; isPending
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="rounded-2xl bg-muted px-3.5 py-2 text-sm max-w-[80%] break-words">
-          {/* User messages are authored as markdown in ContentEditor, so
-           * render them through the same pipeline as assistant replies.
-           * Neutralise prose's leading/trailing margin so single-line
-           * bubbles stay as compact as the plain-text version used to. */}
-          <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-            <Markdown>{message.content}</Markdown>
+        <div className="flex max-w-[80%] min-w-0 items-end gap-1.5">
+          <MessageCopyButton
+            message={message}
+            timeline={[]}
+            className="mb-1 text-muted-foreground/70 hover:text-foreground"
+          />
+          <div className="min-w-0 rounded-2xl bg-muted px-3.5 py-2 text-sm break-words">
+            {/* User messages are authored as markdown in ContentEditor, so
+             * render them through the same pipeline as assistant replies.
+             * Neutralise prose's leading/trailing margin so single-line
+             * bubbles stay as compact as the plain-text version used to. */}
+            <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+              <Markdown>{message.content}</Markdown>
+            </div>
           </div>
         </div>
       </div>
@@ -246,14 +253,21 @@ function MessageFooter({
 function MessageCopyButton({
   message,
   timeline,
+  className,
 }: {
   message: ChatMessage;
   timeline: ChatTimelineItem[];
+  className?: string;
 }) {
   const { t } = useT("chat");
+  const [copied, setCopied] = useState(false);
+  const copiedResetRef = useRef<number | null>(null);
   const handleCopy = async () => {
     try {
       await copyMarkdown(extractCopyText(message, timeline));
+      setCopied(true);
+      if (copiedResetRef.current) window.clearTimeout(copiedResetRef.current);
+      copiedResetRef.current = window.setTimeout(() => setCopied(false), 1600);
       toast.success(t(($) => $.message_list.copied_toast));
     } catch {
       toast.error(t(($) => $.message_list.copy_failed_toast));
@@ -265,17 +279,17 @@ function MessageCopyButton({
         render={
           <Button
             variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground/70 hover:text-foreground"
+            size="icon-sm"
+            className={cn("text-muted-foreground/70 hover:text-foreground", className)}
             onClick={handleCopy}
-            aria-label={t(($) => $.message_list.copy_action)}
+            aria-label={copied ? t(($) => $.message_list.copied_toast) : t(($) => $.message_list.copy_action)}
           />
         }
       >
         <Copy />
       </TooltipTrigger>
       <TooltipContent side="top">
-        {t(($) => $.message_list.copy_action)}
+        {copied ? t(($) => $.message_list.copied_toast) : t(($) => $.message_list.copy_action)}
       </TooltipContent>
     </Tooltip>
   );
@@ -593,4 +607,3 @@ function ErrorRow({ item }: { item: ChatTimelineItem }) {
 }
 
 // ─── Shared ──────────────────────────────────────────────────────────────
-
