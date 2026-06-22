@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import type { ChatMessage } from "@multica/core/types";
 import { ChatMessageList } from "./chat-message-list";
 
@@ -76,12 +76,13 @@ const message = (
   ...overrides,
 });
 
-function renderMessages(messages: ChatMessage[]) {
+function renderMessages(messages: ChatMessage[], voiceOutputEnabled = false) {
   render(
     <ChatMessageList
       messages={messages}
       pendingTask={null}
       availability="online"
+      voiceOutputEnabled={voiceOutputEnabled}
     />,
   );
 }
@@ -136,5 +137,65 @@ describe("ChatMessageList timestamps and copy action", () => {
 
     expect(copyText).toHaveBeenCalledWith(content);
     expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+});
+
+describe("ChatMessageList voice output", () => {
+  beforeEach(() => {
+    vi.stubGlobal("SpeechSynthesisUtterance", vi.fn(function SpeechSynthesisUtterance(this: { text: string; lang: string; voice: SpeechSynthesisVoice | null }, text: string) {
+      this.text = text;
+      this.lang = "";
+      this.voice = null;
+    }));
+    vi.stubGlobal("speechSynthesis", {
+      speak: vi.fn(),
+      cancel: vi.fn(),
+      getVoices: vi.fn(() => [{ lang: "ko-KR", name: "Korean" }]),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("speaks a newly received assistant message in Korean when enabled", () => {
+    const { rerender } = render(
+      <ChatMessageList messages={[]} pendingTask={null} availability="online" voiceOutputEnabled />,
+    );
+
+    rerender(
+      <ChatMessageList
+        messages={[
+          message({
+            id: "assistant-1",
+            role: "assistant",
+            content: "대표님, 확인했습니다.",
+            created_at: "2026-06-22T00:00:00Z",
+          }),
+        ]}
+        pendingTask={null}
+        availability="online"
+        voiceOutputEnabled
+      />,
+    );
+
+    const speak = window.speechSynthesis.speak as unknown as ReturnType<typeof vi.fn>;
+    expect(speak).toHaveBeenCalledTimes(1);
+    const utterance = speak.mock.calls[0]![0] as SpeechSynthesisUtterance;
+    expect(utterance.text).toBe("대표님, 확인했습니다.");
+    expect(utterance.lang).toBe("ko-KR");
+  });
+
+  it("does not speak assistant messages when disabled", () => {
+    renderMessages([
+      message({
+        id: "assistant-1",
+        role: "assistant",
+        content: "조용히 표시만 합니다.",
+        created_at: "2026-06-22T00:00:00Z",
+      }),
+    ]);
+
+    expect(window.speechSynthesis.speak).not.toHaveBeenCalled();
   });
 });
