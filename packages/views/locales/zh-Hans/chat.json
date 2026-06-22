@@ -11,7 +11,14 @@
     "placeholder_default": "输入消息…",
     "send_tooltip": "发送",
     "stop_tooltip": "停止",
-    "send_failed_toast": "发送消息失败"
+    "send_failed_toast": "发送消息失败",
+    "voice_start_label": "开始语音输入",
+    "voice_unsupported_label": "不支持语音输入",
+    "voice_listening": "正在聆听...",
+    "voice_captured": "已识别语音输入",
+    "voice_failed": "语音输入失败，请重试。",
+    "voice_permission_denied": "麦克风权限已被拒绝。",
+    "voice_unsupported": "此浏览器不支持语音输入。"
   },
   "message_list": {
     "show_details": "查看详情",
