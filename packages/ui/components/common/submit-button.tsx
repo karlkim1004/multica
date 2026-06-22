@@ -53,7 +53,7 @@ function SubmitButton({
 
   if (running) {
     const stopButton = (
-      <Button size="icon-sm" onClick={onStop}>
+      <Button size="icon-sm" data-acceptance="chat-stop-button" onClick={onStop}>
         <Square className="fill-current" />
       </Button>
     );
