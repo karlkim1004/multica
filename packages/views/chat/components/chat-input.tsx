@@ -11,6 +11,12 @@ import {
 } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
+import { Button } from "@multica/ui/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@multica/ui/components/ui/tooltip";
 import { useChatStore, newSessionDraftKey } from "@multica/core/chat";
 import { createLogger } from "@multica/core/logger";
 import { enterKey, formatShortcut, modKey } from "@multica/core/platform";
@@ -18,6 +24,7 @@ import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import type { MentionItem } from "../../editor/extensions/mention-suggestion";
 import type { Attachment } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { Mic, MicOff } from "lucide-react";
 
 const logger = createLogger("chat.ui");
 const EMPTY_ATTACHMENTS: Attachment[] = [];
@@ -39,6 +46,30 @@ function attachmentReferenceUrls(attachment: Attachment): string[] {
 
 function isAttachmentReferenced(content: string, attachment: Attachment): boolean {
   return attachmentReferenceUrls(attachment).some((url) => content.includes(url));
+}
+
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  start: () => void;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+type SpeechRecognitionResultEvent = {
+  results: ArrayLike<ArrayLike<{ transcript?: string }>>;
+};
+
+function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
+  if (typeof window === "undefined") return null;
+  const candidate = window as unknown as {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  };
+  return candidate.SpeechRecognition ?? candidate.webkitSpeechRecognition ?? null;
 }
 
 interface ChatInputProps {
@@ -140,6 +171,9 @@ export function ChatInput({
     draftKey: string;
   } | null>(null);
   const consumedRestoreIdRef = useRef<string | null>(null);
+  const [voiceSupport, setVoiceSupport] = useState<"checking" | "supported" | "unsupported">("checking");
+  const [isListening, setIsListening] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState("");
   const activeRestore = editorRestore?.draftKey === draftKey ? editorRestore : null;
   const editorKey = `${selectedAgentId ?? "no-agent"}:${activeRestore?.id ?? "base"}`;
   // Number of in-flight uploads. We track this explicitly (rather than
@@ -163,6 +197,12 @@ export function ChatInput({
   // `onSend` call would silently drop `attachment_ids` so the
   // attachment never binds to the chat message.
   const uploadMapRef = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    const supported = !!getSpeechRecognitionConstructor();
+    setVoiceSupport(supported ? "supported" : "unsupported");
+    if (!supported) setVoiceStatus(t(($) => $.input.voice_unsupported));
+  }, [t]);
 
   useEffect(() => {
     if (!restoreDraftRequest) {
@@ -230,6 +270,54 @@ export function ChatInput({
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: (files) => files.forEach((f) => editorRef.current?.uploadFile(f)),
   });
+
+  const setDraftFromVoice = useCallback(
+    (content: string) => {
+      setInputDraft(draftKey, content);
+      setIsEmpty(!content.trim());
+      setEditorRestore({
+        id: `voice-${Date.now()}`,
+        content,
+        draftKey,
+      });
+    },
+    [draftKey, setInputDraft],
+  );
+
+  const handleVoiceInput = useCallback(() => {
+    const Recognition = getSpeechRecognitionConstructor();
+    if (!Recognition) {
+      setVoiceSupport("unsupported");
+      setVoiceStatus(t(($) => $.input.voice_unsupported));
+      return;
+    }
+
+    const recognition = new Recognition();
+    recognition.lang = "ko-KR";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join("")
+        .trim();
+      if (!transcript) return;
+      setDraftFromVoice(transcript);
+      setVoiceStatus(t(($) => $.input.voice_captured));
+    };
+    recognition.onerror = (event) => {
+      const denied = event.error === "not-allowed" || event.error === "service-not-allowed";
+      setVoiceStatus(denied ? t(($) => $.input.voice_permission_denied) : t(($) => $.input.voice_failed));
+      setIsListening(false);
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    setVoiceStatus(t(($) => $.input.voice_listening));
+    setIsListening(true);
+    recognition.start();
+  }, [setDraftFromVoice, t]);
 
   const handleSend = async () => {
     const content = editorRef.current?.getMarkdown()?.replace(/(\n\s*)+$/, "").trim();
@@ -403,6 +491,36 @@ export function ChatInput({
           </div>
         )}
         <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className={cn(
+                    "rounded-full text-muted-foreground",
+                    isListening && "text-brand",
+                  )}
+                  aria-label={
+                    voiceSupport !== "supported"
+                      ? t(($) => $.input.voice_unsupported_label)
+                      : t(($) => $.input.voice_start_label)
+                  }
+                  aria-pressed={isListening}
+                  disabled={voiceSupport !== "supported" || !!disabled || !!noAgent || isSubmitting}
+                  onClick={handleVoiceInput}
+                />
+              }
+            >
+              {voiceSupport !== "supported" ? <MicOff /> : <Mic />}
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {voiceSupport !== "supported"
+                ? t(($) => $.input.voice_unsupported_label)
+                : t(($) => $.input.voice_start_label)}
+            </TooltipContent>
+          </Tooltip>
           {uploadEnabled && (
             <FileUploadButton
               size="sm"
@@ -419,6 +537,11 @@ export function ChatInput({
             stopTooltip={t(($) => $.input.stop_tooltip)}
           />
         </div>
+        {voiceStatus && (
+          <div className="absolute bottom-1.5 left-1/2 max-w-[45%] -translate-x-1/2 truncate text-center text-xs text-muted-foreground">
+            {voiceStatus}
+          </div>
+        )}
         {uploadEnabled && isDragOver && <FileDropOverlay />}
       </div>
     </div>

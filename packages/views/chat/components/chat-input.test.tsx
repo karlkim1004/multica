@@ -1,6 +1,7 @@
 import { forwardRef, useRef, useImperativeHandle } from "react";
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import enCommon from "../../locales/en/common.json";
@@ -105,6 +106,7 @@ vi.mock("../../editor", () => ({
     return (
       <textarea
         data-testid="editor"
+        defaultValue={defaultValue}
         placeholder={placeholder}
         onChange={(e) => {
           valueRef.current = e.target.value;
@@ -363,14 +365,67 @@ describe("ChatInput attachment wiring", () => {
 
   it("does not render the file upload button when onUploadFile is omitted", () => {
     renderInput({ onUploadFile: undefined });
-    // FileUploadButton renders an icon button labelled by its tooltip — when
-    // upload wiring is absent the chat input falls back to "submit + extras"
-    // only. Probe by counting buttons: with no upload, only the submit
-    // button is in the action row.
-    const buttons = screen.getAllByRole("button");
-    // The agent picker may render zero buttons
-    // in this test (no leftAdornment passed). So a single button = submit.
-    expect(buttons.length).toBe(1);
+    expect(screen.queryByRole("button", { name: "attach_file" })).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatInput voice input", () => {
+  type SpeechRecognitionResultEvent = {
+    results: ArrayLike<ArrayLike<{ transcript?: string }>>;
+  };
+
+  class MockSpeechRecognition {
+    static instances: MockSpeechRecognition[] = [];
+    lang = "";
+    interimResults = true;
+    continuous = false;
+    onresult: ((event: SpeechRecognitionResultEvent) => void) | null = null;
+    onerror: ((event: { error: string }) => void) | null = null;
+    onend: (() => void) | null = null;
+    start = vi.fn();
+
+    constructor() {
+      MockSpeechRecognition.instances.push(this);
+    }
+  }
+
+  beforeEach(() => {
+    MockSpeechRecognition.instances = [];
+    vi.stubGlobal("SpeechRecognition", MockSpeechRecognition);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fills the editor with the final Korean speech transcript", async () => {
+    renderInput();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
+
+    const recognition = MockSpeechRecognition.instances[0]!;
+    expect(recognition.lang).toBe("ko-KR");
+    expect(recognition.start).toHaveBeenCalledTimes(1);
+
+    recognition.onresult?.({
+      results: [
+        [{ transcript: "오늘 일정 알려줘" }],
+      ],
+    } as SpeechRecognitionResultEvent);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toHaveValue("오늘 일정 알려줘");
+    });
+  });
+
+  it("disables the microphone button when speech recognition is unsupported", async () => {
+    vi.unstubAllGlobals();
+
+    renderInput();
+
+    const button = await screen.findByRole("button", { name: "Voice input unsupported" });
+    expect(button).toBeDisabled();
+    expect(screen.getByText("Voice input is not supported in this browser.")).toBeInTheDocument();
   });
 });
 
