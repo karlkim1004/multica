@@ -29,7 +29,7 @@ import type { ChatTimelineItem } from "@multica/core/chat";
 import { failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { buildTimeline } from "../../common/task-transcript";
 import { TaskStatusPill } from "./task-status-pill";
-import { formatChatTimestamp, formatElapsedMs } from "../lib/format";
+import { formatElapsedMs } from "../lib/format";
 import { splitTimeline, extractCopyText } from "../lib/copy-text";
 import { useT } from "../../i18n";
 
@@ -192,22 +192,19 @@ function MessageBubble({ message, isPending }: { message: ChatMessage; isPending
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] space-y-1.5">
-          <div className="rounded-2xl bg-muted px-3.5 py-2 text-sm break-words">
-            {/* User messages are authored as markdown in ContentEditor, so
-             * render them through the same pipeline as assistant replies.
-             * Neutralise prose's leading/trailing margin so single-line
-             * bubbles stay as compact as the plain-text version used to. */}
-            <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-              <Markdown attachments={message.attachments}>{message.content}</Markdown>
-            </div>
-            <AttachmentList
-              attachments={message.attachments}
-              content={message.content}
-              className="mt-1.5"
-            />
+        <div className="rounded-2xl bg-muted px-3.5 py-2 text-sm max-w-[80%] break-words">
+          {/* User messages are authored as markdown in ContentEditor, so
+           * render them through the same pipeline as assistant replies.
+           * Neutralise prose's leading/trailing margin so single-line
+           * bubbles stay as compact as the plain-text version used to. */}
+          <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+            <Markdown attachments={message.attachments}>{message.content}</Markdown>
           </div>
-          <MessageTimestamp createdAt={message.created_at} className="text-right" />
+          <AttachmentList
+            attachments={message.attachments}
+            content={message.content}
+            className="mt-1.5"
+          />
         </div>
       </div>
     );
@@ -247,7 +244,6 @@ function AssistantMessage({
         rawError={message.content}
         timeline={timeline}
         elapsedMs={message.elapsed_ms}
-        createdAt={message.created_at}
       />
     );
   }
@@ -289,21 +285,13 @@ function MessageFooter({
   isPending: boolean;
 }) {
   const showCopy = !isPending;
+  if (message.elapsed_ms == null && !showCopy) return null;
   return (
     <div className="flex items-center gap-1.5">
-      <MessageTimestamp createdAt={message.created_at} />
       {message.elapsed_ms != null && (
-        <>
-          <FooterSeparator />
-          <ElapsedCaption variant="replied" elapsedMs={message.elapsed_ms} />
-        </>
+        <ElapsedCaption variant="replied" elapsedMs={message.elapsed_ms} />
       )}
-      {showCopy && (
-        <>
-          <FooterSeparator />
-          <MessageCopyButton message={message} timeline={timeline} />
-        </>
-      )}
+      {showCopy && <MessageCopyButton message={message} timeline={timeline} />}
     </div>
   );
 }
@@ -371,39 +359,16 @@ function ElapsedCaption({
   );
 }
 
-function MessageTimestamp({
-  createdAt,
-  className,
-}: {
-  createdAt: string;
-  className?: string;
-}) {
-  return (
-    <div
-      className={cn("text-xs text-muted-foreground/80", className)}
-      data-acceptance="chat-message-timestamp"
-    >
-      {formatChatTimestamp(createdAt)}
-    </div>
-  );
-}
-
-function FooterSeparator() {
-  return <span className="text-xs text-muted-foreground/50">·</span>;
-}
-
 function FailureBubble({
   reason,
   rawError,
   timeline,
   elapsedMs,
-  createdAt,
 }: {
   reason: string;
   rawError: string;
   timeline: ChatTimelineItem[];
   elapsedMs?: number | null;
-  createdAt: string;
 }) {
   const { t } = useT("chat");
   const [open, setOpen] = useState(false);
@@ -445,15 +410,9 @@ function FailureBubble({
         </div>
       </div>
       {timeline.length > 0 && <TimelineView items={timeline} />}
-      <div className="flex items-center gap-1.5">
-        <MessageTimestamp createdAt={createdAt} />
-        {elapsedMs != null && (
-          <>
-            <FooterSeparator />
-            <ElapsedCaption variant="failed" elapsedMs={elapsedMs} />
-          </>
-        )}
-      </div>
+      {elapsedMs != null && (
+        <ElapsedCaption variant="failed" elapsedMs={elapsedMs} />
+      )}
     </div>
   );
 }
