@@ -29,7 +29,7 @@ import type { ChatTimelineItem } from "@multica/core/chat";
 import { failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { buildTimeline } from "../../common/task-transcript";
 import { TaskStatusPill } from "./task-status-pill";
-import { formatElapsedMs } from "../lib/format";
+import { formatElapsedMs, formatChatTimestamp } from "../lib/format";
 import { splitTimeline, extractCopyText } from "../lib/copy-text";
 import { useT } from "../../i18n";
 
@@ -292,6 +292,9 @@ function MessageFooter({
         <ElapsedCaption variant="replied" elapsedMs={message.elapsed_ms} />
       )}
       {showCopy && <MessageCopyButton message={message} timeline={timeline} />}
+      {showCopy && message.created_at && (
+        <MessageTimestamp createdAt={message.created_at} />
+      )}
     </div>
   );
 }
@@ -318,6 +321,7 @@ function MessageCopyButton({
           <Button
             variant="ghost"
             size="icon-xs"
+            data-acceptance="chat-message-copy-button"
             className="text-muted-foreground/70 hover:text-foreground"
             onClick={handleCopy}
             aria-label={t(($) => $.message_list.copy_action)}
@@ -355,6 +359,23 @@ function ElapsedCaption({
   return (
     <div className={cn("text-xs text-muted-foreground/80", className)}>
       {text}
+    </div>
+  );
+}
+
+function MessageTimestamp({
+  createdAt,
+  className,
+}: {
+  createdAt: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn("text-xs text-muted-foreground/80", className)}
+      data-acceptance="chat-message-timestamp"
+    >
+      {formatChatTimestamp(createdAt)}
     </div>
   );
 }
