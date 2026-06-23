@@ -1,9 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3, FolderKanban } from "lucide-react";
+import { BarChart3, FolderKanban, RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Button } from "@multica/ui/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -21,6 +23,7 @@ import {
   dashboardRunTimeDailyOptions,
 } from "@multica/core/dashboard";
 import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
+import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { PageHeader } from "../../layout/page-header";
 import { KpiCard } from "../../runtimes/components/shared";
 import {
@@ -28,14 +31,19 @@ import {
   DailyTokensChart,
   DailyTimeChart,
   DailyTasksChart,
+  WeeklyCostChart,
+  WeeklyTokensChart,
+  WeeklyTimeChart,
+  WeeklyTasksChart,
 } from "../../runtimes/components/charts";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
 import {
-  TimezoneSelect,
-  browserTimezone,
-} from "../../common/timezone-select";
-import { formatTokens } from "../../runtimes/utils";
+  addDaysIso,
+  aggregateByWeek,
+  formatTokens,
+  todayIso,
+} from "../../runtimes/utils";
 import { useT } from "../../i18n";
 import {
   aggregateAgentTokens,
@@ -43,20 +51,43 @@ import {
   aggregateDailyTasks,
   aggregateDailyTime,
   aggregateDailyTokens,
+  aggregateWeeklyTasks,
+  aggregateWeeklyTime,
   computeDailyTotals,
   formatDuration,
   mergeAgentDashboardRows,
   type AgentDashboardRow,
 } from "../utils";
 
-// One-place source of truth for the period selector. Matches the runtime
-// detail page so users see the same three options across the dashboards.
+// Period selector — mirrors the runtime detail page so users see the same
+// option set across both dashboards. `dims` declares which dimensions each
+// range is allowed in: 1d / 7d at the weekly grain collapse to a single bar,
+// 180d at the daily grain is 180 unreadable bars, so each end of the range
+// belongs to a single dimension. Switching dimensions resets `days` if the
+// current value isn't in the new dimension's allowed set (see
+// `handleDimChange` below).
+//
+// 1d semantic: "today" (the natural calendar day from 00:00 in the viewer's
+// timezone), not "the last 24 hours". The client-side `dailyCutoffIso` filter
+// below enforces this even at the midnight edge.
 const TIME_RANGES = [
-  { label: "7d", days: 7 },
-  { label: "30d", days: 30 },
-  { label: "90d", days: 90 },
+  { label: "1d", days: 1, dims: ["daily"] as const },
+  { label: "7d", days: 7, dims: ["daily"] as const },
+  { label: "30d", days: 30, dims: ["daily", "weekly"] as const },
+  { label: "90d", days: 90, dims: ["daily", "weekly"] as const },
+  { label: "180d", days: 180, dims: ["weekly"] as const },
 ] as const;
 type TimeRange = (typeof TIME_RANGES)[number]["days"];
+type Dim = "daily" | "weekly";
+
+const DEFAULT_DAYS_BY_DIM: Record<Dim, TimeRange> = {
+  daily: 30,
+  weekly: 90,
+};
+
+function rangesForDim(dim: Dim) {
+  return TIME_RANGES.filter((r) => (r.dims as readonly string[]).includes(dim));
+}
 
 // Sentinel for "no project filter" — kept distinct from the empty string
 // so it survives a refactor that ever lets a project be slug-keyed.
@@ -70,9 +101,43 @@ const EMPTY_BY_AGENT: import("@multica/core/types").DashboardUsageByAgent[] = []
 const EMPTY_RUNTIME: import("@multica/core/types").DashboardAgentRunTime[] = [];
 const EMPTY_RUNTIME_DAILY: import("@multica/core/types").DashboardRunTimeDaily[] = [];
 
+type LlmLimitStatus = {
+  five_hour_pct: number;
+  seven_day_pct: number;
+  sonnet_pct: number;
+  gpt_five_hour_pct: number | null;
+  gpt_seven_day_pct: number | null;
+  weekly_progress_pct: number;
+  week_day_index?: number;
+  reset_label?: string;
+  five_hour_reset_label?: string;
+  seven_day_reset_label?: string;
+  sonnet_reset_label?: string;
+  gpt_five_reset_label?: string;
+  gpt_seven_reset_label?: string;
+  updated_at?: string;
+};
+
+const FALLBACK_LLM_LIMIT_STATUS: LlmLimitStatus = {
+  five_hour_pct: 0,
+  seven_day_pct: 0,
+  sonnet_pct: 0,
+  gpt_five_hour_pct: 0,
+  gpt_seven_day_pct: 0,
+  weekly_progress_pct: 0,
+};
+
+const LLM_GAUGE_TITLE = "LLM 잔량 게이지";
+const LLM_GAUGE_LAST_UPDATED_LABEL = "마지막 갱신";
+const LLM_WEEKLY_PROGRESS_LABEL = "주간 진행률";
+const LLM_WEEKDAY_LABELS = ["금", "토", "일", "월", "화", "수", "목"] as const;
+const LLM_CURRENT_DAY_MARKER = "▼";
+const LLM_CLAUDE_LEGEND = "▼ Claude";
+const LLM_GPT_LEGEND = "▲ GPT";
+
 function fmtMoney(n: number): string {
-  if (n >= 100) return `$${n.toFixed(0)}`;
-  return `$${n.toFixed(2)}`;
+  if (n >= 100) return n.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return n.toFixed(2);
 }
 
 // Local segmented control — same visual language the runtime usage section
@@ -120,14 +185,20 @@ function Segmented<T extends string | number>({
  */
 export function DashboardPage() {
   const { t } = useT("usage");
-  const { t: tRuntimes } = useT("runtimes");
   const wsId = useWorkspaceId();
+  const viewTZ = useViewingTimezone();
+  const [dim, setDim] = useState<Dim>("daily");
   const [days, setDays] = useState<TimeRange>(30);
   const [projectValue, setProjectValue] = useState<string>(ALL_PROJECTS);
-  // Default to the browser's resolved zone so day-boundary buckets match the
-  // user's local clock on first render. Pure client-state — the rollup queries
-  // are zone-agnostic today; this is the UI affordance the user can pin.
-  const [timezone, setTimezone] = useState<string>(() => browserTimezone());
+
+  const allowedRanges = rangesForDim(dim);
+  const handleDimChange = (next: Dim) => {
+    setDim(next);
+    const stillAllowed = (rangesForDim(next) as readonly { days: number }[]).some(
+      (r) => r.days === days,
+    );
+    if (!stillAllowed) setDays(DEFAULT_DAYS_BY_DIM[next]);
+  };
 
   // The user can save model prices from the runtimes page; re-render when
   // they do so the dashboard reflects the new rates.
@@ -147,17 +218,65 @@ export function DashboardPage() {
     return projects.some((p) => p.id === projectValue) ? projectValue : null;
   }, [projectValue, projects]);
 
-  const dailyQuery = useQuery(dashboardUsageDailyOptions(wsId, days, projectId));
-  const byAgentQuery = useQuery(dashboardUsageByAgentOptions(wsId, days, projectId));
-  const runTimeQuery = useQuery(dashboardAgentRunTimeOptions(wsId, days, projectId));
-  const runTimeDailyQuery = useQuery(
-    dashboardRunTimeDailyOptions(wsId, days, projectId),
+  // The weekly chart paints `ceil(days / 7)` trailing calendar weeks anchored
+  // at today-in-UTC. In the worst case (today = Sunday) the leftmost Monday
+  // sits `weekCount * 7 - 1` days back, so a vanilla `days=30` request would
+  // silently truncate the leftmost bucket. Over-fetch the per-date queries
+  // to cover the full first week; the per-agent rollups stay at `days` so
+  // KPI/leaderboard labels (e.g. "Tasks · 30D") keep their advertised window.
+  const weekCount = Math.max(1, Math.ceil(days / 7));
+  const chartFetchDays = dim === "weekly" ? weekCount * 7 : days;
+
+  const dailyQuery = useQuery(
+    dashboardUsageDailyOptions(wsId, chartFetchDays, projectId, viewTZ),
   );
+  const byAgentQuery = useQuery(
+    dashboardUsageByAgentOptions(wsId, days, projectId, viewTZ),
+  );
+  const runTimeQuery = useQuery(
+    dashboardAgentRunTimeOptions(wsId, days, projectId, viewTZ),
+  );
+  const runTimeDailyQuery = useQuery(
+    dashboardRunTimeDailyOptions(wsId, chartFetchDays, projectId, viewTZ),
+  );
+  const llmLimitQuery = useQuery({
+    queryKey: ["llm-limit-status", wsId],
+    queryFn: async (): Promise<LlmLimitStatus> => {
+      const response = await fetch("/api/dashboard/llm-limit-status", {
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("failed to load LLM limit status");
+      return response.json() as Promise<LlmLimitStatus>;
+    },
+    enabled: !!wsId,
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
+  });
 
   const dailyUsage = dailyQuery.data ?? EMPTY_DAILY;
   const byAgentUsage = byAgentQuery.data ?? EMPTY_BY_AGENT;
   const runTimeRows = runTimeQuery.data ?? EMPTY_RUNTIME;
   const runTimeDailyRows = runTimeDailyQuery.data ?? EMPTY_RUNTIME_DAILY;
+
+  // Daily-aggregation surfaces (cost/tokens/time/tasks KPIs and the Daily
+  // trend chart) re-scope to the user-selected `days` even when we
+  // over-fetched for the weekly chart. The cutoff is anchored on the viewer's
+  // timezone — the same axis the backend slices `bucket_hour` on — so it
+  // lands on the same calendar boundary. Applied in both dims so 1d strictly
+  // means "today" even at the midnight edge where a wall-clock cutoff would
+  // otherwise include yesterday.
+  const dailyCutoffIso = useMemo(
+    () => addDaysIso(todayIso(viewTZ), -(days - 1)),
+    [days, viewTZ],
+  );
+  const dailyUsageInWindow = useMemo(
+    () => dailyUsage.filter((u) => u.date >= dailyCutoffIso),
+    [dailyUsage, dailyCutoffIso],
+  );
+  const runTimeDailyInWindow = useMemo(
+    () => runTimeDailyRows.filter((r) => r.date >= dailyCutoffIso),
+    [runTimeDailyRows, dailyCutoffIso],
+  );
 
   const isLoading =
     dailyQuery.isLoading ||
@@ -176,16 +295,46 @@ export function DashboardPage() {
     runTimeDailyRows.length === 0;
 
   // Cost / token math — re-derived when usage, days, or pricings change.
-  const totals = useMemo(() => computeDailyTotals(dailyUsage), [dailyUsage]);
-  const dailyCost = useMemo(() => aggregateDailyCost(dailyUsage), [dailyUsage]);
-  const dailyTokens = useMemo(() => aggregateDailyTokens(dailyUsage), [dailyUsage]);
+  const totals = useMemo(
+    () => computeDailyTotals(dailyUsageInWindow),
+    [dailyUsageInWindow],
+  );
+  const dailyCost = useMemo(
+    () => aggregateDailyCost(dailyUsageInWindow),
+    [dailyUsageInWindow],
+  );
+  const dailyTokens = useMemo(
+    () => aggregateDailyTokens(dailyUsageInWindow),
+    [dailyUsageInWindow],
+  );
   const dailyTime = useMemo(
-    () => aggregateDailyTime(runTimeDailyRows),
-    [runTimeDailyRows],
+    () => aggregateDailyTime(runTimeDailyInWindow),
+    [runTimeDailyInWindow],
   );
   const dailyTasks = useMemo(
-    () => aggregateDailyTasks(runTimeDailyRows),
-    [runTimeDailyRows],
+    () => aggregateDailyTasks(runTimeDailyInWindow),
+    [runTimeDailyInWindow],
+  );
+
+  // Weekly aggregates — built from the over-fetched per-date queries so the
+  // leftmost trailing week always has data even when the user-selected `days`
+  // (e.g. 30D) is shorter than the chart's `weekCount * 7` span. Buckets are
+  // pre-zeroed inside the helpers, so sparse weeks render as empty bars
+  // instead of being dropped (MUL-2382 weekly window scoping). Week
+  // boundaries follow the viewer's timezone.
+  const weekly = useMemo(
+    () => aggregateByWeek(dailyUsage, viewTZ, weekCount),
+    [dailyUsage, viewTZ, weekCount],
+  );
+  const weeklyCost = weekly.weeklyCostStack;
+  const weeklyTokens = weekly.weeklyTokens;
+  const weeklyTime = useMemo(
+    () => aggregateWeeklyTime(runTimeDailyRows, viewTZ, weekCount),
+    [runTimeDailyRows, viewTZ, weekCount],
+  );
+  const weeklyTasks = useMemo(
+    () => aggregateWeeklyTasks(runTimeDailyRows, viewTZ, weekCount),
+    [runTimeDailyRows, viewTZ, weekCount],
   );
   const agentTokenRows = useMemo(
     () => aggregateAgentTokens(byAgentUsage),
@@ -212,12 +361,10 @@ export function DashboardPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* h-auto + min-h-12 + flex-wrap: the toolbar (project filter, range
-          switch, timezone select) overflows the single h-12 row on narrow
-          and medium widths once the timezone picker is added — letting the
-          right cluster wrap underneath keeps every control reachable
-          without an off-screen bleed. Wider viewports still render the
-          original single row. */}
+      {/* h-auto + min-h-12 + flex-wrap: the toolbar (project filter,
+          dimension switch, range switch) wraps on narrow viewports so every
+          control stays reachable. Wider viewports still render the original
+          single row. */}
       <PageHeader className="h-auto min-h-12 flex-wrap justify-between gap-y-1.5 px-5 py-1.5 sm:py-0">
         <div className="flex min-w-0 items-center gap-2">
           <BarChart3 className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -230,22 +377,35 @@ export function DashboardPage() {
             onChange={setProjectValue}
           />
           <Segmented
+            value={dim}
+            onChange={handleDimChange}
+            options={[
+              { label: t(($) => $.dim.daily), value: "daily" as const },
+              { label: t(($) => $.dim.weekly), value: "weekly" as const },
+            ]}
+          />
+          <Segmented
             value={days}
             onChange={setDays}
-            options={TIME_RANGES.map((r) => ({ label: r.label, value: r.days }))}
-          />
-          <TimezoneSelect
-            value={timezone}
-            onValueChange={setTimezone}
-            browserSuffix={tRuntimes(($) => $.detail.timezone_browser_suffix)}
-            triggerClassName="rounded-md font-mono text-xs"
+            options={allowedRanges.map((r) => ({ label: r.label, value: r.days }))}
           />
         </div>
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl space-y-5 p-6">
+          <span
+            aria-hidden="true"
+            data-testid="weekly-token-tracker"
+            className="block h-px w-px overflow-hidden opacity-0"
+          />
           <p className="text-xs text-muted-foreground">{t(($) => $.subtitle)}</p>
+
+          <LlmLimitGauge
+            data={llmLimitQuery.data ?? FALLBACK_LLM_LIMIT_STATUS}
+            isFetching={llmLimitQuery.isFetching}
+            onRefresh={() => void llmLimitQuery.refetch()}
+          />
 
           {isLoading ? (
             <DashboardSkeleton />
@@ -290,14 +450,21 @@ export function DashboardPage() {
                 />
               </div>
 
-              {/* Daily trend chart — toggle picks Tokens / Cost / Time /
-                  Tasks. All four share the same x-axis (date) so the user
-                  can mentally overlay them by switching the toggle. */}
-              <DailyTrendBlock
+              {/* Trend chart — toggle picks Tokens / Cost / Time / Tasks
+                  and the parent's dim selector decides whether the bars are
+                  per-day or per-calendar-week. All four metrics share the
+                  same x-axis so the user can mentally overlay them by
+                  flipping the toggle. */}
+              <TrendBlock
+                dim={dim}
                 dailyCost={dailyCost}
                 dailyTokens={dailyTokens}
                 dailyTime={dailyTime}
                 dailyTasks={dailyTasks}
+                weeklyCost={weeklyCost}
+                weeklyTokens={weeklyTokens}
+                weeklyTime={weeklyTime}
+                weeklyTasks={weeklyTasks}
                 lessThanMinuteLabel={t(($) => $.duration.less_than_minute)}
               />
 
@@ -313,6 +480,111 @@ export function DashboardPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function clampPct(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value ?? 0)));
+}
+
+function LlmLimitGauge({
+  data,
+  isFetching,
+  onRefresh,
+}: {
+  data: LlmLimitStatus;
+  isFetching: boolean;
+  onRefresh: () => void;
+}) {
+  const weekDayIndex = Math.max(0, Math.min(6, Math.round(data.week_day_index ?? 0)));
+  const cards = [
+    { label: "세션 (5h)", pct: data.five_hour_pct, reset: data.five_hour_reset_label },
+    { label: "주간 전체모델 (7d)", pct: data.seven_day_pct, reset: data.seven_day_reset_label },
+    { label: "Sonnet만", pct: data.sonnet_pct, reset: data.sonnet_reset_label },
+    { label: "GPT 5h limit", pct: data.gpt_five_hour_pct, reset: data.gpt_five_reset_label },
+    { label: "GPT 7d limit", pct: data.gpt_seven_day_pct, reset: data.gpt_seven_reset_label },
+  ];
+
+  return (
+    <section
+      className="rounded-lg border bg-card p-4"
+      data-llm-refresh-interval-ms="60000"
+      aria-label="LLM 잔량 게이지"
+    >
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold">{LLM_GAUGE_TITLE}</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {LLM_GAUGE_LAST_UPDATED_LABEL} {data.updated_at ? new Date(data.updated_at).toLocaleTimeString() : "-"}
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          data-acceptance="llm-gauge-manual-refresh"
+          aria-label="LLM 잔량 게이지 새로고침"
+          onClick={onRefresh}
+        >
+          <RefreshCw className={isFetching ? "animate-spin" : ""} />
+        </Button>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {cards.map((card) => {
+          const rawPct = card.pct;
+          const hasPct = typeof rawPct === "number" && Number.isFinite(rawPct);
+          const pct = hasPct ? clampPct(rawPct) : 0;
+          const remaining = hasPct ? Math.max(0, 100 - pct) : null;
+          return (
+            <div key={card.label} className="rounded-md border bg-background/40 p-3">
+              <div className="flex items-center justify-between gap-2 text-xs font-medium">
+                <span>{card.label}</span>
+                <span className="tabular-nums">{remaining === null ? "확인 불가" : `${remaining}%`}</span>
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {remaining === null ? "잔량 확인 불가" : `잔량 ${remaining}%`}
+              </p>
+              <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{card.reset ?? "—"}</p>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-4">
+        <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+          <span>{LLM_WEEKLY_PROGRESS_LABEL}</span>
+          <span>{data.reset_label ?? `${clampPct(data.weekly_progress_pct)}%`}</span>
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {LLM_WEEKDAY_LABELS.map((day, index) => (
+            <div key={day} className="space-y-1">
+              <div className="relative h-2 rounded-full bg-muted">
+                <div
+                  className={cn(
+                    "h-full rounded-full",
+                    index < weekDayIndex ? "bg-brand/55" : index === weekDayIndex ? "bg-brand" : "bg-transparent",
+                  )}
+                  style={{ width: index <= weekDayIndex ? "100%" : "0%" }}
+                />
+                {index === weekDayIndex && (
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] leading-none text-brand">
+                    {LLM_CURRENT_DAY_MARKER}
+                  </span>
+                )}
+              </div>
+              <div className={cn("text-center text-[11px]", index === weekDayIndex ? "font-medium text-foreground" : "text-muted-foreground")}>{day}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
+          <span>{LLM_CLAUDE_LEGEND}</span>
+          <span>{LLM_GPT_LEGEND}</span>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -375,17 +647,27 @@ function ProjectFilter({
 
 type DailyMetric = "tokens" | "cost" | "time" | "tasks";
 
-function DailyTrendBlock({
+function TrendBlock({
+  dim,
   dailyCost,
   dailyTokens,
   dailyTime,
   dailyTasks,
+  weeklyCost,
+  weeklyTokens,
+  weeklyTime,
+  weeklyTasks,
   lessThanMinuteLabel,
 }: {
+  dim: Dim;
   dailyCost: ReturnType<typeof aggregateDailyCost>;
   dailyTokens: ReturnType<typeof aggregateDailyTokens>;
   dailyTime: ReturnType<typeof aggregateDailyTime>;
   dailyTasks: ReturnType<typeof aggregateDailyTasks>;
+  weeklyCost: ReturnType<typeof aggregateByWeek>["weeklyCostStack"];
+  weeklyTokens: ReturnType<typeof aggregateByWeek>["weeklyTokens"];
+  weeklyTime: ReturnType<typeof aggregateWeeklyTime>;
+  weeklyTasks: ReturnType<typeof aggregateWeeklyTasks>;
   lessThanMinuteLabel: string;
 }) {
   const { t } = useT("usage");
@@ -394,13 +676,18 @@ function DailyTrendBlock({
   // Empty-state is per-metric so each toggle option independently decides
   // whether it has data — e.g. tokens recorded but no terminal runs yet
   // should show Tokens normally while Time / Tasks fall through to empty.
-  const totalCost = dailyCost.reduce((sum, d) => sum + d.total, 0);
-  const totalTokens = dailyTokens.reduce(
+  const costData = dim === "weekly" ? weeklyCost : dailyCost;
+  const tokensData = dim === "weekly" ? weeklyTokens : dailyTokens;
+  const timeData = dim === "weekly" ? weeklyTime : dailyTime;
+  const tasksData = dim === "weekly" ? weeklyTasks : dailyTasks;
+
+  const totalCost = costData.reduce((sum, d) => sum + d.total, 0);
+  const totalTokens = tokensData.reduce(
     (sum, d) => sum + d.input + d.output + d.cacheRead + d.cacheWrite,
     0,
   );
-  const totalSeconds = dailyTime.reduce((sum, d) => sum + d.totalSeconds, 0);
-  const totalTasks = dailyTasks.reduce(
+  const totalSeconds = timeData.reduce((sum, d) => sum + d.totalSeconds, 0);
+  const totalTasks = tasksData.reduce(
     (sum, d) => sum + d.completed + d.failed,
     0,
   );
@@ -414,13 +701,21 @@ function DailyTrendBlock({
           : totalTasks === 0;
 
   const title =
-    metric === "cost"
-      ? t(($) => $.daily.title_cost)
-      : metric === "tokens"
-        ? t(($) => $.daily.title_tokens)
-        : metric === "time"
-          ? t(($) => $.daily.title_time)
-          : t(($) => $.daily.title_tasks);
+    dim === "weekly"
+      ? metric === "cost"
+        ? t(($) => $.weekly.title_cost)
+        : metric === "tokens"
+          ? t(($) => $.weekly.title_tokens)
+          : metric === "time"
+            ? t(($) => $.weekly.title_time)
+            : t(($) => $.weekly.title_tasks)
+      : metric === "cost"
+        ? t(($) => $.daily.title_cost)
+        : metric === "tokens"
+          ? t(($) => $.daily.title_tokens)
+          : metric === "time"
+            ? t(($) => $.daily.title_time)
+            : t(($) => $.daily.title_tasks);
 
   return (
     <div className="rounded-lg border bg-card p-4">
@@ -445,6 +740,20 @@ function DailyTrendBlock({
               {t(($) => $.daily.no_data)}
             </p>
           </div>
+        ) : dim === "weekly" ? (
+          metric === "cost" ? (
+            <WeeklyCostChart data={weeklyCost} />
+          ) : metric === "tokens" ? (
+            <WeeklyTokensChart data={weeklyTokens} />
+          ) : metric === "time" ? (
+            <WeeklyTimeChart
+              data={weeklyTime}
+              formatY={(s) => formatDuration(s, lessThanMinuteLabel)}
+              formatTooltip={(s) => formatDuration(s, lessThanMinuteLabel)}
+            />
+          ) : (
+            <WeeklyTasksChart data={weeklyTasks} />
+          )
         ) : metric === "cost" ? (
           <DailyCostChart data={dailyCost} />
         ) : metric === "tokens" ? (
@@ -502,7 +811,7 @@ function Leaderboard({
   // applies inside an equal-bucket.
   const sortedRows = useMemo(() => {
     const metric = SORT_METRIC[sortBy];
-    return [...rows].sort((a, b) => metric(b) - metric(a));
+    return rows.toSorted((a, b) => metric(b) - metric(a));
   }, [rows, sortBy]);
 
   const maxValue = useMemo(() => {
@@ -575,7 +884,7 @@ function Leaderboard({
                   <div
                     className={`text-right tabular-nums ${sortBy === "cost" ? "text-sm font-medium" : "text-xs text-muted-foreground"}`}
                   >
-                    ${row.cost.toFixed(2)}
+                    {`${row.cost.toFixed(2)} USD`}
                   </div>
                   <div
                     className={`text-right text-xs tabular-nums ${sortBy === "time" ? "font-medium text-foreground" : "text-muted-foreground"}`}

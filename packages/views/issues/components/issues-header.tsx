@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
+  ChartGantt,
   Check,
   ChevronDown,
   CircleDot,
@@ -14,10 +15,12 @@ import {
   List,
   SignalHigh,
   SlidersHorizontal,
+  X,
   Tag,
   User,
   UserMinus,
   UserPen,
+  Waves,
 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -27,6 +30,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuCheckboxItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
@@ -55,10 +60,12 @@ import { LabelChip } from "../../labels/label-chip";
 import {
   SORT_OPTIONS,
   GROUPING_OPTIONS,
+  SWIMLANE_GROUPINGS,
   CARD_PROPERTY_OPTIONS,
   type ActorFilterValue,
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
+import type { SortField, IssueGrouping, SwimlaneGrouping, ViewMode } from "@multica/core/issues/stores/view-store";
 import {
   useIssuesScopeStore,
   type IssuesScope,
@@ -67,6 +74,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/
 import type { Issue } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { WorkspaceAgentWorkingChip } from "./workspace-agent-working-chip";
 
 // ---------------------------------------------------------------------------
 // HoverCheck — shadcn official pattern (PR #6862)
@@ -490,10 +498,32 @@ function LabelSubContent({
 // IssuesHeader
 // ---------------------------------------------------------------------------
 
-export function IssuesHeader({ scopedIssues }: { scopedIssues: Issue[] }) {
+export function IssuesHeader({
+  scopedIssues,
+  allowGantt = false,
+}: {
+  scopedIssues: Issue[];
+  allowGantt?: boolean;
+}) {
   const { t } = useT("issues");
   const scope = useIssuesScopeStore((s) => s.scope);
   const setScope = useIssuesScopeStore((s) => s.setScope);
+  // Bind the workspace agents-working chip to the active view store so
+  // shared IssuesHeader consumers (/issues and project detail) toggle the
+  // same filter state as the rest of the display controls. /my-issues keeps
+  // its own sibling header and passes chip state explicitly.
+  const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
+  const toggleAgentRunningFilter = useViewStore(
+    (s) => s.toggleAgentRunningFilter,
+  );
+  // Scope the chip to whatever issues this page is currently showing.
+  // /issues uses the full workspace minus Members/Agents pill filtering;
+  // passing the visible-issue id set lets the chip count match the list
+  // length when the filter is on.
+  const scopedIssueIds = useMemo(
+    () => new Set(scopedIssues.map((i) => i.id)),
+    [scopedIssues],
+  );
   const SCOPE_LABEL_KEY: Record<IssuesScope, "all_label" | "members_label" | "agents_label"> = {
     all: "all_label",
     members: "members_label",
@@ -505,39 +535,90 @@ export function IssuesHeader({ scopedIssues }: { scopedIssues: Issue[] }) {
     agents: "agents_description",
   };
 
-  return (
-    <div className="flex h-12 shrink-0 items-center justify-between px-4">
-      {/* Left: scope buttons */}
-      <div className="flex items-center gap-1">
-        {SCOPE_VALUES.map((s) => (
-          <Tooltip key={s}>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={
-                    scope === s
-                      ? "bg-accent text-accent-foreground hover:bg-accent/80"
-                      : "text-muted-foreground"
-                  }
-                  onClick={() => setScope(s)}
-                >
-                  {t(($) => $.scope[SCOPE_LABEL_KEY[s]])}
-                </Button>
-              }
-            />
-            <TooltipContent side="bottom">{t(($) => $.scope[SCOPE_DESC_KEY[s]])}</TooltipContent>
-          </Tooltip>
-        ))}
-      </div>
+  const scopeLabel = t(($) => $.scope[SCOPE_LABEL_KEY[scope]]);
 
-      <IssueDisplayControls scopedIssues={scopedIssues} />
+  return (
+    <div className="h-12 shrink-0 overflow-x-auto px-4 [-webkit-overflow-scrolling:touch]">
+      <div className="flex h-full w-max min-w-full items-center justify-between gap-2">
+        {/* Left: scope buttons */}
+        <div className="hidden shrink-0 items-center gap-1 md:flex">
+          {SCOPE_VALUES.map((s) => (
+            <Tooltip key={s}>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={
+                      scope === s
+                        ? "bg-accent text-accent-foreground hover:bg-accent/80"
+                        : "text-muted-foreground"
+                    }
+                    onClick={() => setScope(s)}
+                  >
+                    {t(($) => $.scope[SCOPE_LABEL_KEY[s]])}
+                  </Button>
+                }
+              />
+              <TooltipContent side="bottom">{t(($) => $.scope[SCOPE_DESC_KEY[s]])}</TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-1 text-muted-foreground md:hidden"
+              >
+                <span className="truncate">{scopeLabel}</span>
+                <ChevronDown className="size-3 text-muted-foreground" />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start" className="w-auto">
+            <DropdownMenuRadioGroup value={scope} onValueChange={(value) => setScope(value as IssuesScope)}>
+              {SCOPE_VALUES.map((s) => (
+                <DropdownMenuRadioItem key={s} value={s}>
+                  {t(($) => $.scope[SCOPE_LABEL_KEY[s]])}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <div className="flex shrink-0 items-center gap-1">
+          {agentRunningFilter && (
+            <span className="mr-1 hidden text-xs text-muted-foreground md:inline">
+              {t(($) => $.agent_activity.filter_active_label)}
+            </span>
+          )}
+          <WorkspaceAgentWorkingChip
+            value={agentRunningFilter}
+            onToggle={toggleAgentRunningFilter}
+            scopedIssueIds={scopedIssueIds}
+          />
+          <IssueDisplayControls scopedIssues={scopedIssues} allowGantt={allowGantt} />
+        </div>
+      </div>
     </div>
   );
 }
 
-export function IssueDisplayControls({ scopedIssues }: { scopedIssues: Issue[] }) {
+export function IssueDisplayControls({
+  scopedIssues,
+  hideViewToggle = false,
+  allowGantt = false,
+}: {
+  scopedIssues: Issue[];
+  hideViewToggle?: boolean;
+  // Only Project Detail renders <GanttView>; other surfaces (global /issues,
+  // /my-issues, actor panel) ignore viewMode === "gantt" and would silently
+  // fall back to List if the option were exposed there. Keep Gantt opt-in.
+  allowGantt?: boolean;
+}) {
   const { t } = useT("issues");
   const viewMode = useViewStore((s) => s.viewMode);
   const statusFilters = useViewStore((s) => s.statusFilters);
@@ -551,26 +632,28 @@ export function IssueDisplayControls({ scopedIssues }: { scopedIssues: Issue[] }
   const sortBy = useViewStore((s) => s.sortBy);
   const sortDirection = useViewStore((s) => s.sortDirection);
   const grouping = useViewStore((s) => s.grouping);
+  const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
   const cardProperties = useViewStore((s) => s.cardProperties);
   const act = useViewStoreApi().getState();
 
   const counts = useIssueCounts(scopedIssues);
 
-  const hasActiveFilters =
-    getActiveFilterCount({
-      statusFilters,
-      priorityFilters,
-      assigneeFilters,
-      includeNoAssignee,
-      creatorFilters,
-      projectFilters,
-      includeNoProject,
-      labelFilters,
-    }) > 0;
+  const activeFilterCount = getActiveFilterCount({
+    statusFilters,
+    priorityFilters,
+    assigneeFilters,
+    includeNoAssignee,
+    creatorFilters,
+    projectFilters,
+    includeNoProject,
+    labelFilters,
+  });
+  const hasActiveFilters = activeFilterCount > 0;
 
-  const SORT_LABEL_KEY: Record<typeof SORT_OPTIONS[number]["value"], "sort_manual" | "sort_priority" | "sort_due_date" | "sort_created" | "sort_title"> = {
+  const SORT_LABEL_KEY: Record<typeof SORT_OPTIONS[number]["value"], "sort_manual" | "sort_priority" | "sort_start_date" | "sort_due_date" | "sort_created" | "sort_title"> = {
     position: "sort_manual",
     priority: "sort_priority",
+    start_date: "sort_start_date",
     due_date: "sort_due_date",
     created_at: "sort_created",
     title: "sort_title",
@@ -579,10 +662,16 @@ export function IssueDisplayControls({ scopedIssues }: { scopedIssues: Issue[] }
     status: "group_status",
     assignee: "group_assignee",
   };
-  const CARD_PROPERTY_LABEL_KEY: Record<typeof CARD_PROPERTY_OPTIONS[number]["key"], "card_priority" | "card_description" | "card_assignee" | "card_due_date" | "card_project" | "card_labels" | "card_child_progress"> = {
+  const SWIMLANE_GROUPING_LABEL_KEY: Record<SwimlaneGrouping, "group_parent" | "group_project" | "group_assignee"> = {
+    parent: "group_parent",
+    project: "group_project",
+    assignee: "group_assignee",
+  };
+  const CARD_PROPERTY_LABEL_KEY: Record<typeof CARD_PROPERTY_OPTIONS[number]["key"], "card_priority" | "card_description" | "card_assignee" | "card_start_date" | "card_due_date" | "card_project" | "card_labels" | "card_child_progress"> = {
     priority: "card_priority",
     description: "card_description",
     assignee: "card_assignee",
+    startDate: "card_start_date",
     dueDate: "card_due_date",
     project: "card_project",
     labels: "card_labels",
@@ -590,9 +679,11 @@ export function IssueDisplayControls({ scopedIssues }: { scopedIssues: Issue[] }
   };
   const sortLabel = t(($) => $.display[SORT_LABEL_KEY[sortBy]]);
   const groupingLabel = t(($) => $.display[GROUPING_LABEL_KEY[grouping]]);
+  const swimlaneGroupingLabel = t(($) => $.display[SWIMLANE_GROUPING_LABEL_KEY[swimlaneGrouping]]);
+  const controlButtonClass = "h-8 w-8 gap-1 px-0 text-muted-foreground md:h-7 md:w-auto md:px-2.5";
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex shrink-0 items-center gap-1">
         {/* Filter */}
         <DropdownMenu>
           <Tooltip>
@@ -600,10 +691,34 @@ export function IssueDisplayControls({ scopedIssues }: { scopedIssues: Issue[] }
               render={
                 <TooltipTrigger
                   render={
-                    <Button variant="outline" size="icon-sm" className="relative text-muted-foreground">
-                      <Filter className="size-4" />
+                    <Button
+                      variant={hasActiveFilters ? "default" : "outline"}
+                      size="sm"
+                      className={
+                        hasActiveFilters
+                          ? "h-8 w-8 gap-1 bg-brand px-0 text-white hover:bg-brand/90 md:h-7 md:w-auto md:px-2.5"
+                          : controlButtonClass
+                      }
+                    >
+                      <Filter className="size-3.5" />
+                      <span className="hidden md:inline">
+                        {hasActiveFilters
+                          ? t(($) => $.filters.active_count, { count: activeFilterCount })
+                          : t(($) => $.filters.tooltip)}
+                      </span>
                       {hasActiveFilters && (
-                        <span className="absolute top-0 right-0 size-1.5 rounded-full bg-brand" />
+                        <span className="tabular-nums md:hidden">{activeFilterCount}</span>
+                      )}
+                      {hasActiveFilters && (
+                        <span
+                          role="button"
+                          tabIndex={-1}
+                          className="-mr-1 ml-0.5 hidden rounded-sm p-0.5 hover:bg-white/20 md:inline-flex"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); act.clearFilters(); }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                        >
+                          <X className="size-3" />
+                        </span>
                       )}
                     </Button>
                   }
@@ -792,8 +907,15 @@ export function IssueDisplayControls({ scopedIssues }: { scopedIssues: Issue[] }
               render={
                 <TooltipTrigger
                   render={
-                    <Button variant="outline" size="icon-sm" className="text-muted-foreground">
-                      <SlidersHorizontal className="size-4" />
+                    <Button variant="outline" size="sm" className={controlButtonClass}>
+                      {sortBy === "position" ? (
+                        <SlidersHorizontal className="size-3.5" />
+                      ) : sortDirection === "asc" ? (
+                        <ArrowUp className="size-3.5" />
+                      ) : (
+                        <ArrowDown className="size-3.5" />
+                      )}
+                      <span className="hidden md:inline">{sortLabel}</span>
                     </Button>
                   }
                 />
@@ -822,14 +944,48 @@ export function IssueDisplayControls({ scopedIssues }: { scopedIssues: Issue[] }
                       }
                     />
                     <DropdownMenuContent align="start" className="w-auto">
-                      {GROUPING_OPTIONS.map((opt) => (
-                        <DropdownMenuItem
-                          key={opt.value}
-                          onClick={() => act.setGrouping(opt.value)}
+                      <DropdownMenuRadioGroup value={grouping} onValueChange={(v) => act.setGrouping(v as IssueGrouping)}>
+                        {GROUPING_OPTIONS.map((opt) => (
+                          <DropdownMenuRadioItem key={opt.value} value={opt.value}>
+                            {t(($) => $.display[GROUPING_LABEL_KEY[opt.value]])}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+            )}
+            {viewMode === "swimlane" && (
+              <div className="border-b px-3 py-2.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {t(($) => $.display.grouping_section)}
+                </span>
+                <div className="mt-2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full justify-between text-xs"
                         >
-                          {t(($) => $.display[GROUPING_LABEL_KEY[opt.value]])}
-                        </DropdownMenuItem>
-                      ))}
+                          {swimlaneGroupingLabel}
+                          <ChevronDown className="size-3 text-muted-foreground" />
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent align="start" className="w-auto">
+                      <DropdownMenuRadioGroup
+                        value={swimlaneGrouping}
+                        onValueChange={(v) => act.setSwimlaneGrouping(v as SwimlaneGrouping)}
+                      >
+                        {SWIMLANE_GROUPINGS.map((value) => (
+                          <DropdownMenuRadioItem key={value} value={value}>
+                            {t(($) => $.display[SWIMLANE_GROUPING_LABEL_KEY[value]])}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -855,30 +1011,31 @@ export function IssueDisplayControls({ scopedIssues }: { scopedIssues: Issue[] }
                     }
                   />
                   <DropdownMenuContent align="start" className="w-auto">
-                    {SORT_OPTIONS.map((opt) => (
-                      <DropdownMenuItem
-                        key={opt.value}
-                        onClick={() => act.setSortBy(opt.value)}
-                      >
-                        {t(($) => $.display[SORT_LABEL_KEY[opt.value]])}
-                      </DropdownMenuItem>
-                    ))}
+                    <DropdownMenuRadioGroup value={sortBy} onValueChange={(v) => act.setSortBy(v as SortField)}>
+                      {SORT_OPTIONS.map((opt) => (
+                        <DropdownMenuRadioItem key={opt.value} value={opt.value}>
+                          {t(($) => $.display[SORT_LABEL_KEY[opt.value]])}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  onClick={() =>
-                    act.setSortDirection(sortDirection === "asc" ? "desc" : "asc")
-                  }
-                  title={sortDirection === "asc" ? t(($) => $.display.ascending_title) : t(($) => $.display.descending_title)}
-                >
-                  {sortDirection === "asc" ? (
-                    <ArrowUp className="size-3.5" />
-                  ) : (
-                    <ArrowDown className="size-3.5" />
-                  )}
-                </Button>
+                {sortBy !== "position" && (
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    onClick={() =>
+                      act.setSortDirection(sortDirection === "asc" ? "desc" : "asc")
+                    }
+                    title={sortDirection === "asc" ? t(($) => $.display.ascending_title) : t(($) => $.display.descending_title)}
+                  >
+                    {sortDirection === "asc" ? (
+                      <ArrowUp className="size-3.5" />
+                    ) : (
+                      <ArrowDown className="size-3.5" />
+                    )}
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -905,42 +1062,77 @@ export function IssueDisplayControls({ scopedIssues }: { scopedIssues: Issue[] }
           </PopoverContent>
         </Popover>
 
-        {/* View toggle */}
-        <DropdownMenu>
-          <Tooltip>
-            <DropdownMenuTrigger
-              render={
-                <TooltipTrigger
-                  render={
-                    <Button variant="outline" size="icon-sm" className="text-muted-foreground">
-                      {viewMode === "board" ? (
-                        <Columns3 className="size-4" />
-                      ) : (
-                        <List className="size-4" />
-                      )}
-                    </Button>
-                  }
-                />
-              }
-            />
-            <TooltipContent side="bottom">
-              {viewMode === "board" ? t(($) => $.view.tooltip_board) : t(($) => $.view.tooltip_list)}
-            </TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="end" className="w-auto">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>{t(($) => $.view.section)}</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => act.setViewMode("board")}>
-                <Columns3 />
-                {t(($) => $.view.board)}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => act.setViewMode("list")}>
-                <List />
-                {t(($) => $.view.list)}
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* View toggle. If a store has `viewMode === "gantt"` persisted but
+            this surface doesn't render Gantt, fall back to "list" so the
+            trigger icon matches what's actually on screen. */}
+        {!hideViewToggle && (
+          <DropdownMenu>
+            <Tooltip>
+              <DropdownMenuTrigger
+                render={
+                  <TooltipTrigger
+                    render={
+                      <Button variant="outline" size="sm" className={controlButtonClass}>
+                        {viewMode === "board" ? (
+                          <Columns3 className="size-3.5" />
+                        ) : viewMode === "swimlane" ? (
+                          <Waves className="size-3.5" />
+                        ) : viewMode === "gantt" && allowGantt ? (
+                          <ChartGantt className="size-3.5" />
+                        ) : (
+                          <List className="size-3.5" />
+                        )}
+                        <span className="hidden md:inline">
+                          {viewMode === "board"
+                            ? t(($) => $.view.board)
+                            : viewMode === "swimlane"
+                            ? t(($) => $.view.swimlane)
+                            : viewMode === "gantt" && allowGantt
+                            ? t(($) => $.view.gantt)
+                            : t(($) => $.view.list)}
+                        </span>
+                      </Button>
+                    }
+                  />
+                }
+              />
+              <TooltipContent side="bottom">
+                {viewMode === "board"
+                  ? t(($) => $.view.tooltip_board)
+                  : viewMode === "swimlane"
+                  ? t(($) => $.view.tooltip_swimlane)
+                  : viewMode === "gantt" && allowGantt
+                  ? t(($) => $.view.tooltip_gantt)
+                  : t(($) => $.view.tooltip_list)}
+              </TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end" className="w-auto">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{t(($) => $.view.section)}</DropdownMenuLabel>
+              </DropdownMenuGroup>
+              <DropdownMenuRadioGroup value={viewMode} onValueChange={(v) => act.setViewMode(v as ViewMode)}>
+                <DropdownMenuRadioItem value="board">
+                  <Columns3 />
+                  {t(($) => $.view.board)}
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="list">
+                  <List />
+                  {t(($) => $.view.list)}
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="swimlane">
+                  <Waves />
+                  {t(($) => $.view.swimlane)}
+                </DropdownMenuRadioItem>
+                {allowGantt && (
+                  <DropdownMenuRadioItem value="gantt">
+                    <ChartGantt />
+                    {t(($) => $.view.gantt)}
+                  </DropdownMenuRadioItem>
+                )}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
     </div>
   );
 }

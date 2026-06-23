@@ -13,6 +13,7 @@ import {
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
 import { useT } from "../../i18n";
+import { LlmRemainingBadge } from "./llm-remaining-badge";
 
 const logger = createLogger("chat.ui");
 
@@ -42,7 +43,9 @@ export function ChatFab() {
       : t(($) => $.fab.default);
 
   return (
-    <Tooltip>
+    <>
+      <LlmRemainingBadge className="absolute bottom-2 right-14 z-50 bg-card shadow-sm" />
+      <Tooltip>
       <TooltipTrigger
         onClick={handleClick}
         className={cn(
@@ -60,6 +63,7 @@ export function ChatFab() {
         )}
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={10}>{tooltip}</TooltipContent>
-    </Tooltip>
+      </Tooltip>
+    </>
   );
 }
