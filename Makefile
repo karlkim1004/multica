@@ -12,7 +12,7 @@ POSTGRES_DB ?= multica
 POSTGRES_USER ?= multica
 POSTGRES_PASSWORD ?= multica
 POSTGRES_PORT ?= 5432
-PORT ?= 8080
+PORT := $(or $(BACKEND_PORT),$(API_PORT),$(SERVER_PORT),$(PORT),8080)
 FRONTEND_PORT ?= 3000
 FRONTEND_ORIGIN ?= http://localhost:$(FRONTEND_PORT)
 MULTICA_APP_URL ?= $(FRONTEND_ORIGIN)
@@ -21,6 +21,7 @@ NEXT_PUBLIC_API_URL ?= http://localhost:$(PORT)
 NEXT_PUBLIC_WS_URL ?= ws://localhost:$(PORT)/ws
 GOOGLE_REDIRECT_URI ?= $(FRONTEND_ORIGIN)/auth/callback
 MULTICA_SERVER_URL ?= ws://localhost:$(PORT)/ws
+LOCAL_UPLOAD_BASE_URL ?= http://localhost:$(PORT)
 
 export
 
@@ -57,12 +58,17 @@ selfhost: ## Create .env if needed, then pull and start the official self-hosted
 		echo "==> Creating .env from .env.example..."; \
 		cp .env.example .env; \
 		JWT=$$(openssl rand -hex 32); \
+		PGPASS=$$(openssl rand -hex 24); \
 		if [ "$$(uname)" = "Darwin" ]; then \
 			sed -i '' "s/^JWT_SECRET=.*/JWT_SECRET=$$JWT/" .env; \
+			sed -i '' "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$PGPASS/" .env; \
+			sed -i '' -E "s#^(DATABASE_URL=postgres://[^:]+:)[^@]*(@.*)#\1$$PGPASS\2#" .env; \
 		else \
 			sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$$JWT/" .env; \
+			sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$PGPASS/" .env; \
+			sed -i -E "s#^(DATABASE_URL=postgres://[^:]+:)[^@]*(@.*)#\1$$PGPASS\2#" .env; \
 		fi; \
-		echo "==> Generated random JWT_SECRET"; \
+		echo "==> Generated random JWT_SECRET and POSTGRES_PASSWORD"; \
 	fi
 	@echo "==> Pulling official Multica images..."
 	@if ! docker compose -f docker-compose.selfhost.yml pull; then \
@@ -107,12 +113,17 @@ selfhost-build: ## Build backend/web from the current checkout and start the sel
 		echo "==> Creating .env from .env.example..."; \
 		cp .env.example .env; \
 		JWT=$$(openssl rand -hex 32); \
+		PGPASS=$$(openssl rand -hex 24); \
 		if [ "$$(uname)" = "Darwin" ]; then \
 			sed -i '' "s/^JWT_SECRET=.*/JWT_SECRET=$$JWT/" .env; \
+			sed -i '' "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$PGPASS/" .env; \
+			sed -i '' -E "s#^(DATABASE_URL=postgres://[^:]+:)[^@]*(@.*)#\1$$PGPASS\2#" .env; \
 		else \
 			sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$$JWT/" .env; \
+			sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$PGPASS/" .env; \
+			sed -i -E "s#^(DATABASE_URL=postgres://[^:]+:)[^@]*(@.*)#\1$$PGPASS\2#" .env; \
 		fi; \
-		echo "==> Generated random JWT_SECRET"; \
+		echo "==> Generated random JWT_SECRET and POSTGRES_PASSWORD"; \
 	fi
 	@echo "==> Building Multica from the current checkout..."
 	docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build
@@ -285,7 +296,7 @@ test: ## Run Go tests after ensuring the target DB exists and migrations are app
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/migrate up
-	cd server && go test ./...
+	cd server && go test -race ./...
 
 # Database
 ##@ Database
@@ -306,5 +317,10 @@ sqlc: ## Regenerate sqlc code
 # Cleanup
 ##@ Cleanup
 
-clean: ## Remove generated server binaries and temp files
+clean: ## Remove build caches, generated binaries, and temp files
 	rm -rf server/bin server/tmp
+	rm -rf apps/*/.next apps/*/.source apps/*/.expo
+	rm -rf apps/*/out apps/*/dist apps/*/dist-electron packages/*/dist
+	rm -rf .turbo apps/*/.turbo packages/*/.turbo
+	rm -rf apps/*/*.tsbuildinfo packages/*/*.tsbuildinfo
+	@echo "✓ Clean complete."

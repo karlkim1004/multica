@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/analytics"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -16,18 +20,31 @@ import (
 // ── Response types ──────────────────────────────────────────────────────────
 
 type SquadResponse struct {
-	ID           string  `json:"id"`
-	WorkspaceID  string  `json:"workspace_id"`
-	Name         string  `json:"name"`
-	Description  string  `json:"description"`
-	Instructions string  `json:"instructions"`
-	AvatarURL    *string `json:"avatar_url"`
-	LeaderID     string  `json:"leader_id"`
-	CreatorID    string  `json:"creator_id"`
-	CreatedAt    string  `json:"created_at"`
-	UpdatedAt    string  `json:"updated_at"`
-	ArchivedAt   *string `json:"archived_at"`
-	ArchivedBy   *string `json:"archived_by"`
+	ID            string                       `json:"id"`
+	WorkspaceID   string                       `json:"workspace_id"`
+	Name          string                       `json:"name"`
+	Description   string                       `json:"description"`
+	Instructions  string                       `json:"instructions"`
+	AvatarURL     *string                      `json:"avatar_url"`
+	LeaderID      string                       `json:"leader_id"`
+	CreatorID     string                       `json:"creator_id"`
+	CreatedAt     string                       `json:"created_at"`
+	UpdatedAt     string                       `json:"updated_at"`
+	ArchivedAt    *string                      `json:"archived_at"`
+	ArchivedBy    *string                      `json:"archived_by"`
+	MemberCount   int                          `json:"member_count"`
+	MemberPreview []SquadMemberPreviewResponse `json:"member_preview"`
+}
+
+type SquadMemberPreviewResponse struct {
+	MemberType string `json:"member_type"`
+	MemberID   string `json:"member_id"`
+	Role       string `json:"role"`
+}
+
+type squadMemberSummary struct {
+	count   int
+	preview []SquadMemberPreviewResponse
 }
 
 type SquadMemberResponse struct {
@@ -43,18 +60,19 @@ type SquadMemberResponse struct {
 
 func squadToResponse(s db.Squad) SquadResponse {
 	return SquadResponse{
-		ID:           uuidToString(s.ID),
-		WorkspaceID:  uuidToString(s.WorkspaceID),
-		Name:         s.Name,
-		Description:  s.Description,
-		Instructions: s.Instructions,
-		AvatarURL:    textToPtr(s.AvatarUrl),
-		LeaderID:     uuidToString(s.LeaderID),
-		CreatorID:    uuidToString(s.CreatorID),
-		CreatedAt:    timestampToString(s.CreatedAt),
-		UpdatedAt:    timestampToString(s.UpdatedAt),
-		ArchivedAt:   timestampToPtr(s.ArchivedAt),
-		ArchivedBy:   uuidToPtr(s.ArchivedBy),
+		ID:            uuidToString(s.ID),
+		WorkspaceID:   uuidToString(s.WorkspaceID),
+		Name:          s.Name,
+		Description:   s.Description,
+		Instructions:  s.Instructions,
+		AvatarURL:     textToPtr(s.AvatarUrl),
+		LeaderID:      uuidToString(s.LeaderID),
+		CreatorID:     uuidToString(s.CreatorID),
+		CreatedAt:     timestampToString(s.CreatedAt),
+		UpdatedAt:     timestampToString(s.UpdatedAt),
+		ArchivedAt:    timestampToPtr(s.ArchivedAt),
+		ArchivedBy:    uuidToPtr(s.ArchivedBy),
+		MemberPreview: []SquadMemberPreviewResponse{},
 	}
 }
 
@@ -67,6 +85,26 @@ func squadMemberToResponse(m db.SquadMember) SquadMemberResponse {
 		Role:       m.Role,
 		CreatedAt:  timestampToString(m.CreatedAt),
 	}
+}
+
+func addSquadMemberPreview(summary *squadMemberSummary, memberType string, memberID pgtype.UUID, role string) {
+	summary.count++
+	if len(summary.preview) >= 3 {
+		return
+	}
+	summary.preview = append(summary.preview, SquadMemberPreviewResponse{
+		MemberType: memberType,
+		MemberID:   uuidToString(memberID),
+		Role:       role,
+	})
+}
+
+func applySquadMemberSummary(resp *SquadResponse, summary *squadMemberSummary) {
+	if summary == nil {
+		return
+	}
+	resp.MemberCount = summary.count
+	resp.MemberPreview = summary.preview
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -94,6 +132,28 @@ func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (
 	return squad, workspaceID, true
 }
 
+func (h *Handler) loadSquadMemberSummary(ctx context.Context, squadID pgtype.UUID) (*squadMemberSummary, error) {
+	rows, err := h.Queries.ListSquadMemberPreviewRowsBySquad(ctx, squadID)
+	if err != nil {
+		return nil, err
+	}
+	summary := &squadMemberSummary{}
+	for _, row := range rows {
+		addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
+	}
+	return summary, nil
+}
+
+func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad) (SquadResponse, error) {
+	resp := squadToResponse(squad)
+	summary, err := h.loadSquadMemberSummary(ctx, squad.ID)
+	if err != nil {
+		return resp, err
+	}
+	applySquadMemberSummary(&resp, summary)
+	return resp, nil
+}
+
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
@@ -107,9 +167,27 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list squads")
 		return
 	}
+
+	previewRows, err := h.Queries.ListSquadMemberPreviewRows(r.Context(), wsUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list squad member preview")
+		return
+	}
+	summaries := make(map[string]*squadMemberSummary, len(squads))
+	for _, row := range previewRows {
+		squadID := uuidToString(row.SquadID)
+		summary := summaries[squadID]
+		if summary == nil {
+			summary = &squadMemberSummary{}
+			summaries[squadID] = summary
+		}
+		addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
+	}
+
 	resp := make([]SquadResponse, len(squads))
 	for i, s := range squads {
 		resp[i] = squadToResponse(s)
+		applySquadMemberSummary(&resp[i], summaries[uuidToString(s.ID)])
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -185,8 +263,18 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		Role:       "leader",
 	})
 
-	resp := squadToResponse(squad)
+	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+		return
+	}
 	h.publish(protocol.EventSquadCreated, workspaceID, "member", uuidToString(member.UserID), map[string]any{"squad": resp})
+	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.SquadCreated(
+		uuidToString(member.UserID),
+		workspaceID,
+		uuidToString(squad.ID),
+		1,
+	))
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -195,7 +283,12 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, squadToResponse(squad))
+	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
@@ -268,7 +361,11 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := squadToResponse(updated)
+	resp, err := h.squadToResponseWithPreview(r.Context(), updated)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+		return
+	}
 	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{"squad": resp})
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -295,6 +392,19 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 		AssigneeID_2: squad.LeaderID,
 	}); err != nil {
 		slog.Warn("transfer squad assignees failed", "squad_id", uuidToString(squad.ID), "error", err)
+	}
+
+	// Mirror the issue-assignee transfer for autopilots that target this
+	// squad. Without this, autopilot.assignee_id would still point at the
+	// archived squad row and every subsequent dispatch would skip with
+	// "assignee squad is archived" — visible to ops but useless to the
+	// owner. Rewriting to the leader keeps the autopilot semantics
+	// unchanged (Path A from MUL-2429 is leader-only execution anyway).
+	if err := h.Queries.TransferSquadAutopilotsToLeader(r.Context(), db.TransferSquadAutopilotsToLeaderParams{
+		AssigneeID:   squad.ID,
+		AssigneeID_2: squad.LeaderID,
+	}); err != nil {
+		slog.Warn("transfer squad autopilots failed", "squad_id", uuidToString(squad.ID), "error", err)
 	}
 
 	userID := requestUserID(r)
@@ -331,6 +441,194 @@ func (h *Handler) ListSquadMembers(w http.ResponseWriter, r *http.Request) {
 	for i, m := range members {
 		resp[i] = squadMemberToResponse(m)
 	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ── Squad Member Status ────────────────────────────────────────────────────
+
+// SquadMemberStatus is the per-member entry in the squad member status
+// response. Agent members carry a derived working/idle/offline/unstable
+// status plus any active issues; human members are returned with member_type
+// only so the front-end can render them in the same list without
+// reordering.
+type SquadMemberStatusResponse struct {
+	MemberType   string                  `json:"member_type"`
+	MemberID     string                  `json:"member_id"`
+	Status       *string                 `json:"status"`
+	ActiveIssues []SquadActiveIssueBrief `json:"active_issues"`
+	LastActiveAt *string                 `json:"last_active_at"`
+}
+
+type SquadActiveIssueBrief struct {
+	IssueID     string `json:"issue_id"`
+	Identifier  string `json:"identifier"`
+	Title       string `json:"title"`
+	IssueStatus string `json:"issue_status"`
+}
+
+type SquadMemberStatusListResponse struct {
+	Members []SquadMemberStatusResponse `json:"members"`
+}
+
+// deriveSquadMemberStatus collapses runtime + task signals into the five
+// status buckets used by the squad UI. Mirrors the workload+availability
+// split in packages/core/agents/derive-presence.ts: working wins over
+// runtime health (an agent that is in the middle of dispatched/running
+// work counts as working even if the runtime briefly drops), then
+// availability buckets decide between idle / unstable / offline.
+//
+// Thresholds match deriveRuntimeHealth: any offline runtime whose
+// last_seen_at is within the last 5 minutes is reported as "unstable" so
+// the squad UI surfaces transient drops the same way the agent dot does.
+//
+// Archived agents always report `archived` regardless of any leftover
+// runtime row or task — they should appear in the list but never look
+// like they're still working or merely offline (a leftover online
+// runtime row would otherwise read as "offline" and hide the fact that
+// the agent has been archived). Per the RFC decision (see MUL-2319), we
+// surface archived agents in this endpoint rather than filtering them
+// out in the SQL.
+func deriveSquadMemberStatus(
+	archived bool,
+	runtimeStatus pgtype.Text,
+	lastSeen pgtype.Timestamptz,
+	hasActiveTask bool,
+	now time.Time,
+) string {
+	if archived {
+		return "archived"
+	}
+	if hasActiveTask {
+		return "working"
+	}
+	if !runtimeStatus.Valid {
+		return "offline"
+	}
+	if runtimeStatus.String == "online" {
+		return "idle"
+	}
+	if !lastSeen.Valid {
+		return "offline"
+	}
+	if now.Sub(lastSeen.Time) < 5*time.Minute {
+		return "unstable"
+	}
+	return "offline"
+}
+
+// ListSquadMemberStatus returns one entry per squad member with derived
+// status, the issues each agent member is currently running, and the last
+// observed runtime activity. The endpoint is read-only and inherits the
+// workspace-membership guard from the route middleware — any member of the
+// workspace can read it.
+func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) {
+	squad, _, ok := h.loadSquadInWorkspace(w, r)
+	if !ok {
+		return
+	}
+
+	rows, err := h.Queries.ListSquadMemberStatusRows(r.Context(), squad.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list squad member status")
+		return
+	}
+
+	prefix := h.getIssuePrefix(r.Context(), squad.WorkspaceID)
+	now := time.Now()
+
+	// Group rows by member_id while preserving the SQL ORDER BY (squad_member
+	// insertion order). One member may appear in multiple rows when they have
+	// more than one active task.
+	type memberAcc struct {
+		response       SquadMemberStatusResponse
+		archived       bool
+		hasActiveTask  bool
+		runtimeStatus  pgtype.Text
+		runtimeSeenAt  pgtype.Timestamptz
+		latestActiveAt pgtype.Timestamptz
+	}
+	order := make([]string, 0, len(rows))
+	acc := make(map[string]*memberAcc, len(rows))
+
+	for _, row := range rows {
+		memberID := uuidToString(row.MemberID)
+		entry, exists := acc[memberID]
+		if !exists {
+			entry = &memberAcc{
+				response: SquadMemberStatusResponse{
+					MemberType:   row.MemberType,
+					MemberID:     memberID,
+					ActiveIssues: []SquadActiveIssueBrief{},
+				},
+				archived:      row.AgentArchivedAt.Valid,
+				runtimeStatus: row.RuntimeStatus,
+				runtimeSeenAt: row.RuntimeLastSeenAt,
+			}
+			acc[memberID] = entry
+			order = append(order, memberID)
+		}
+
+		if row.MemberType != "agent" {
+			continue
+		}
+
+		// A dispatched/running task occupies an agent slot even when it
+		// has no associated issue (chat / quick-create tasks set
+		// agent_task_queue.issue_id = NULL). The `working` bucket is
+		// defined by task presence, not by whether we can render an
+		// issue link, so flag the agent here regardless of issue_id.
+		if row.TaskID.Valid {
+			entry.hasActiveTask = true
+
+			if row.TaskIssueID.Valid {
+				brief := SquadActiveIssueBrief{
+					IssueID:    uuidToString(row.TaskIssueID),
+					Identifier: prefix + "-" + strconv.Itoa(int(row.IssueNumber.Int32)),
+					Title:      row.IssueTitle.String,
+					IssueStatus: func() string {
+						if row.IssueStatus.Valid {
+							return row.IssueStatus.String
+						}
+						return ""
+					}(),
+				}
+				entry.response.ActiveIssues = append(entry.response.ActiveIssues, brief)
+			}
+
+			if row.TaskDispatchedAt.Valid && (!entry.latestActiveAt.Valid ||
+				row.TaskDispatchedAt.Time.After(entry.latestActiveAt.Time)) {
+				entry.latestActiveAt = row.TaskDispatchedAt
+			}
+		}
+	}
+
+	resp := SquadMemberStatusListResponse{
+		Members: make([]SquadMemberStatusResponse, 0, len(order)),
+	}
+	for _, id := range order {
+		entry := acc[id]
+		if entry.response.MemberType == "agent" {
+			status := deriveSquadMemberStatus(
+				entry.archived,
+				entry.runtimeStatus,
+				entry.runtimeSeenAt,
+				entry.hasActiveTask,
+				now,
+			)
+			entry.response.Status = &status
+			// last_active_at prefers the freshest active-task dispatch
+			// over the runtime heartbeat: a working agent should not
+			// look stale because the runtime heartbeat is a few seconds
+			// behind. Falls back to runtime last_seen_at otherwise.
+			if entry.latestActiveAt.Valid {
+				entry.response.LastActiveAt = timestampToPtr(entry.latestActiveAt)
+			} else if entry.runtimeSeenAt.Valid {
+				entry.response.LastActiveAt = timestampToPtr(entry.runtimeSeenAt)
+			}
+		}
+		resp.Members = append(resp.Members, entry.response)
+	}
+
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -606,58 +904,6 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 
 // ── Squad Trigger Logic ─────────────────────────────────────────────────────
 
-// shouldEnqueueSquadLeaderOnComment returns true if the issue is assigned to a
-// squad and the comment author is NOT a member of that squad (anti-loop).
-// commentContent is the new comment's markdown body; when a member explicitly
-// @mentions anyone (agent, member, squad, or @all) in that body, the leader
-// is skipped — the @ marks deliberate routing and the leader would otherwise
-// just observe and record no_action. Issue cross-reference mentions
-// (mention://issue/...) are NOT a routing signal and do not suppress the
-// leader. Agent-authored comments always go through the leader (subject to
-// the leader self-trigger guard) so agent updates still drive coordination.
-func (h *Handler) shouldEnqueueSquadLeaderOnComment(ctx context.Context, issue db.Issue, commentContent, authorType, authorID string) bool {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return false
-	}
-
-	// Load the squad.
-	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		return false
-	}
-
-	// Skip if the comment author is the squad leader itself AND the agent's
-	// last activity on this issue was in the leader role (prevent self-trigger
-	// loop). An agent that is simultaneously the squad's leader and one of its
-	// workers must still wake the leader role after posting a comment from
-	// its worker task — role is inferred from the agent's most recent task
-	// on the issue, not from author ID alone.
-	if authorType == "agent" && authorID == uuidToString(squad.LeaderID) &&
-		h.lastTaskWasLeader(ctx, issue.ID, squad.LeaderID) {
-		return false
-	}
-
-	// Member explicitly @mentioned someone → that someone owns the next step,
-	// skip the leader. Covers @agent / @member / @squad / @all; issue
-	// cross-references do NOT count as routing. Agent-authored comments are
-	// intentionally exempt: when an agent posts a result that @mentions
-	// another agent, the leader still needs to coordinate the thread.
-	if authorType == "member" && commentMentionsAnyone(commentContent) {
-		return false
-	}
-
-	// Verify leader agent is ready (has runtime, not archived).
-	agent, err := h.Queries.GetAgent(ctx, squad.LeaderID)
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
-		return false
-	}
-
-	return true
-}
-
 // lastTaskWasLeader returns true when the agent's most recent task on the
 // issue was enqueued in the squad-leader role. Used by the self-trigger
 // guards to tell apart a comment posted while the agent was acting as
@@ -691,24 +937,21 @@ func commentMentionsAnyone(content string) bool {
 	return false
 }
 
-// shouldEnqueueSquadLeaderOnAssign returns true when assigning an issue to a
-// squad (or creating an issue pre-assigned to a squad) should immediately
-// trigger the squad leader. Mirrors shouldEnqueueAgentTask: backlog issues
-// are skipped (parking lot), and the leader agent must have a runtime and
-// not be archived.
-func (h *Handler) shouldEnqueueSquadLeaderOnAssign(ctx context.Context, issue db.Issue) bool {
-	if issue.Status == "backlog" {
-		return false
-	}
-	return h.isSquadLeaderReady(ctx, issue)
-}
+// The squad-leader assign/promotion readiness decision now lives in the single
+// service.IssueService.WillEnqueueRun predicate (MUL-3375), shared by the issue
+// write paths and the preview endpoint. The former handler-local mirrors
+// (shouldEnqueueSquadLeaderOnAssign / isSquadLeaderReady) were removed to stop
+// the four-entry-point drift. The squad enqueue side effect still flows through
+// enqueueSquadLeaderTask below, which keeps the leader access gate and pending
+// dedup in one place.
 
-// isSquadLeaderReady returns true when the issue is assigned to a squad whose
-// leader agent is ready (has a runtime, not archived).
-func (h *Handler) isSquadLeaderReady(ctx context.Context, issue db.Issue) bool {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return false
-	}
+// enqueueSquadLeaderTask triggers the squad leader agent for an issue assigned
+// to a squad. Assign and backlog-promotion paths use this directly; comment
+// paths go through computeCommentAgentTriggers so preview and create share the
+// same trigger set.
+// enqueueSquadLeaderTask returns true when it actually enqueued a leader task
+// (so the caller can record a handoff trace only on a real run start).
+func (h *Handler) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, authorType, authorID, handoffNote string) bool {
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          issue.AssigneeID,
 		WorkspaceID: issue.WorkspaceID,
@@ -716,37 +959,29 @@ func (h *Handler) isSquadLeaderReady(ctx context.Context, issue db.Issue) bool {
 	if err != nil {
 		return false
 	}
-	agent, err := h.Queries.GetAgent(ctx, squad.LeaderID)
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+
+	if !h.canEnqueueSquadLeader(ctx, squad.LeaderID, authorType, authorID, uuidToString(issue.WorkspaceID)) {
 		return false
 	}
-	return true
-}
 
-// enqueueSquadLeaderTask triggers the squad leader agent for an issue assigned to a squad.
-func (h *Handler) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, authorType, authorID string) {
-	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		return
-	}
-
-	// Dedup: skip if leader already has a pending task for this issue.
 	hasPending, err := h.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
 		IssueID: issue.ID,
 		AgentID: squad.LeaderID,
 	})
 	if err != nil || hasPending {
-		return
+		return false
 	}
 
-	if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, triggerCommentID); err != nil {
+	// triggerCommentID is always empty on the assign/promote path; the handoff
+	// note rides its own task column, never trigger_comment_id.
+	_ = triggerCommentID
+	if _, err := h.TaskService.EnqueueTaskForSquadLeaderWithHandoff(ctx, issue, squad.LeaderID, handoffNote); err != nil {
 		slog.Warn("enqueue squad leader task failed",
 			"issue_id", uuidToString(issue.ID),
 			"squad_id", uuidToString(squad.ID),
 			"leader_id", uuidToString(squad.LeaderID),
 			"error", err)
+		return false
 	}
+	return true
 }

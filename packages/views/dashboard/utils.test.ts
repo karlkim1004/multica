@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   aggregateAgentTokens,
   aggregateDailyCost,
+  aggregateWeeklyTasks,
+  aggregateWeeklyTime,
   computeDailyTotals,
   formatDuration,
   mergeAgentDashboardRows,
@@ -12,6 +14,7 @@ describe("aggregateDailyCost", () => {
     const result = aggregateDailyCost([
       {
         date: "2026-05-10",
+        provider: "claude",
         model: "claude-sonnet-4-6",
         input_tokens: 1_000_000,
         output_tokens: 500_000,
@@ -21,6 +24,7 @@ describe("aggregateDailyCost", () => {
       },
       {
         date: "2026-05-09",
+        provider: "claude",
         model: "claude-sonnet-4-6",
         input_tokens: 1_000_000,
         output_tokens: 0,
@@ -43,6 +47,7 @@ describe("aggregateDailyCost", () => {
     const result = aggregateDailyCost([
       {
         date: "2026-05-10",
+        provider: "claude",
         model: "made-up-model",
         input_tokens: 999_999_999,
         output_tokens: 0,
@@ -60,6 +65,7 @@ describe("aggregateAgentTokens", () => {
     const rows = aggregateAgentTokens([
       {
         agent_id: "small-spender",
+        provider: "claude",
         model: "claude-sonnet-4-6",
         input_tokens: 100_000,
         output_tokens: 0,
@@ -69,6 +75,7 @@ describe("aggregateAgentTokens", () => {
       },
       {
         agent_id: "big-spender",
+        provider: "claude",
         model: "claude-sonnet-4-6",
         input_tokens: 5_000_000,
         output_tokens: 0,
@@ -78,6 +85,7 @@ describe("aggregateAgentTokens", () => {
       },
       {
         agent_id: "big-spender",
+        provider: "claude",
         model: "claude-haiku-4-5",
         input_tokens: 1_000_000,
         output_tokens: 0,
@@ -99,6 +107,7 @@ describe("computeDailyTotals", () => {
     const totals = computeDailyTotals([
       {
         date: "2026-05-10",
+        provider: "claude",
         model: "claude-sonnet-4-6",
         input_tokens: 1_000_000,
         output_tokens: 0,
@@ -108,6 +117,7 @@ describe("computeDailyTotals", () => {
       },
       {
         date: "2026-05-09",
+        provider: "claude",
         model: "claude-sonnet-4-6",
         input_tokens: 2_000_000,
         output_tokens: 0,
@@ -209,5 +219,97 @@ describe("formatDuration", () => {
   it("falls back to the supplied label for sub-second durations", () => {
     expect(formatDuration(0, "<1m")).toBe("<1m");
     expect(formatDuration(0.4, "<1m")).toBe("<1m");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Weekly run-time / tasks aggregation. Mirrors the runtimes-side
+// aggregateByWeek tests: trailing N calendar weeks anchored at today-in-tz,
+// pre-zeroed buckets, partial-week metadata, and rows outside the window
+// dropped. We assert the same invariants on the workspace dashboard helpers
+// so all four metrics behave consistently when the user toggles Weekly.
+// ---------------------------------------------------------------------------
+
+describe("aggregateWeeklyTime", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("folds per-day run-time rows into Mon-anchored weekly totals", () => {
+    // 2026-05-19 is a Tuesday → current week is Mon=05-18..Sun=05-24.
+    vi.setSystemTime(new Date("2026-05-19T12:00:00Z"));
+    const rows = [
+      { date: "2026-05-11", total_seconds: 100, task_count: 0, failed_count: 0 },
+      { date: "2026-05-17", total_seconds: 50, task_count: 0, failed_count: 0 },
+      { date: "2026-05-18", total_seconds: 25, task_count: 0, failed_count: 0 },
+    ];
+    const result = aggregateWeeklyTime(rows, "UTC", 2);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      weekStart: "2026-05-11",
+      weekEnd: "2026-05-17",
+      totalSeconds: 150,
+      partial: false,
+      daysCovered: 7,
+    });
+    expect(result[1]).toMatchObject({
+      weekStart: "2026-05-18",
+      totalSeconds: 25,
+      partial: true,
+      daysCovered: 2, // Mon + Tue
+    });
+  });
+
+  it("drops rows that fall outside the trailing window and keeps empty buckets", () => {
+    // Same MUL-2382 sparse-data regression we caught on the runtimes side:
+    // an old populated week must not surface when the requested window
+    // doesn't include it; in-range empty weeks must remain as zero buckets.
+    vi.setSystemTime(new Date("2026-05-19T12:00:00Z"));
+    const rows = [
+      // 2026-04-13 is a Monday — exactly one week earlier than the oldest
+      // in-range week (Mon=04-20) for a 5-week trailing window.
+      { date: "2026-04-13", total_seconds: 999, task_count: 0, failed_count: 0 },
+    ];
+    const result = aggregateWeeklyTime(rows, "UTC", 5);
+    expect(result.map((w) => w.weekStart)).toEqual([
+      "2026-04-20",
+      "2026-04-27",
+      "2026-05-04",
+      "2026-05-11",
+      "2026-05-18",
+    ]);
+    for (const w of result) expect(w.totalSeconds).toBe(0);
+  });
+});
+
+describe("aggregateWeeklyTasks", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("splits completed and failed counts per calendar week", () => {
+    vi.setSystemTime(new Date("2026-05-19T12:00:00Z"));
+    const rows = [
+      { date: "2026-05-12", total_seconds: 0, task_count: 5, failed_count: 1 },
+      { date: "2026-05-18", total_seconds: 0, task_count: 3, failed_count: 0 },
+    ];
+    const result = aggregateWeeklyTasks(rows, "UTC", 2);
+    expect(result[0]).toMatchObject({
+      weekStart: "2026-05-11",
+      completed: 4,
+      failed: 1,
+    });
+    expect(result[1]).toMatchObject({
+      weekStart: "2026-05-18",
+      completed: 3,
+      failed: 0,
+      partial: true,
+    });
   });
 });

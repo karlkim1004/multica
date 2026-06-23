@@ -6,9 +6,16 @@ import {
   agentTaskSnapshotKeys,
   agentTasksKeys,
 } from "../agents/queries";
-import { onIssueDeleted, onIssueLabelsChanged } from "./ws-updaters";
+import {
+  onIssueCreated,
+  onIssueDeleted,
+  onIssueLabelsChanged,
+  onIssueMetadataChanged,
+  onIssueUpdated,
+} from "./ws-updaters";
 import { issueKeys } from "./queries";
 import { labelKeys } from "../labels/queries";
+import { projectKeys } from "../projects/queries";
 import type {
   AgentActivityBucket,
   AgentRunCount,
@@ -29,6 +36,7 @@ const ISSUE_ID = "issue-1";
 const OTHER_ISSUE_ID = "issue-2";
 const PARENT_ISSUE_ID = "parent-1";
 const AGENT_ID = "agent-1";
+const PROJECT_ID = "project-1";
 
 const labelA: Label = {
   id: "label-a",
@@ -64,7 +72,10 @@ const baseIssue: Issue = {
   parent_issue_id: null,
   project_id: null,
   position: 0,
+  stage: null,
+  start_date: null,
   due_date: null,
+  metadata: {},
   labels: [labelA],
   created_at: "2025-01-01T00:00:00Z",
   updated_at: "2025-01-01T00:00:00Z",
@@ -150,6 +161,167 @@ describe("onIssueLabelsChanged", () => {
     const detail = qc.getQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID));
     expect(detail?.labels).toEqual([labelB]);
   });
+
+  it("patches the Project Gantt cache so label filters react in place", () => {
+    const PROJECT_ID = "project-1";
+    qc.setQueryData<Issue[]>(issueKeys.projectGantt(WS_ID, PROJECT_ID), [
+      baseIssue,
+      otherIssue,
+    ]);
+
+    onIssueLabelsChanged(qc, WS_ID, ISSUE_ID, [labelB]);
+
+    const gantt = qc.getQueryData<Issue[]>(
+      issueKeys.projectGantt(WS_ID, PROJECT_ID),
+    );
+    expect(gantt?.find((i) => i.id === ISSUE_ID)?.labels).toEqual([labelB]);
+    // Other issues in the same cache must not have their labels mutated.
+    expect(gantt?.find((i) => i.id === OTHER_ISSUE_ID)?.labels).toEqual([
+      labelA,
+    ]);
+  });
+});
+
+describe("onIssueMetadataChanged", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = new QueryClient();
+  });
+
+  it("replaces metadata in both detail and list caches (no merge)", () => {
+    qc.setQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID), {
+      ...baseIssue,
+      metadata: { pr_number: 1, stale: "yes" },
+    });
+    qc.setQueryData<ListIssuesCache>(issueKeys.list(WS_ID), {
+      byStatus: {
+        todo: {
+          issues: [{ ...baseIssue, metadata: { pr_number: 1 } }],
+          total: 1,
+        },
+      },
+    });
+
+    onIssueMetadataChanged(qc, WS_ID, ISSUE_ID, { pr_number: 2 });
+
+    const detail = qc.getQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID));
+    expect(detail?.metadata).toEqual({ pr_number: 2 });
+    const list = qc.getQueryData<ListIssuesCache>(issueKeys.list(WS_ID));
+    expect(list?.byStatus.todo?.issues[0]?.metadata).toEqual({ pr_number: 2 });
+  });
+
+  it("leaves untouched caches as undefined (no spurious writes)", () => {
+    onIssueMetadataChanged(qc, WS_ID, ISSUE_ID, { foo: "bar" });
+
+    expect(qc.getQueryData(issueKeys.detail(WS_ID, ISSUE_ID))).toBeUndefined();
+    expect(qc.getQueryData(issueKeys.list(WS_ID))).toBeUndefined();
+  });
+});
+
+describe("project progress invalidation", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = new QueryClient();
+    qc.setQueryData(projectKeys.list(WS_ID), [
+      {
+        id: PROJECT_ID,
+        workspace_id: WS_ID,
+        title: "Project",
+        description: null,
+        icon: null,
+        status: "in_progress",
+        priority: "none",
+        lead_type: null,
+        lead_id: null,
+        issue_count: 1,
+        done_count: 0,
+        resource_count: 0,
+        created_at: "2025-01-01T00:00:00Z",
+        updated_at: "2025-01-01T00:00:00Z",
+      },
+    ]);
+  });
+
+  it("invalidates project queries when an issue status changes", () => {
+    onIssueUpdated(qc, WS_ID, {
+      id: ISSUE_ID,
+      status: "done",
+    });
+
+    expectInvalidated(qc, projectKeys.list(WS_ID));
+  });
+
+  it("invalidates project queries when a project issue is created", () => {
+    onIssueCreated(qc, WS_ID, {
+      ...baseIssue,
+      project_id: PROJECT_ID,
+    });
+
+    expectInvalidated(qc, projectKeys.list(WS_ID));
+  });
+});
+
+describe("onIssueUpdated — position move is surgical, not a list refetch", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = new QueryClient();
+  });
+
+  const issueA: Issue = { ...baseIssue, id: "issue-1", position: 0 };
+  const issueB: Issue = { ...baseIssue, id: "issue-2", position: 10 };
+
+  it("reorders the moved card in place and does NOT invalidate the workspace list", () => {
+    qc.setQueryData<ListIssuesCache>(issueKeys.list(WS_ID), makeListCache(issueA, issueB));
+
+    // issue-1 moves below issue-2 (position 0 -> 20) — a remote/echoed drag.
+    onIssueUpdated(qc, WS_ID, { ...issueA, position: 20 });
+
+    const list = qc.getQueryData<ListIssuesCache>(issueKeys.list(WS_ID));
+    // Surgically reordered into its new slot: proof the patch alone suffices.
+    expect(list?.byStatus.todo?.issues.map((i) => i.id)).toEqual(["issue-2", "issue-1"]);
+    // The old redundant `position -> invalidate(list)` is gone — no full-board
+    // refetch on top of the surgical patch (that was the flicker source).
+    expect(qc.getQueryState(issueKeys.list(WS_ID))?.isInvalidated).toBe(false);
+  });
+
+  it("surgically patches the filtered myAll lists on a non-membership change (no refetch)", () => {
+    qc.setQueryData<ListIssuesCache>(issueKeys.list(WS_ID), makeListCache(issueA, issueB));
+    qc.setQueryData<ListIssuesCache>(issueKeys.myAll(WS_ID), makeListCache(issueA, issueB));
+
+    // Pure position move: membership cannot change, so myAll is patched in place.
+    onIssueUpdated(qc, WS_ID, { ...issueA, position: 20 });
+
+    const my = qc.getQueryData<ListIssuesCache>(issueKeys.myAll(WS_ID));
+    expect(my?.byStatus.todo?.issues.map((i) => i.id)).toEqual(["issue-2", "issue-1"]);
+    // Reconciled in place — no full-list refetch on My Issues (that was the
+    // remaining drag flicker on filtered boards).
+    expect(qc.getQueryState(issueKeys.myAll(WS_ID))?.isInvalidated).toBe(false);
+  });
+
+  it("invalidates myAll when the assignee changes (membership may shift)", () => {
+    qc.setQueryData<ListIssuesCache>(issueKeys.myAll(WS_ID), makeListCache(issueA));
+
+    onIssueUpdated(
+      qc,
+      WS_ID,
+      { ...issueA, assignee_type: "member", assignee_id: "user-2" },
+      { assigneeChanged: true },
+    );
+
+    expectInvalidated(qc, issueKeys.myAll(WS_ID));
+  });
+
+  it("invalidates myAll when the project changes (Project board membership)", () => {
+    qc.setQueryData<ListIssuesCache>(issueKeys.myAll(WS_ID), makeListCache(issueA));
+
+    // issueA.project_id is null; moving it into a project shifts Project-board membership.
+    onIssueUpdated(qc, WS_ID, { ...issueA, project_id: "project-9" });
+
+    expectInvalidated(qc, issueKeys.myAll(WS_ID));
+  });
 });
 
 describe("onIssueDeleted", () => {
@@ -210,6 +382,7 @@ describe("onIssueDeleted", () => {
         filename: "evidence.png",
         url: "s3://bucket/evidence.png",
         download_url: "https://example.test/evidence.png",
+        markdown_url: "https://example.test/api/attachments/att-1/download",
         content_type: "image/png",
         size_bytes: 1,
         created_at: "2025-01-01T00:00:00Z",
@@ -389,5 +562,40 @@ describe("onIssueDeleted", () => {
     expectInvalidated(qc, agentRunCountsKeys.last30d(WS_ID));
     expectInvalidated(qc, agentTasksKeys.detail(WS_ID, AGENT_ID));
     expect(qc.getQueryData(issueKeys.tasks(ISSUE_ID))).toBeUndefined();
+  });
+});
+
+// Regression coverage for the Project Gantt cache. The Gantt view rides its
+// own dedicated cache (server-filtered to `scheduled=true`); every WS-driven
+// path that can shift Gantt membership has to invalidate the prefix or the
+// timeline goes stale.
+describe("project gantt cache invalidation", () => {
+  const PROJECT_ID = "project-1";
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = new QueryClient();
+    qc.setQueryData<Issue[]>(
+      issueKeys.projectGantt(WS_ID, PROJECT_ID),
+      [baseIssue],
+    );
+  });
+
+  it("invalidates the project Gantt cache on issue:created", () => {
+    onIssueCreated(qc, WS_ID, otherIssue);
+    expectInvalidated(qc, issueKeys.projectGantt(WS_ID, PROJECT_ID));
+  });
+
+  it("invalidates the project Gantt cache on issue:updated", () => {
+    onIssueUpdated(qc, WS_ID, {
+      id: ISSUE_ID,
+      start_date: "2026-01-01T00:00:00Z",
+    });
+    expectInvalidated(qc, issueKeys.projectGantt(WS_ID, PROJECT_ID));
+  });
+
+  it("invalidates the project Gantt cache on issue:deleted", () => {
+    onIssueDeleted(qc, WS_ID, ISSUE_ID);
+    expectInvalidated(qc, issueKeys.projectGantt(WS_ID, PROJECT_ID));
   });
 });

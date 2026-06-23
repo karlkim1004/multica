@@ -90,6 +90,7 @@ const mockIssue: Issue = {
   creator_type: "member",
   creator_id: "user-1",
   parent_issue_id: null,
+  start_date: null,
   due_date: null,
   project_id: null,
   created_at: "2026-01-01T00:00:00Z",
@@ -130,9 +131,8 @@ describe("useIssueActions", () => {
     );
   });
 
-  it("assigning an agent to a backlog issue opens the backlog-hint modal", () => {
-    const backlogIssue = { ...mockIssue, status: "backlog" } as Issue;
-    const { result } = renderHook(() => useIssueActions(backlogIssue), { wrapper });
+  it("assigning an agent routes through the run-confirm modal instead of mutating directly", () => {
+    const { result } = renderHook(() => useIssueActions(mockIssue), { wrapper });
 
     act(() => {
       result.current.updateField({
@@ -141,13 +141,16 @@ describe("useIssueActions", () => {
       });
     });
 
-    expect(mockOpenModal).toHaveBeenCalledWith("issue-backlog-agent-hint", {
-      issueId: "issue-1",
+    expect(mockOpenModal).toHaveBeenCalledWith("issue-run-confirm", {
+      issueIds: ["issue-1"],
+      mode: "assign",
+      assigneeType: "agent",
+      assigneeId: "agent-1",
     });
+    expect(mockUpdateMutate).not.toHaveBeenCalled();
   });
 
-  it("does not re-open backlog-hint when the user has dismissed it", () => {
-    localStorage.setItem("multica:backlog-agent-hint-dismissed", "true");
+  it("assigning an agent to a backlog issue applies directly — backlog never starts a run", () => {
     const backlogIssue = { ...mockIssue, status: "backlog" } as Issue;
     const { result } = renderHook(() => useIssueActions(backlogIssue), { wrapper });
 
@@ -158,6 +161,27 @@ describe("useIssueActions", () => {
       });
     });
 
+    expect(mockUpdateMutate).toHaveBeenCalledWith(
+      { id: "issue-1", assignee_type: "agent", assignee_id: "agent-1" },
+      expect.any(Object),
+    );
+    expect(mockOpenModal).not.toHaveBeenCalled();
+  });
+
+  it("assigning a member applies directly without the run-confirm modal", () => {
+    const { result } = renderHook(() => useIssueActions(mockIssue), { wrapper });
+
+    act(() => {
+      result.current.updateField({
+        assignee_type: "member",
+        assignee_id: "user-1",
+      });
+    });
+
+    expect(mockUpdateMutate).toHaveBeenCalledWith(
+      { id: "issue-1", assignee_type: "member", assignee_id: "user-1" },
+      expect.any(Object),
+    );
     expect(mockOpenModal).not.toHaveBeenCalled();
   });
 
