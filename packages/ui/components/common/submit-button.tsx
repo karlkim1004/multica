@@ -37,7 +37,12 @@ function SubmitButton({
 }: SubmitButtonProps) {
   if (running) {
     const stopButton = (
-      <Button size="icon-sm" onClick={onStop}>
+      <Button
+        size="icon-sm"
+        onClick={onStop}
+        data-acceptance="chat-stop-button"
+        data-testid="chat-stop-button"
+      >
         <Square className="fill-current" />
       </Button>
     );
