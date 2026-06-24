@@ -1,0 +1,29 @@
+{
+  "ticket_id": "NEX-606",
+  "from_bot": "BE",
+  "to_bot": "QA",
+  "type": "implementation_complete",
+  "task": "qa_review",
+  "stage_to": "review",
+  "chain": "2/4",
+  "created_at": "2026-06-24T23:59:30Z",
+  "message": "QA/validator 최종 PASS 코멘트 최소 증거 템플릿 검사 로직과 테스트를 구현했습니다. Go 런타임 부재로 테스트는 실행하지 못했으며 PR에서 확인이 필요합니다.",
+  "evidence": [
+    "server/internal/handler/issue_evidence_gate.go",
+    "server/internal/handler/issue_evidence_gate_test.go",
+    "outputs/NEX-606/be/pass_comment_examples.md",
+    "https://github.com/karlkim1004/multica/pull/13"
+  ],
+  "metrics": {
+    "files_changed": 3,
+    "lines_added": 400,
+    "lines_removed": 0,
+    "test_count": 5,
+    "line_coverage": 0,
+    "branch_coverage": 0,
+    "cyclomatic_avg": 0
+  },
+  "breaking_changes": false,
+  "requires_migration": false,
+  "priority": "P1"
+}
