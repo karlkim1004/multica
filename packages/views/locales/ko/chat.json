@@ -13,7 +13,14 @@
     "send_tooltip": "보내기",
     "stop_tooltip": "중지",
     "send_failed_toast": "메시지를 보내지 못했습니다",
-    "attachment_bind_failed_toast": "메시지는 보냈지만 파일이 첨부되지 않았습니다. 잠시 후 다시 시도해 주세요."
+    "attachment_bind_failed_toast": "메시지는 보냈지만 파일이 첨부되지 않았습니다. 잠시 후 다시 시도해 주세요.",
+    "voice_start_label": "음성 입력 시작",
+    "voice_unsupported_label": "음성 입력 미지원",
+    "voice_listening": "듣는 중...",
+    "voice_captured": "음성 입력 완료",
+    "voice_failed": "음성 입력 실패. 다시 시도해 주세요.",
+    "voice_permission_denied": "마이크 권한이 거부되었습니다.",
+    "voice_unsupported": "이 브라우저에서는 음성 입력을 지원하지 않습니다."
   },
   "message_list": {
     "show_details": "세부 정보 보기",

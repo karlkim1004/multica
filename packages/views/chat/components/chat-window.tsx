@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square } from "lucide-react";
+import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
@@ -213,8 +213,18 @@ export function ChatWindow() {
     attachments?: Attachment[];
     sessionId?: string;
   } | null>(null);
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
+  const [voiceOutputSupported, setVoiceOutputSupported] = useState(false);
   const handleRestoreDraftConsumed = useCallback(() => {
     setRestoreDraftRequest(null);
+  }, []);
+
+  useEffect(() => {
+    setVoiceOutputSupported(
+      typeof window !== "undefined" &&
+      "speechSynthesis" in window &&
+      "SpeechSynthesisUtterance" in window,
+    );
   }, []);
 
   // Legacy archived sessions (the old soft-archive feature was removed but
@@ -713,6 +723,33 @@ export function ChatWindow() {
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
           />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className={cn("text-muted-foreground", voiceOutputEnabled && "text-brand")}
+                  aria-label={voiceOutputEnabled ? "Disable voice output" : "Enable voice output"}
+                  aria-pressed={voiceOutputEnabled}
+                  disabled={!voiceOutputSupported}
+                  onClick={() => {
+                    setVoiceOutputEnabled((enabled) => {
+                      if (enabled && voiceOutputSupported) window.speechSynthesis.cancel();
+                      return !enabled;
+                    });
+                  }}
+                />
+              }
+            >
+              {voiceOutputEnabled ? <Volume2 className="size-3.5" /> : <VolumeX className="size-3.5" />}
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {voiceOutputSupported
+                ? voiceOutputEnabled ? "Disable voice output" : "Enable voice output"
+                : "Voice output is not supported in this browser."}
+            </TooltipContent>
+          </Tooltip>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <Tooltip>
@@ -763,6 +800,7 @@ export function ChatWindow() {
           hasOlderMessages={!!hasOlderMessages}
           isFetchingOlderMessages={isFetchingOlderMessages}
           onLoadOlderMessages={() => void fetchOlderMessages()}
+          voiceOutputEnabled={voiceOutputEnabled}
         />
       ) : (
         <EmptyState

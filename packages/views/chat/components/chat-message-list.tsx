@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { Virtuoso } from "react-virtuoso";
@@ -48,6 +48,17 @@ interface ChatMessageListProps {
   hasOlderMessages?: boolean;
   isFetchingOlderMessages?: boolean;
   onLoadOlderMessages?: () => void;
+  voiceOutputEnabled?: boolean;
+}
+
+function findKoreanVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
+  const voices = window.speechSynthesis.getVoices();
+  return (
+    voices.find((voice) => voice.lang === "ko-KR") ??
+    voices.find((voice) => voice.lang.startsWith("ko")) ??
+    null
+  );
 }
 
 export function ChatMessageList({
@@ -58,6 +69,7 @@ export function ChatMessageList({
   hasOlderMessages = false,
   isFetchingOlderMessages = false,
   onLoadOlderMessages,
+  voiceOutputEnabled = false,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollContainerEl, setScrollContainerEl] = useState<HTMLDivElement | null>(null);
@@ -90,6 +102,26 @@ export function ChatMessageList({
   const liveTimeline: ChatTimelineItem[] = buildTimeline(liveTaskMessages ?? []);
   const hasLive = showLiveTimeline && liveTimeline.length > 0;
   const showStatusPill = !!pendingTaskId && !pendingAlreadyPersisted && !!pendingTask;
+  const spokenAssistantMessageIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!voiceOutputEnabled) return;
+    if (typeof window === "undefined") return;
+    if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
+
+    const latestAssistantMessage = [...messages]
+      .reverse()
+      .find((msg) => msg.role === "assistant" && !msg.failure_reason && !msg.id.startsWith("optimistic-"));
+    if (!latestAssistantMessage) return;
+    if (spokenAssistantMessageIdRef.current === latestAssistantMessage.id) return;
+
+    spokenAssistantMessageIdRef.current = latestAssistantMessage.id;
+    const utterance = new SpeechSynthesisUtterance(latestAssistantMessage.content);
+    utterance.lang = "ko-KR";
+    utterance.voice = findKoreanVoice();
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }, [messages, voiceOutputEnabled]);
 
   const totalCount = messages.length + (hasLive || showStatusPill ? 1 : 0);
   const firstIndex = totalCount > 0 ? firstItemIndex : 0;

@@ -2,7 +2,7 @@ import { forwardRef, useImperativeHandle } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import enChat from "../../locales/en/chat.json";
 import enCommon from "../../locales/en/common.json";
 import type { ChatMessage, ChatPendingTask } from "@multica/core/types";
@@ -63,6 +63,24 @@ function renderList({
   );
 }
 
+function renderMessages(messages: ChatMessage[], voiceOutputEnabled = false) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider resources={TEST_RESOURCES} locale="en">
+        <ChatMessageList
+          messages={messages}
+          pendingTask={null}
+          availability="online"
+          voiceOutputEnabled={voiceOutputEnabled}
+        />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+}
+
 function message(overrides: Partial<ChatMessage>): ChatMessage {
   return {
     id: "msg-1",
@@ -116,5 +134,64 @@ describe("ChatMessageList timing metadata", () => {
     expect(pill).toHaveAttribute("data-acceptance", "chat-response-in-progress");
     expect(pill).toHaveTextContent("Queued");
     expect(pill).toHaveTextContent("2s");
+  });
+});
+
+describe("ChatMessageList voice output", () => {
+  beforeEach(() => {
+    vi.stubGlobal("SpeechSynthesisUtterance", vi.fn(function SpeechSynthesisUtterance(this: { text: string; lang: string; voice: SpeechSynthesisVoice | null }, text: string) {
+      this.text = text;
+      this.lang = "";
+      this.voice = null;
+    }));
+    vi.stubGlobal("speechSynthesis", {
+      speak: vi.fn(),
+      cancel: vi.fn(),
+      getVoices: vi.fn(() => [{ lang: "ko-KR", name: "Korean" }]),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("speaks a newly received assistant message in Korean when enabled", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrap = (msgs: ChatMessage[]) => (
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider resources={TEST_RESOURCES} locale="en">
+          <ChatMessageList messages={msgs} pendingTask={null} availability="online" voiceOutputEnabled />
+        </I18nProvider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(wrap([]));
+
+    rerender(wrap([
+      message({
+        id: "assistant-1",
+        role: "assistant",
+        content: "대표님, 확인했습니다.",
+        created_at: "2026-06-22T00:00:00Z",
+      }),
+    ]));
+
+    const speak = window.speechSynthesis.speak as unknown as ReturnType<typeof vi.fn>;
+    expect(speak).toHaveBeenCalledTimes(1);
+    const utterance = speak.mock.calls[0]![0] as SpeechSynthesisUtterance;
+    expect(utterance.text).toBe("대표님, 확인했습니다.");
+    expect(utterance.lang).toBe("ko-KR");
+  });
+
+  it("does not speak assistant messages when disabled", () => {
+    renderMessages([
+      message({
+        id: "assistant-1",
+        role: "assistant",
+        content: "조용히 표시만 합니다.",
+        created_at: "2026-06-22T00:00:00Z",
+      }),
+    ]);
+
+    expect(window.speechSynthesis.speak).not.toHaveBeenCalled();
   });
 });

@@ -13,7 +13,14 @@
     "send_tooltip": "Send",
     "stop_tooltip": "Stop",
     "send_failed_toast": "Failed to send message",
-    "attachment_bind_failed_toast": "Message sent, but files were not attached. Please try again in a moment."
+    "attachment_bind_failed_toast": "Message sent, but files were not attached. Please try again in a moment.",
+    "voice_start_label": "Start voice input",
+    "voice_unsupported_label": "Voice input unsupported",
+    "voice_listening": "Listening...",
+    "voice_captured": "Voice input captured",
+    "voice_failed": "Voice input failed. Try again.",
+    "voice_permission_denied": "Microphone permission was denied.",
+    "voice_unsupported": "Voice input is not supported in this browser."
   },
   "message_list": {
     "show_details": "Show details",

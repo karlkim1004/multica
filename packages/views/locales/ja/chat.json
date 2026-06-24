@@ -12,7 +12,14 @@
     "send_tooltip": "送信",
     "stop_tooltip": "停止",
     "send_failed_toast": "メッセージを送信できませんでした",
-    "attachment_bind_failed_toast": "メッセージは送信されましたが、ファイルを添付できませんでした。しばらくしてからもう一度お試しください。"
+    "attachment_bind_failed_toast": "メッセージは送信されましたが、ファイルを添付できませんでした。しばらくしてからもう一度お試しください。",
+    "voice_start_label": "音声入力を開始",
+    "voice_unsupported_label": "音声入力は非対応",
+    "voice_listening": "聞いています...",
+    "voice_captured": "音声入力を取得しました",
+    "voice_failed": "音声入力に失敗しました。もう一度お試しください。",
+    "voice_permission_denied": "マイクの権限が拒否されました。",
+    "voice_unsupported": "このブラウザでは音声入力に対応していません。"
   },
   "message_list": {
     "show_details": "詳細を表示",
