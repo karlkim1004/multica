@@ -86,6 +86,7 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
   return (
     <div
       data-acceptance="chat-token-remaining-badge"
+      data-testid="chat-token-gauge"
       className={cn(
         "hidden min-w-[21rem] items-stretch gap-1.5 rounded-md border px-2 py-1 text-[10px] text-muted-foreground sm:flex",
         className,
