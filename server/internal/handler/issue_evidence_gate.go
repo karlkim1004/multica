@@ -93,8 +93,8 @@ func evaluateFinalPassComment(content string) finalPassCommentEvaluation {
 		return rejectedFinalPassComment("Evidence Gate 차단: HTTP 200 단독 확인은 최종 PASS 라이브 증거로 인정할 수 없습니다.")
 	}
 
-	switch {
-	case strings.Contains(normalized, "validator"):
+	switch finalPassTemplateType(normalized) {
+	case "validator":
 		return evaluateValidatorPassTemplate(normalized)
 	default:
 		return evaluateQAPassTemplate(normalized)
@@ -119,6 +119,28 @@ func looksLikeFinalPassComment(normalized string) bool {
 	return strings.Contains(normalized, "결론") ||
 		strings.Contains(normalized, "qa pass") ||
 		strings.Contains(normalized, "validator pass")
+}
+
+func finalPassTemplateType(normalized string) string {
+	for _, line := range strings.Split(normalized, "\n") {
+		header := strings.TrimLeft(strings.TrimSpace(line), "#>*- \t")
+		switch {
+		case isPassHeader(header, "qa pass"):
+			return "qa"
+		case isPassHeader(header, "validator pass"):
+			return "validator"
+		}
+	}
+	return "qa"
+}
+
+func isPassHeader(line, marker string) bool {
+	if line == marker {
+		return true
+	}
+	return strings.HasPrefix(line, marker+" ") ||
+		strings.HasPrefix(line, marker+":") ||
+		strings.HasPrefix(line, marker+"(")
 }
 
 func evaluateQAPassTemplate(normalized string) finalPassCommentEvaluation {

@@ -27,6 +27,24 @@ func TestEvaluateFinalPassCommentRequiresQATemplateEvidence(t *testing.T) {
 	}
 }
 
+func TestEvaluateFinalPassCommentTreatsQAPassHeaderAsQAEvenWhenBodyMentionsValidator(t *testing.T) {
+	comment := `
+## QA PASS
+
+변경 대상: QA/validator PASS 템플릿 파서
+실행 테스트: go test ./internal/handler -run TestEvaluateFinalPassComment -count=1 PASS
+사용자 시나리오: done 전환 경로 PASS
+라이브 증거: HTTP 409 차단 응답 body 확인
+실패 run scan: failed/cancelled/api_invalid_request/unsupported model 없음
+결론: PASS
+`
+
+	result := evaluateFinalPassComment(comment)
+	if !result.Accepted {
+		t.Fatalf("QA PASS header should use QA template even when body mentions validator, missing=%v reason=%q", result.MissingFields, result.BlockingReason)
+	}
+}
+
 func TestEvaluateFinalPassCommentRejectsConditionalPassConfidenceAndHTTP200Only(t *testing.T) {
 	cases := []struct {
 		name    string
