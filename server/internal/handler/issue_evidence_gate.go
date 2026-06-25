@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -50,6 +51,12 @@ func blockingTaskRunReason(tasks []db.AgentTaskQueue) string {
 		resultText := strings.ToLower(string(task.Result))
 
 		if status == "cancelled" {
+			if isSystemCancellation(task) {
+				if hasLaterSuccessfulTaskRun(tasks, taskRunTime(task)) {
+					continue
+				}
+				return fmt.Sprintf("Evidence Gate 차단: 시스템 취소 issue run 이후 비-cancelled 후속 성공 검증 run이 없어 done 전환을 허용할 수 없습니다. task_id=%s", uuidToString(task.ID))
+			}
 			return fmt.Sprintf("Evidence Gate 차단: cancelled issue run이 존재합니다. task_id=%s", uuidToString(task.ID))
 		}
 		if status != "failed" {
@@ -67,6 +74,53 @@ func blockingTaskRunReason(tasks []db.AgentTaskQueue) string {
 		return fmt.Sprintf("Evidence Gate 차단: failed issue run이 존재합니다. task_id=%s, failure_reason=%s", uuidToString(task.ID), failureReason)
 	}
 	return ""
+}
+
+func isSystemCancellation(task db.AgentTaskQueue) bool {
+	text := strings.Join([]string{
+		task.FailureReason.String,
+		task.Error.String,
+		string(task.Result),
+		task.TriggerSummary.String,
+		task.HandoffNote.String,
+	}, "\n")
+	text = strings.ToLower(text)
+	return hasSystemCancellationReason(text, "system_restart") ||
+		hasSystemCancellationReason(text, "duplicate_dispatch")
+}
+
+func hasSystemCancellationReason(text, reason string) bool {
+	return strings.TrimSpace(text) == reason ||
+		strings.Contains(text, "reason="+reason) ||
+		strings.Contains(text, `"reason":"`+reason+`"`) ||
+		strings.Contains(text, `"reason": "`+reason+`"`) ||
+		strings.Contains(text, "failure_reason="+reason)
+}
+
+func hasLaterSuccessfulTaskRun(tasks []db.AgentTaskQueue, cancelledAt time.Time) bool {
+	if cancelledAt.IsZero() {
+		return false
+	}
+	for _, task := range tasks {
+		if strings.ToLower(task.Status) != "completed" {
+			continue
+		}
+		completedAt := taskRunTime(task)
+		if !completedAt.IsZero() && completedAt.After(cancelledAt) {
+			return true
+		}
+	}
+	return false
+}
+
+func taskRunTime(task db.AgentTaskQueue) time.Time {
+	if task.CompletedAt.Valid {
+		return task.CompletedAt.Time
+	}
+	if task.CreatedAt.Valid {
+		return task.CreatedAt.Time
+	}
+	return time.Time{}
 }
 
 func issueHasDoneEvidence(issue db.Issue) bool {
