@@ -267,6 +267,16 @@ func TestUpdateIssueDoneAllowsFinalPassHandoffWithAgentMention(t *testing.T) {
 	}
 }
 
+func markIssueDoneEvidenceForTest(t *testing.T, issueID string) {
+	t.Helper()
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE issue SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"pr_url": "https://github.com/test/test/pull/1"}'::jsonb WHERE id = $1`,
+		issueID,
+	); err != nil {
+		t.Fatalf("mark issue done evidence for test: %v", err)
+	}
+}
+
 func insertIssueCommentForTest(t *testing.T, issueID, content string) {
 	t.Helper()
 
