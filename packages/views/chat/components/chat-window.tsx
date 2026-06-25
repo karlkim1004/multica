@@ -58,6 +58,7 @@ import { useT } from "../../i18n";
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
+const CHAT_MESSAGES_REFRESH_LABEL = "메시지 새로고침";
 
 function appendChatMessageToLatestPageCache(
   qc: ReturnType<typeof useQueryClient>,
@@ -769,7 +770,7 @@ export function ChatWindow() {
             >
               <RefreshCw className="size-3.5" />
             </TooltipTrigger>
-            <TooltipContent side="top">메시지 새로고침</TooltipContent>
+            <TooltipContent side="top">{CHAT_MESSAGES_REFRESH_LABEL}</TooltipContent>
           </Tooltip>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
