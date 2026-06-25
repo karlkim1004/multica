@@ -64,6 +64,10 @@ func newChildDoneFixture(t *testing.T, parentStatus string) childDoneFixture {
 func updateChildStatus(t *testing.T, childID, status string) {
 	t.Helper()
 
+	if status == "done" {
+		markIssueDoneEvidenceForTest(t, childID)
+	}
+
 	w := httptest.NewRecorder()
 	req := newRequest("PUT", "/api/issues/"+childID, map[string]any{"status": status})
 	req = withURLParam(req, "id", childID)

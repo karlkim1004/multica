@@ -296,6 +296,18 @@ func createHandlerTestTaskForAgentOnIssue(t *testing.T, agentID, issueID string)
 	return taskID
 }
 
+func markIssueDoneEvidenceForTest(t *testing.T, issueID string) {
+	t.Helper()
+
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE issue
+		SET metadata = jsonb_set(metadata, '{commit_sha}', to_jsonb($2::text), true)
+		WHERE id = $1
+	`, issueID, "handler-test-evidence"); err != nil {
+		t.Fatalf("failed to seed done evidence metadata: %v", err)
+	}
+}
+
 func fetchAgentMcpConfig(t *testing.T, agentID string) []byte {
 	t.Helper()
 
@@ -427,6 +439,171 @@ func TestIssueCRUD(t *testing.T) {
 	testHandler.GetIssue(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("GetIssue after delete: expected 404, got %d", w.Code)
+	}
+}
+
+func TestUpdateIssueDoneRejectsInvalidRequestFailureRun(t *testing.T) {
+	ctx := context.Background()
+	title := fmt.Sprintf("Evidence gate failed run %d", time.Now().UnixNano())
+	var issueID string
+	defer func() {
+		if issueID != "" {
+			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		}
+	}()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":  title,
+		"status": "in_progress",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	issueID = created.ID
+
+	var agentID string
+	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load test agent: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET metadata = '{"pr_url":"https://github.com/karlkim1004/multica/pull/604"}'::jsonb
+		WHERE id = $1
+	`, issueID); err != nil {
+		t.Fatalf("seed evidence metadata: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, failure_reason, error, completed_at)
+		VALUES ($1, $2, $3, 'failed', 0, 'api_invalid_request', 'unsupported model: claude-3-haiku', now())
+	`, agentID, handlerTestRuntimeID(t), issueID); err != nil {
+		t.Fatalf("seed failed task: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issueID, map[string]any{
+		"status": "done",
+	})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("UpdateIssue done with failed run: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "api_invalid_request") {
+		t.Fatalf("blocking reason should mention api_invalid_request, got %s", w.Body.String())
+	}
+
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&status); err != nil {
+		t.Fatalf("load issue status: %v", err)
+	}
+	if status != "in_progress" {
+		t.Fatalf("blocked done transition changed status to %q", status)
+	}
+}
+
+func TestUpdateIssueDoneRejectsMissingEvidence(t *testing.T) {
+	ctx := context.Background()
+	title := fmt.Sprintf("Evidence gate missing evidence %d", time.Now().UnixNano())
+	var issueID string
+	defer func() {
+		if issueID != "" {
+			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		}
+	}()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":  title,
+		"status": "in_progress",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	issueID = created.ID
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issueID, map[string]any{
+		"status": "done",
+	})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("UpdateIssue done without evidence: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "변경 diff/PR") {
+		t.Fatalf("blocking reason should mention missing change evidence, got %s", w.Body.String())
+	}
+}
+
+func TestUpdateIssueDoneAllowsEvidenceAndCleanRuns(t *testing.T) {
+	ctx := context.Background()
+	title := fmt.Sprintf("Evidence gate clean %d", time.Now().UnixNano())
+	var issueID string
+	defer func() {
+		if issueID != "" {
+			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		}
+	}()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":  title,
+		"status": "in_progress",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	issueID = created.ID
+
+	var agentID string
+	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load test agent: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET metadata = '{"commit_sha":"abc123def456"}'::jsonb
+		WHERE id = $1
+	`, issueID); err != nil {
+		t.Fatalf("seed evidence metadata: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, completed_at)
+		VALUES ($1, $2, $3, 'completed', 0, now())
+	`, agentID, handlerTestRuntimeID(t), issueID); err != nil {
+		t.Fatalf("seed completed task: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issueID, map[string]any{
+		"status": "done",
+	})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue done with evidence: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated issue: %v", err)
+	}
+	if updated.Status != "done" {
+		t.Fatalf("UpdateIssue done with evidence: status = %q", updated.Status)
 	}
 }
 

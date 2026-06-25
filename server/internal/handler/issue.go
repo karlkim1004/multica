@@ -2512,6 +2512,13 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if shouldRunDoneEvidenceGate(prevIssue, req.Status) {
+		if status, msg := h.checkDoneEvidenceGate(r.Context(), prevIssue); status != 0 {
+			writeError(w, status, msg)
+			return
+		}
+	}
+
 	issue, err := h.Queries.UpdateIssue(r.Context(), params)
 	if err != nil {
 		slog.Warn("update issue failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
@@ -2886,6 +2893,27 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
 		return
+	}
+	if req.Updates.Status != nil && *req.Updates.Status == "done" {
+		for _, issueID := range req.IssueIDs {
+			issueUUID, err := util.ParseUUID(issueID)
+			if err != nil {
+				continue
+			}
+			prevIssue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+				ID:          issueUUID,
+				WorkspaceID: wsUUID,
+			})
+			if err != nil {
+				continue
+			}
+			if shouldRunDoneEvidenceGate(prevIssue, req.Updates.Status) {
+				if status, msg := h.checkDoneEvidenceGate(r.Context(), prevIssue); status != 0 {
+					writeError(w, status, msg)
+					return
+				}
+			}
+		}
 	}
 	updated := 0
 	for _, issueID := range req.IssueIDs {
