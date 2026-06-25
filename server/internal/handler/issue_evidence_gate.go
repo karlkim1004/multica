@@ -92,6 +92,9 @@ func evaluateFinalPassComment(content string) finalPassCommentEvaluation {
 	if isHTTP200OnlyEvidence(normalized) {
 		return rejectedFinalPassComment("Evidence Gate 차단: HTTP 200 단독 확인은 최종 PASS 라이브 증거로 인정할 수 없습니다.")
 	}
+	if reason := disqualifyingPassEvidenceReason(normalized); reason != "" {
+		return rejectedFinalPassComment(reason)
+	}
 
 	switch finalPassTemplateType(normalized) {
 	case "validator":
@@ -223,6 +226,23 @@ func isHTTP200OnlyEvidence(normalized string) bool {
 		}
 	}
 	return true
+}
+
+func disqualifyingPassEvidenceReason(normalized string) string {
+	for _, phrase := range []string{
+		"산출물 부재",
+		"부분 검증",
+		"부분검증",
+		"일부 화면만 확인",
+		"dry-run 증거 없음",
+		"dry run 증거 없음",
+		"드라이런 증거 없음",
+	} {
+		if strings.Contains(normalized, phrase) {
+			return "Evidence Gate 차단: " + phrase + " 상태는 최종 PASS 근거로 인정할 수 없습니다."
+		}
+	}
+	return ""
 }
 
 func containsFold(s, substr string) bool {

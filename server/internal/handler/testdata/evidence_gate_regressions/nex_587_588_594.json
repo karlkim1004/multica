@@ -1,0 +1,89 @@
+[
+  {
+    "issue_key": "NEX-587",
+    "title": "NEX-587 unsupported model run after false PASS",
+    "metadata": {
+      "pr_url": "https://github.com/karlkim1004/multica/pull/12"
+    },
+    "runs": [
+      {
+        "status": "failed",
+        "failure_reason": "api_invalid_request",
+        "error": "unsupported model: claude-sonnet-4-6",
+        "result": {
+          "output": "validator failed before review because the requested model is unsupported"
+        }
+      }
+    ],
+    "comments": [
+      "## Validator PASS\n\nSurface | 변경 여부 | 영향 범위 | 검증 증거 | 회귀 위험 | 판정\nIssue status transition | required | done side effect | log | High | PASS\nRun failure scan | required | failed run | skipped | High | PASS\nComment PASS parser | required | QA comment | parser | Medium | PASS\nNo-op handling | required | 변경 없음 | fixture | High | PASS\nParent/child issue workflow | required | child done | integration | Medium | PASS\nPR close intent workflow | required | merge close | webhook | Medium | PASS\n\n결론: PASS"
+    ],
+    "want_http_status": 409,
+    "want_status": "in_progress",
+    "want_body_contains": ["api_invalid_request"]
+  },
+  {
+    "issue_key": "NEX-588",
+    "title": "NEX-588 conditional pass without artifacts",
+    "metadata": {
+      "commit_sha": "nex-588-partial-commit"
+    },
+    "runs": [
+      {
+        "status": "completed",
+        "result": {
+          "output": "partial route smoke only"
+        }
+      }
+    ],
+    "comments": [
+      "## QA PASS\n\n변경 대상: 산출물 부재\n실행 테스트: 일부 화면만 확인\n사용자 시나리오: /nexai/chat route 404 미확인\n라이브 증거: HTTP 200 단독\n실패 run scan: 미확인\n결론: CONDITIONAL_PASS"
+    ],
+    "want_http_status": 409,
+    "want_status": "in_progress",
+    "want_body_contains": ["CONDITIONAL_PASS"]
+  },
+  {
+    "issue_key": "NEX-594",
+    "title": "NEX-594 audit issue with no dry-run evidence",
+    "metadata": {
+      "commit_sha": "nex-594-audit-commit"
+    },
+    "runs": [
+      {
+        "status": "completed",
+        "result": {
+          "output": "audit summary only; dry-run evidence missing"
+        }
+      }
+    ],
+    "comments": [
+      "## QA PASS\n\n변경 대상: commit nex-594-audit-commit\n실행 테스트: dry-run 증거 없음\n사용자 시나리오: 감사 시나리오 일부 확인\n라이브 증거: 로그에 드라이런 증거 없음\n실패 run scan: failed/cancelled/api_invalid_request/unsupported model 없음\n결론: PASS"
+    ],
+    "want_http_status": 409,
+    "want_status": "in_progress",
+    "want_body_contains": ["dry-run 증거 없음"]
+  },
+  {
+    "issue_key": "NEX-602-normal",
+    "title": "NEX-602 complete evidence gate normal pass",
+    "metadata": {
+      "commit_sha": "nex-602-normal-pass",
+      "pr_url": "https://github.com/karlkim1004/multica/pull/607"
+    },
+    "runs": [
+      {
+        "status": "completed",
+        "result": {
+          "output": "go test ./server/internal/handler -run TestEvidenceGateRegressionFixtures -count=1 PASS"
+        }
+      }
+    ],
+    "comments": [
+      "## QA PASS\n\n변경 대상: PR https://github.com/karlkim1004/multica/pull/607 commit nex-602-normal-pass\n실행 테스트: go test ./server/internal/handler -run TestEvidenceGateRegressionFixtures -count=1 PASS\n사용자 시나리오: done 전환 정상 통과 케이스 확인\n라이브 증거: HTTP 200 응답 본문과 DB status done 확인\n실패 run scan: failed/cancelled/api_invalid_request/unsupported model 없음\n결론: PASS"
+    ],
+    "want_http_status": 200,
+    "want_status": "done",
+    "want_body_contains": ["done"]
+  }
+]
