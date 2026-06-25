@@ -1,0 +1,46 @@
+{
+  "parent_ticket_id": "NEX-630",
+  "tier": "M",
+  "chain_template_used": "아키텍처/인프라 -> DevPL(self) -> BE -> QA",
+  "sub_tasks": [
+    {
+      "id": "NEX-630-S01",
+      "title": "PASS/done handoff hard gate 구현",
+      "role": "BE",
+      "description": "done 전환 Evidence Gate에서 다음 실행 주체가 명시된 PASS 코멘트에 assignee 변경 또는 mention://agent/<UUID>가 없으면 409로 차단한다.",
+      "estimated_turns": 40,
+      "dependencies": [],
+      "files": [
+        "server/internal/handler/issue_evidence_gate.go",
+        "server/internal/handler/issue.go",
+        "server/internal/handler/github.go",
+        "server/internal/handler/issue_evidence_gate_test.go"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "NEX-630-S02",
+      "title": "GPT/Codex와 Claude 컨텍스트 주입 경로 실측",
+      "role": "DevPL",
+      "description": "runtime payload 생성 코드 기준으로 md/instructions/skills/project resources/memory 경로 차이를 표로 남긴다.",
+      "estimated_turns": 25,
+      "dependencies": [],
+      "files": [
+        "outputs/NEX-630/devpl/context_injection_matrix.md"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "NEX-630-S03",
+      "title": "서버 회귀 테스트 및 CLI/API 차단 증거 검증",
+      "role": "QA",
+      "description": "go test 및 실제 API/CLI update 경로에서 누락 handoff가 409로 차단되는지 검증한다.",
+      "estimated_turns": 30,
+      "dependencies": ["NEX-630-S01"],
+      "files": [
+        "outputs/NEX-630/devpl/verification.md"
+      ],
+      "priority": 1
+    }
+  ]
+}
