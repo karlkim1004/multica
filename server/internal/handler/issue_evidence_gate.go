@@ -40,12 +40,21 @@ func (h *Handler) checkDoneEvidenceGate(ctx context.Context, issue db.Issue, nex
 	if err != nil {
 		return 500, "Evidence Gate 평가 중 issue run 조회에 실패했습니다."
 	}
-	if reason := blockingTaskRunReason(tasks); reason != "" {
+
+	// case-3 (final PASS comment parser) is evaluated first: a verification-complete
+	// final PASS opens the close path (F2) that lets case-1 ignore accumulated benign
+	// cancelled runs. A rejecting/handoff-incomplete PASS still blocks here.
+	passStatus, passMsg, finalPassAccepted := h.checkFinalPassCommentEvidence(ctx, issue, nextAgentCalled)
+	if passStatus != 0 {
+		return passStatus, passMsg
+	}
+
+	// case-1 (run failures): failed runs always block; cancelled runs block only when
+	// unrecovered, unless the verification-complete close path is open.
+	if reason := blockingTaskRunReason(tasks, finalPassAccepted); reason != "" {
 		return 409, reason
 	}
-	if status, msg := h.checkFinalPassCommentEvidence(ctx, issue, nextAgentCalled); status != 0 {
-		return status, msg
-	}
+
 	hasLinkedPR, err := h.issueHasLinkedPullRequest(ctx, issue)
 	if err != nil {
 		return 500, "Evidence Gate 평가 중 PR 증거 조회에 실패했습니다."
@@ -63,14 +72,18 @@ type finalPassCommentEvaluation struct {
 	BlockingReason string
 }
 
-func (h *Handler) checkFinalPassCommentEvidence(ctx context.Context, issue db.Issue, nextAgentCalled bool) (int, string) {
+// checkFinalPassCommentEvidence evaluates the most recent final-PASS comment. It
+// returns (status, msg) for a blocking decision, and accepted=true only when a
+// verification-complete final PASS was found and fully accepted (no rejection, no
+// missing handoff) — that flag opens the case-1 close path (F2).
+func (h *Handler) checkFinalPassCommentEvidence(ctx context.Context, issue db.Issue, nextAgentCalled bool) (int, string, bool) {
 	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Limit:       commentHardCap,
 	})
 	if err != nil {
-		return 500, "Evidence Gate 평가 중 PASS 코멘트 조회에 실패했습니다."
+		return 500, "Evidence Gate 평가 중 PASS 코멘트 조회에 실패했습니다.", false
 	}
 	for i := len(comments) - 1; i >= 0; i-- {
 		result := evaluateFinalPassComment(comments[i].Content)
@@ -78,14 +91,14 @@ func (h *Handler) checkFinalPassCommentEvidence(ctx context.Context, issue db.Is
 			continue
 		}
 		if result.Accepted && finalPassRequiresNextAgentCall(comments[i].Content) && !nextAgentCalled && !containsAgentMention(comments[i].Content) {
-			return 409, "Evidence Gate 차단: 다음 실행 주체가 필요한 PASS/done handoff인데 assignee 변경 또는 mention://agent/<UUID> 호출이 없습니다."
+			return 409, "Evidence Gate 차단: 다음 실행 주체가 필요한 PASS/done handoff인데 assignee 변경 또는 mention://agent/<UUID> 호출이 없습니다.", false
 		}
 		if !result.Accepted {
-			return 409, result.BlockingReason
+			return 409, result.BlockingReason, false
 		}
-		return 0, ""
+		return 0, "", true
 	}
-	return 0, ""
+	return 0, "", false
 }
 
 var agentMentionRe = regexp.MustCompile(`mention://agent/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
@@ -288,19 +301,35 @@ func containsFold(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
 
-func blockingTaskRunReason(tasks []db.AgentTaskQueue) string {
+// blockingTaskRunReason returns a non-empty reason when an issue's run history must
+// block a done transition (Evidence Gate case-1).
+//
+//   - failed runs always block (true positive — genuine verification failure).
+//   - a cancelled run blocks only when it was never recovered, i.e. no completed run
+//     was created after it. benign re-invocation (cancel → re-dispatch → complete),
+//     which is pervasive in multi-agent operation (@mention wake-ups, chain-keeper /
+//     TeamLeader re-routing), leaves a completed run after the cancel and is excused.
+//
+// When allowBenignCancelled is true (verification-complete close path, F2), every
+// cancelled run is ignored regardless of recovery; failed runs still block.
+func blockingTaskRunReason(tasks []db.AgentTaskQueue, allowBenignCancelled bool) string {
+	if reason := failedRunReason(tasks); reason != "" {
+		return reason
+	}
+	if allowBenignCancelled {
+		return ""
+	}
+	return unrecoveredCancelledRunReason(tasks)
+}
+
+func failedRunReason(tasks []db.AgentTaskQueue) string {
 	for _, task := range tasks {
-		status := strings.ToLower(task.Status)
+		if strings.ToLower(task.Status) != "failed" {
+			continue
+		}
 		failureReason := strings.ToLower(strings.TrimSpace(task.FailureReason.String))
 		errorText := strings.ToLower(strings.TrimSpace(task.Error.String))
 		resultText := strings.ToLower(string(task.Result))
-
-		if status == "cancelled" {
-			return fmt.Sprintf("Evidence Gate 차단: cancelled issue run이 존재합니다. task_id=%s", uuidToString(task.ID))
-		}
-		if status != "failed" {
-			continue
-		}
 		if failureReason == "" {
 			failureReason = "failed"
 		}
@@ -313,6 +342,37 @@ func blockingTaskRunReason(tasks []db.AgentTaskQueue) string {
 		return fmt.Sprintf("Evidence Gate 차단: failed issue run이 존재합니다. task_id=%s, failure_reason=%s", uuidToString(task.ID), failureReason)
 	}
 	return ""
+}
+
+func unrecoveredCancelledRunReason(tasks []db.AgentTaskQueue) string {
+	for _, task := range tasks {
+		if strings.ToLower(task.Status) != "cancelled" {
+			continue
+		}
+		if hasCompletedRunAfter(tasks, task) {
+			continue
+		}
+		return fmt.Sprintf("Evidence Gate 차단: 복구되지 않은 cancelled issue run이 존재합니다 (이후 completed run 없음). task_id=%s", uuidToString(task.ID))
+	}
+	return ""
+}
+
+// hasCompletedRunAfter reports whether a completed run was created strictly after the
+// given cancelled run — the signal that the cancel was a benign re-invocation that
+// subsequently succeeded.
+func hasCompletedRunAfter(tasks []db.AgentTaskQueue, cancelled db.AgentTaskQueue) bool {
+	if !cancelled.CreatedAt.Valid {
+		return false
+	}
+	for _, task := range tasks {
+		if strings.ToLower(task.Status) != "completed" {
+			continue
+		}
+		if task.CreatedAt.Valid && task.CreatedAt.Time.After(cancelled.CreatedAt.Time) {
+			return true
+		}
+	}
+	return false
 }
 
 func issueHasDoneEvidence(issue db.Issue) bool {
