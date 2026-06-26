@@ -164,6 +164,18 @@ func rejectedFinalPassComment(reason string) finalPassCommentEvaluation {
 	}
 }
 
+// looksLikeFinalPassComment reports whether a comment is a verification *verdict*
+// rather than routing/prose that merely cites the gate vocabulary.
+//
+// A final PASS verdict is structural: it is declared either by a PASS header line
+// ("## QA PASS" / "## Validator PASS") or by a conclusion line ("결론: PASS" /
+// "판정: PASS"). Matching "qa pass"/"validator pass"/"결론" as a loose substring
+// anywhere caused a case-3 false positive — a routing comment that quoted gate rules
+// in prose (e.g. a parenthetical "(validator PASS 검수)" plus an inline "confidence"
+// mention) was mis-read as a confidence-based PASS claim and blocked a legitimate
+// done transition. Requiring the PASS claim to sit on a verdict line keeps genuine
+// fraud (a real header/verdict claiming completion on confidence alone) blocked while
+// letting prose that discusses the gate pass through untouched.
 func looksLikeFinalPassComment(normalized string) bool {
 	if !strings.Contains(normalized, "pass") {
 		return false
@@ -171,9 +183,29 @@ func looksLikeFinalPassComment(normalized string) bool {
 	if strings.Contains(normalized, "conditional_pass") {
 		return true
 	}
-	return strings.Contains(normalized, "결론") ||
-		strings.Contains(normalized, "qa pass") ||
-		strings.Contains(normalized, "validator pass")
+	for _, line := range strings.Split(normalized, "\n") {
+		header := strings.TrimLeft(strings.TrimSpace(line), "#>*- \t")
+		if isPassHeader(header, "qa pass") || isPassHeader(header, "validator pass") {
+			return true
+		}
+		if isConclusionPassLine(header) {
+			return true
+		}
+	}
+	return false
+}
+
+// isConclusionPassLine reports whether a line declares the conclusion/판정 as a PASS
+// on that same line (e.g. "결론: PASS"). The PASS token must appear on the verdict
+// line itself, so a routing comment that names "결론" in one place and "PASS" in
+// unrelated prose elsewhere is not treated as a verdict.
+func isConclusionPassLine(header string) bool {
+	for _, marker := range []string{"결론", "판정"} {
+		if strings.HasPrefix(header, marker) && strings.Contains(header[len(marker):], "pass") {
+			return true
+		}
+	}
+	return false
 }
 
 func finalPassTemplateType(normalized string) string {
