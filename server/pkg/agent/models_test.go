@@ -75,8 +75,8 @@ func TestClaudeStaticModelsExposesFable5(t *testing.T) {
 	if fable.Label != "Claude Fable 5" || fable.Provider != "anthropic" || fable.Default {
 		t.Errorf("unexpected Fable entry: %+v", fable)
 	}
-	if defaults != 1 || !ids["claude-sonnet-4-6"].Default {
-		t.Errorf("expected Sonnet 4.6 to remain the sole default, got defaults=%d models=%+v", defaults, models)
+	if defaults != 1 || !ids["claude-sonnet-5"].Default {
+		t.Errorf("expected Sonnet 5 to be the sole default, got defaults=%d models=%+v", defaults, models)
 	}
 }
 
