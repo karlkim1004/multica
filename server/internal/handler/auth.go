@@ -119,7 +119,7 @@ func (h *Handler) isEmailCodeAuthEnabled(w http.ResponseWriter) bool {
 	return false
 }
 
-func (h *Handler) emailCodeAuthDisabled(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) EmailCodeAuthDisabled(w http.ResponseWriter, _ *http.Request) {
 	h.isEmailCodeAuthEnabled(w)
 }
 
