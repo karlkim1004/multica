@@ -69,6 +69,11 @@ type Config struct {
 	// the server into minting webhook URLs pointing at an attacker-controlled
 	// host.
 	PublicURL string
+	// EmailCodeAuthEnabled controls whether the legacy email-code authentication
+	// endpoints (POST /auth/send-code, POST /auth/verify-code) are available.
+	// For Google-only deployments this is set to false, so callers are directed
+	// to use OAuth flows only.
+	EmailCodeAuthEnabled bool
 	// TrustedProxies are CIDRs whose source IP we trust to set
 	// X-Forwarded-For / X-Real-IP. Empty means "trust nothing": the rate
 	// limiter uses r.RemoteAddr exclusively. Populated via the

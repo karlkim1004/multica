@@ -75,6 +75,13 @@ Open http://localhost:3000 in your browser. The Docker self-host stack defaults 
 
 Changes to `ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` also take effect after restarting the backend / compose stack. The web UI reads all three from `/api/config` at runtime, so no web rebuild is needed. See [Advanced Configuration → Signup Controls](SELF_HOSTING_ADVANCED.md#signup-controls-optional) for the recommended sequence to lock down workspace creation.
 
+Google OAuth redirect URI는 반드시 배포 도메인에 맞춰 다음 값으로 등록해야 합니다.
+
+- `https://multica.nexai.co.kr/auth/callback`
+- `https://aido.nexai.co.kr/auth/callback`
+
+운영 이전 후에는 `GOOGLE_REDIRECT_URI`를 사용 중인 프론트엔드 도메인(예: `https://aido.nexai.co.kr/auth/callback`)으로 맞춰야 합니다.
+
 > **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
 
 ### Step 3 — Install CLI & Start Daemon

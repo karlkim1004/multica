@@ -286,3 +286,30 @@ func TestGetConfigExposesWorkspaceCreationDisabled(t *testing.T) {
 		t.Fatalf("workspace_creation_disabled: want true with env on, got false (body=%s)", w.Body.String())
 	}
 }
+
+// TestGetConfigExposesEmailCodeAuthSetting verifies that the email-code auth
+// switch is propagated to public clients so the login UI can hide the code
+// flow when Google-only authentication is enabled for the deployment.
+func TestGetConfigExposesEmailCodeAuthEnabled(t *testing.T) {
+	origStorage := testHandler.Storage
+	testHandler.Storage = &mockStorage{}
+	defer func() { testHandler.Storage = origStorage }()
+
+	t.Setenv("EMAIL_CODE_AUTH_ENABLED", "false")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+
+	testHandler.GetConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var cfg AppConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if cfg.EmailCodeAuthEnabled {
+		t.Fatalf("email_code_auth_enabled: want false with env off, got true (body=%s)", w.Body.String())
+	}
+}

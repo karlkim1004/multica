@@ -100,6 +100,8 @@ backend:
     allowSignup: true
     allowedEmails: ""
     allowedEmailDomains: ""
+    # Set false to disable email-code auth and run Google OAuth only.
+    emailCodeAuthEnabled: true
     # Self-host gate (#3433): set true to make POST /api/workspaces 403 for
     # every caller. Bootstrap the workspace with this false, then flip to
     # true so users can only join via invitation.

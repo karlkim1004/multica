@@ -111,6 +111,18 @@ type VerifyCodeRequest struct {
 	Code  string `json:"code"`
 }
 
+func (h *Handler) isEmailCodeAuthEnabled(w http.ResponseWriter) bool {
+	if h.cfg.EmailCodeAuthEnabled {
+		return true
+	}
+	writeError(w, http.StatusGone, "email code authentication is disabled")
+	return false
+}
+
+func (h *Handler) emailCodeAuthDisabled(w http.ResponseWriter, _ *http.Request) {
+	h.isEmailCodeAuthEnabled(w)
+}
+
 func generateCode() (string, error) {
 	var buf [4]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -266,6 +278,9 @@ func contains(slice []string, s string) bool {
 }
 
 func (h *Handler) SendCode(w http.ResponseWriter, r *http.Request) {
+	if !h.isEmailCodeAuthEnabled(w) {
+		return
+	}
 	var req SendCodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -348,6 +363,9 @@ func (h *Handler) SendCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) VerifyCode(w http.ResponseWriter, r *http.Request) {
+	if !h.isEmailCodeAuthEnabled(w) {
+		return
+	}
 	var req VerifyCodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
