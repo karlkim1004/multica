@@ -406,6 +406,22 @@ describe("LoginPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("hides email flow when emailCodeEnabled is false", () => {
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        emailCodeEnabled={false}
+        google={{ clientId: "goog-123", redirectUri: "http://localhost/cb" }}
+      />,
+    );
+
+    expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /continue/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue with google/i })).toBeInTheDocument();
+  });
+
   // -------------------------------------------------------------------------
   // CLI callback — existing session
   // -------------------------------------------------------------------------

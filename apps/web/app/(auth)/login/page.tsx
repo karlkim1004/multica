@@ -59,6 +59,9 @@ function LoginPageContent() {
   const qc = useQueryClient();
   const { t } = useT("auth");
   const googleClientId = useConfigStore((state) => state.googleClientId);
+  const emailCodeAuthEnabled = useConfigStore(
+    (state) => state.emailCodeAuthEnabled,
+  );
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const searchParams = useSearchParams();
@@ -194,6 +197,7 @@ function LoginPageContent() {
   return (
     <LoginPage
       onSuccess={handleSuccess}
+      emailCodeEnabled={emailCodeAuthEnabled}
       google={
         googleClientId
           ? {
