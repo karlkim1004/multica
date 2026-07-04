@@ -10,6 +10,9 @@ import {
 // needs to be rewritten to /{slug}/{route}/... so old bookmarks, deep links,
 // and post-revert-and-reapply users don't hit 404.
 const LEGACY_ROUTE_SEGMENTS = new Set([
+  "dashboard",
+  "usage",
+  "chat",
   "issues",
   "projects",
   "agents",
@@ -53,6 +56,8 @@ export function proxy(req: NextRequest) {
   const firstSegment = pathname.split("/")[1] ?? "";
   if (LEGACY_ROUTE_SEGMENTS.has(firstSegment)) {
     const url = req.nextUrl.clone();
+    const targetPathname =
+      firstSegment === "chat" ? pathname.replace(/^\/chat\b/, "/issues") : pathname;
 
     if (!hasSession) {
       url.pathname = "/login";
@@ -61,7 +66,7 @@ export function proxy(req: NextRequest) {
 
     if (lastSlug) {
       // Preserve deep-link path + query: /issues/abc → /{lastSlug}/issues/abc
-      url.pathname = `/${lastSlug}${pathname}`;
+      url.pathname = `/${lastSlug}${targetPathname}`;
       return NextResponse.redirect(url);
     }
 
