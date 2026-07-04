@@ -457,7 +457,7 @@ export function LoginPage({
             )}
             {!hasGoogleLogin && (
               <p className="text-sm text-center text-destructive">
-                Email code sign-in is disabled for this deployment.
+                {t(($) => $.signin.email_code_disabled)}
               </p>
             )}
             {extra && <div className="w-full pt-1 text-center">{extra}</div>}
