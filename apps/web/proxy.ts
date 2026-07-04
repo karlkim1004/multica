@@ -10,6 +10,7 @@ import {
 // needs to be rewritten to /{slug}/{route}/... so old bookmarks, deep links,
 // and post-revert-and-reapply users don't hit 404.
 const LEGACY_ROUTE_SEGMENTS = new Set([
+  "dashboard",
   "issues",
   "projects",
   "agents",
@@ -19,7 +20,12 @@ const LEGACY_ROUTE_SEGMENTS = new Set([
   "runtimes",
   "skills",
   "settings",
+  "usage",
 ]);
+
+const LEGACY_ROUTE_REDIRECTS: Record<string, string> = {
+  chat: "/issues",
+};
 
 function resolveLocale(req: NextRequest): string {
   return resolveLocaleFromSignals({
@@ -51,7 +57,7 @@ export function proxy(req: NextRequest) {
   // Old bookmarks and clients that hit us before the slug migration would
   // otherwise 404 since the route moved under [workspaceSlug].
   const firstSegment = pathname.split("/")[1] ?? "";
-  if (LEGACY_ROUTE_SEGMENTS.has(firstSegment)) {
+  if (LEGACY_ROUTE_SEGMENTS.has(firstSegment) || firstSegment in LEGACY_ROUTE_REDIRECTS) {
     const url = req.nextUrl.clone();
 
     if (!hasSession) {
@@ -61,7 +67,8 @@ export function proxy(req: NextRequest) {
 
     if (lastSlug) {
       // Preserve deep-link path + query: /issues/abc → /{lastSlug}/issues/abc
-      url.pathname = `/${lastSlug}${pathname}`;
+      const targetPath = LEGACY_ROUTE_REDIRECTS[firstSegment] ?? pathname;
+      url.pathname = `/${lastSlug}${targetPath}`;
       return NextResponse.redirect(url);
     }
 

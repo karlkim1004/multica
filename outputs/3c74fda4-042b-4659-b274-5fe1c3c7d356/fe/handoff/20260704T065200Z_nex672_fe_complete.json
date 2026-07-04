@@ -1,0 +1,37 @@
+{
+  "ticket_id": "3c74fda4-042b-4659-b274-5fe1c3c7d356",
+  "from_bot": "FE",
+  "to_bot": "Validator",
+  "type": "implementation_complete",
+  "task": "validator_review",
+  "stage_to": "review",
+  "chain": "FE/QA",
+  "created_at": "2026-07-04T06:52:00Z",
+  "message": "FE route-level fix 완료. validator 검증 요청.",
+  "evidence": [
+    "outputs/3c74fda4-042b-4659-b274-5fe1c3c7d356/fe/component_design.md",
+    "outputs/3c74fda4-042b-4659-b274-5fe1c3c7d356/fe/state_management.md",
+    "outputs/3c74fda4-042b-4659-b274-5fe1c3c7d356/fe/responsive_design.md",
+    "outputs/3c74fda4-042b-4659-b274-5fe1c3c7d356/fe/accessibility.md",
+    "outputs/3c74fda4-042b-4659-b274-5fe1c3c7d356/fe/performance.md",
+    "outputs/3c74fda4-042b-4659-b274-5fe1c3c7d356/fe/cross_browser.md",
+    "outputs/3c74fda4-042b-4659-b274-5fe1c3c7d356/fe/i18n.md",
+    "outputs/3c74fda4-042b-4659-b274-5fe1c3c7d356/fe/security.md",
+    "outputs/3c74fda4-042b-4659-b274-5fe1c3c7d356/fe/self_test.md",
+    "https://github.com/karlkim1004/multica/pull/21"
+  ],
+  "metrics": {
+    "lcp_ms": null,
+    "inp_ms": null,
+    "cls": null,
+    "lighthouse_perf": null,
+    "lighthouse_a11y": null,
+    "axe_violations": null,
+    "bundle_size_kb": null,
+    "test_count": 4,
+    "line_coverage": null
+  },
+  "screenshots": [],
+  "breaking_changes": false,
+  "priority": "P1"
+}
