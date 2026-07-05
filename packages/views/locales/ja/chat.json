@@ -18,6 +18,9 @@
     "voice_listening": "聞いています...",
     "voice_captured": "音声入力を取得しました",
     "voice_failed": "音声入力に失敗しました。もう一度お試しください。",
+    "voice_no_speech": "音声が検出されませんでした。もう一度話してください。",
+    "voice_audio_unavailable": "マイク入力を使用できません。ブラウザまたはデバイスを確認してください。",
+    "voice_service_unavailable": "音声認識サービスを一時的に使用できません。もう一度お試しください。",
     "voice_permission_denied": "マイクの権限が拒否されました。",
     "voice_unsupported": "このブラウザでは音声入力に対応していません。"
   },
@@ -84,7 +87,10 @@
     "others": "その他",
     "no_agents": "エージェントなし",
     "history_group": "チャット履歴",
-    "agent_filter_placeholder": "エージェントを検索..."
+    "agent_filter_placeholder": "エージェントを検索...",
+    "voice_output_enable_label": "音声出力をオン",
+    "voice_output_disable_label": "音声出力をオフ",
+    "voice_output_unsupported": "このブラウザでは音声出力に対応していません。"
   },
   "empty_state": {
     "first_time_title": "エージェントとチャット",

@@ -418,6 +418,24 @@ describe("ChatInput voice input", () => {
     });
   });
 
+  it("keeps a stable acceptance hook and explains no-speech recognition errors", async () => {
+    renderInput();
+
+    const button = await screen.findByRole("button", { name: "Start voice input" });
+    expect(button).toHaveAttribute("data-acceptance", "voice-input-button");
+
+    await userEvent.click(button);
+    expect(screen.getByText("Listening...")).toHaveAttribute("data-acceptance", "voice-input-status");
+
+    const recognition = MockSpeechRecognition.instances[0]!;
+    recognition.onerror?.({ error: "no-speech" });
+
+    await waitFor(() => {
+      expect(screen.getByText("No speech was detected. Try speaking again.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Voice input failed. Try again.")).not.toBeInTheDocument();
+  });
+
   it("disables the microphone button when speech recognition is unsupported", async () => {
     vi.unstubAllGlobals();
 

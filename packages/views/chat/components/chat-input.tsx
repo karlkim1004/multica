@@ -307,7 +307,20 @@ export function ChatInput({
     };
     recognition.onerror = (event) => {
       const denied = event.error === "not-allowed" || event.error === "service-not-allowed";
-      setVoiceStatus(denied ? t(($) => $.input.voice_permission_denied) : t(($) => $.input.voice_failed));
+      const noSpeech = event.error === "no-speech";
+      const audioUnavailable = event.error === "audio-capture";
+      const serviceUnavailable = event.error === "network";
+      setVoiceStatus(
+        denied
+          ? t(($) => $.input.voice_permission_denied)
+          : noSpeech
+            ? t(($) => $.input.voice_no_speech)
+            : audioUnavailable
+              ? t(($) => $.input.voice_audio_unavailable)
+              : serviceUnavailable
+                ? t(($) => $.input.voice_service_unavailable)
+                : t(($) => $.input.voice_failed),
+      );
       setIsListening(false);
     };
     recognition.onend = () => {
@@ -509,6 +522,7 @@ export function ChatInput({
                       : t(($) => $.input.voice_start_label)
                   }
                   aria-pressed={isListening}
+                  data-acceptance="voice-input-button"
                   disabled={voiceSupport !== "supported" || !!disabled || !!noAgent || isSubmitting}
                   onClick={handleVoiceInput}
                 />
@@ -541,7 +555,10 @@ export function ChatInput({
           />
         </div>
         {voiceStatus && (
-          <div className="absolute bottom-1.5 left-1/2 max-w-[45%] -translate-x-1/2 truncate text-center text-xs text-muted-foreground">
+          <div
+            className="absolute bottom-1.5 left-1/2 max-w-[45%] -translate-x-1/2 truncate text-center text-xs text-muted-foreground"
+            data-acceptance="voice-input-status"
+          >
             {voiceStatus}
           </div>
         )}
