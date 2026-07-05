@@ -417,9 +417,11 @@ describe("LoginPage", () => {
 
     expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /continue/i }),
+      screen.queryByRole("button", { name: /^continue$/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /continue with google/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /continue with google/i }),
+    ).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------

@@ -19,6 +19,9 @@
     "voice_listening": "Listening...",
     "voice_captured": "Voice input captured",
     "voice_failed": "Voice input failed. Try again.",
+    "voice_no_speech": "No speech was detected. Try speaking again.",
+    "voice_audio_unavailable": "Microphone input is unavailable. Check the browser or device.",
+    "voice_service_unavailable": "Voice recognition is temporarily unavailable. Try again.",
     "voice_permission_denied": "Microphone permission was denied.",
     "voice_unsupported": "Voice input is not supported in this browser."
   },
@@ -87,7 +90,10 @@
     "others": "Others",
     "no_agents": "No agents",
     "history_group": "Chat history",
-    "agent_filter_placeholder": "Search agents..."
+    "agent_filter_placeholder": "Search agents...",
+    "voice_output_enable_label": "Enable voice output",
+    "voice_output_disable_label": "Disable voice output",
+    "voice_output_unsupported": "Voice output is not supported in this browser."
   },
   "empty_state": {
     "first_time_title": "Chat with your agents",

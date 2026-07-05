@@ -57,6 +57,10 @@ function limitingClaudeSevenDayResetLabel(data: LlmLimitStatus): string | undefi
   return sonnetRemaining < sevenDayRemaining ? data.sonnet_reset_label : data.seven_day_reset_label;
 }
 
+function compactRemainingLabel(value: number | null): string {
+  return value === null ? "--" : `${value}%`;
+}
+
 export function LlmRemainingBadge({ className }: { className?: string }) {
   const { data, isFetching, refetch } = useQuery({
     queryKey: ["chat-llm-limit-status"],
@@ -82,51 +86,40 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
     `GPT 5시간 ${gptFiveHourRemaining === null ? "확인 불가" : `${gptFiveHourRemaining}%`}, 리셋 ${gptFiveHourReset}`,
     `GPT 1주 ${gptSevenDayRemaining === null ? "확인 불가" : `${gptSevenDayRemaining}%`}, 리셋 ${gptSevenDayReset}`,
   ].join(", ");
+  const compactLabel = [
+    `C: 5h ${compactRemainingLabel(claudeFiveHourRemaining)}/7d ${compactRemainingLabel(claudeSevenDayRemaining)}`,
+    `G: 5h ${compactRemainingLabel(gptFiveHourRemaining)}/7d ${compactRemainingLabel(gptSevenDayRemaining)}`,
+  ].join(" · ");
 
   return (
     <div
       data-acceptance="chat-token-remaining-badge"
       data-testid="chat-token-gauge"
       className={cn(
-        "hidden min-w-[21rem] items-stretch gap-1.5 rounded-md border px-2 py-1 text-[10px] text-muted-foreground sm:flex",
+        "hidden h-7 min-w-[18rem] items-center gap-1.5 rounded-md border px-2 text-[10px] leading-none text-muted-foreground sm:flex",
         className,
       )}
       aria-label={ariaLabel}
     >
-      <div className="grid min-w-0 flex-1 grid-cols-2 gap-1">
-        <RemainingRow
-          provider="Claude"
-          periodLabel="5시간"
-          value={claudeFiveHourRemaining}
-          reset={claudeFiveHourReset}
-          dataAcceptance="chat-claude-token-remaining-badge"
-          testId="chat-llm-gauge-claude-5h"
-        />
-        <RemainingRow
-          provider="Claude"
-          periodLabel="1주"
-          value={claudeSevenDayRemaining}
-          reset={claudeSevenDayReset}
-          dataAcceptance="chat-claude-token-remaining-badge"
-          testId="chat-llm-gauge-claude-7d"
-        />
-        <RemainingRow
-          provider="GPT"
-          periodLabel="5시간"
-          value={gptFiveHourRemaining}
-          reset={gptFiveHourReset}
-          dataAcceptance="chat-gpt-token-remaining-badge"
-          testId="chat-llm-gauge-gpt-5h"
-        />
-        <RemainingRow
-          provider="GPT"
-          periodLabel="1주"
-          value={gptSevenDayRemaining}
-          reset={gptSevenDayReset}
-          dataAcceptance="chat-gpt-token-remaining-badge"
-          testId="chat-llm-gauge-gpt-7d"
-        />
-      </div>
+      <span
+        data-acceptance="chat-token-gauge"
+        data-testid="chat-llm-gauge-compact"
+        className="min-w-0 flex-1 whitespace-nowrap font-medium tabular-nums text-foreground"
+      >
+        {compactLabel}
+      </span>
+      <span
+        data-acceptance="chat-claude-token-remaining-badge"
+        data-testid="chat-llm-gauge-claude"
+        aria-label={`Claude 5시간 잔량 ${claudeFiveHourRemaining}%, 리셋 ${claudeFiveHourReset}; Claude 1주 잔량 ${claudeSevenDayRemaining}%, 리셋 ${claudeSevenDayReset}`}
+        className="sr-only"
+      />
+      <span
+        data-acceptance="chat-gpt-token-remaining-badge"
+        data-testid="chat-llm-gauge-gpt"
+        aria-label={`GPT 5시간 잔량 ${gptFiveHourRemaining === null ? "확인 불가" : `${gptFiveHourRemaining}%`}, 리셋 ${gptFiveHourReset}; GPT 1주 잔량 ${gptSevenDayRemaining === null ? "확인 불가" : `${gptSevenDayRemaining}%`}, 리셋 ${gptSevenDayReset}`}
+        className="sr-only"
+      />
       <Button
         type="button"
         size="icon-xs"
@@ -138,37 +131,6 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
       >
         <RefreshCw className={cn("h-3 w-3", isFetching && "animate-spin")} />
       </Button>
-    </div>
-  );
-}
-
-function RemainingRow({
-  provider,
-  periodLabel,
-  value,
-  reset,
-  dataAcceptance,
-  testId,
-}: {
-  provider: "Claude" | "GPT";
-  periodLabel: "5시간" | "1주";
-  value: number | null;
-  reset: string;
-  dataAcceptance: string;
-  testId: string;
-}) {
-  return (
-    <div
-      data-acceptance={dataAcceptance}
-      data-testid={testId}
-      aria-label={`${provider} ${periodLabel} 잔량 ${value === null ? "확인 불가" : `${value}%`}, 리셋 ${reset}`}
-      className="min-w-0 rounded border bg-background/40 px-1.5 py-1 leading-4"
-    >
-      <div className="flex items-center justify-between gap-1">
-        <span className="whitespace-nowrap font-medium text-foreground">{provider} {periodLabel}</span>
-        <span className="tabular-nums">{value === null ? "확인 불가" : `${value}%`}</span>
-      </div>
-      <div className="whitespace-nowrap text-[9px] leading-3 text-muted-foreground">{`리셋 ${reset}`}</div>
     </div>
   );
 }

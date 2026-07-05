@@ -19,6 +19,9 @@
     "voice_listening": "듣는 중...",
     "voice_captured": "음성 입력 완료",
     "voice_failed": "음성 입력 실패. 다시 시도해 주세요.",
+    "voice_no_speech": "음성이 감지되지 않았습니다. 다시 말해 주세요.",
+    "voice_audio_unavailable": "마이크 입력을 사용할 수 없습니다. 브라우저나 장치를 확인해 주세요.",
+    "voice_service_unavailable": "음성 인식 서비스를 일시적으로 사용할 수 없습니다. 다시 시도해 주세요.",
     "voice_permission_denied": "마이크 권한이 거부되었습니다.",
     "voice_unsupported": "이 브라우저에서는 음성 입력을 지원하지 않습니다."
   },
@@ -87,7 +90,10 @@
     "others": "기타",
     "no_agents": "에이전트 없음",
     "history_group": "채팅 기록",
-    "agent_filter_placeholder": "에이전트 검색..."
+    "agent_filter_placeholder": "에이전트 검색...",
+    "voice_output_enable_label": "음성 출력 켜기",
+    "voice_output_disable_label": "음성 출력 끄기",
+    "voice_output_unsupported": "이 브라우저에서는 음성 출력을 지원하지 않습니다."
   },
   "empty_state": {
     "first_time_title": "에이전트와 채팅하기",

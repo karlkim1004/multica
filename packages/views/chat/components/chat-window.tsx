@@ -732,8 +732,13 @@ export function ChatWindow() {
                   variant="ghost"
                   size="icon-sm"
                   className={cn("text-muted-foreground", voiceOutputEnabled && "text-brand")}
-                  aria-label={voiceOutputEnabled ? "Disable voice output" : "Enable voice output"}
+                  aria-label={
+                    voiceOutputEnabled
+                      ? t(($) => $.window.voice_output_disable_label)
+                      : t(($) => $.window.voice_output_enable_label)
+                  }
                   aria-pressed={voiceOutputEnabled}
+                  data-acceptance="tts-toggle"
                   disabled={!voiceOutputSupported}
                   onClick={() => {
                     setVoiceOutputEnabled((enabled) => {
@@ -748,8 +753,10 @@ export function ChatWindow() {
             </TooltipTrigger>
             <TooltipContent side="top">
               {voiceOutputSupported
-                ? voiceOutputEnabled ? "Disable voice output" : "Enable voice output"
-                : "Voice output is not supported in this browser."}
+                ? voiceOutputEnabled
+                  ? t(($) => $.window.voice_output_disable_label)
+                  : t(($) => $.window.voice_output_enable_label)
+                : t(($) => $.window.voice_output_unsupported)}
             </TooltipContent>
           </Tooltip>
           <Tooltip>

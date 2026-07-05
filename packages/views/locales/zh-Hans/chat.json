@@ -18,6 +18,9 @@
     "voice_listening": "正在聆听...",
     "voice_captured": "已识别语音输入",
     "voice_failed": "语音输入失败，请重试。",
+    "voice_no_speech": "未检测到语音，请重新说话。",
+    "voice_audio_unavailable": "麦克风输入不可用，请检查浏览器或设备。",
+    "voice_service_unavailable": "语音识别服务暂时不可用，请重试。",
     "voice_permission_denied": "麦克风权限已被拒绝。",
     "voice_unsupported": "此浏览器不支持语音输入。"
   },
@@ -84,7 +87,10 @@
     "others": "其他",
     "no_agents": "暂无智能体",
     "history_group": "历史对话",
-    "agent_filter_placeholder": "搜索智能体..."
+    "agent_filter_placeholder": "搜索智能体...",
+    "voice_output_enable_label": "开启语音输出",
+    "voice_output_disable_label": "关闭语音输出",
+    "voice_output_unsupported": "此浏览器不支持语音输出。"
   },
   "empty_state": {
     "first_time_title": "和你的智能体对话",
