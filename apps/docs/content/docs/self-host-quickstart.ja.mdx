@@ -54,13 +54,6 @@ make selfhost
 
 ## 2. 重要: プロダクションの安全設定を維持する
 
-<Callout type="warning">
-**`docker-compose.selfhost.yml` はデフォルトで `APP_ENV` を `production` に設定し**、`MULTICA_DEV_VERIFICATION_CODE` を空のままにするため、公開インスタンスには固定コードがありません。
-
-`MULTICA_DEV_VERIFICATION_CODE` はローカルまたは非公開のテスト自動化でのみ設定してください。`APP_ENV` が non-production のときに固定コードが有効になっていると、コードをリクエストできる誰もがその固定値でサインインできてしまいます。[認証設定 → 固定のローカルテストコード](/auth-setup#fixed-local-testing-codes)を参照してください。
-
-公開デプロイの前には、`.env` に `APP_ENV=production` が設定され、`MULTICA_DEV_VERIFICATION_CODE` が空であることを必ず確認してください。
-</Callout>
 
 ## 3. メールサービスを構成する（任意ですが推奨）
 
@@ -135,7 +128,6 @@ RESEND_FROM_EMAIL=noreply@yourdomain.com
 
 - メールアドレスを入力します
 - 構成したメールバックエンド（Resend または SMTP relay）から認証コードを受け取ります。どちらも構成していない場合は、サーバーコンテナの stdout からコピーしてください — `[DEV] Verification code` の行を探します
-- non-production の非公開インスタンスで `MULTICA_DEV_VERIFICATION_CODE=888888` を明示的に設定した場合を除き、`888888` を使わないでください
 - ログインして最初のワークスペースを作成します
 
 ## 5. CLI を自分のサーバーに向ける
@@ -232,7 +224,6 @@ kubectl -n multica create secret generic multica-secrets \
   --from-literal=RESEND_API_KEY="" \
   --from-literal=GOOGLE_CLIENT_SECRET="" \
   --from-literal=CLOUDFRONT_PRIVATE_KEY="" \
-  --from-literal=MULTICA_DEV_VERIFICATION_CODE=""
 ```
 
 その後、チャートをインストールします。

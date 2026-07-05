@@ -37,9 +37,6 @@ Multica에는 세 종류의 토큰이 있으며, 각각 하나의 컨텍스트�
 1. 이메일을 입력하면 서버가 6자리 코드를 보냅니다.
 2. 코드를 입력하면 서버가 JWT 쿠키를 발급(브라우저)하거나 PAT로 교환(CLI)합니다.
 
-<Callout type="warning">
-**자체 호스팅 운영자는 주의하세요**: 공개 배포에서는 `MULTICA_DEV_VERIFICATION_CODE`를 비워 두세요. 고정된 로컬 테스트 코드를 활성화하면, `APP_ENV`가 production이 아닌 동안 코드를 요청할 수 있는 누구나 그 값으로 로그인할 수 있습니다. [자체 호스팅 인증 구성](/auth-setup)을 참고하세요.
-</Callout>
 
 ### Google OAuth
 

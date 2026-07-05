@@ -92,17 +92,14 @@ RESEND_FROM_EMAIL=noreply@yourdomain.com
 
 프로덕션이 아닌 인스턴스가 기본적으로 `888888`을 받아들이던 기존 동작은 제거되었습니다. 명시적으로 구성하지 않는 한 `888888`을 입력하는 것은 다른 잘못된 코드와 동일하게 처리됩니다.
 
-이메일 백엔드를 전혀 구성하지 않은(Resend도 SMTP도 없는) 로컬 개발에서는 서버 로그에 출력되는 생성된 코드를 사용해야 합니다. 결정적인 로컬/사설 자동화가 필요하다면 `MULTICA_DEV_VERIFICATION_CODE`를 `888888` 같은 6자리 값으로 설정하고 `APP_ENV`를 프로덕션이 아닌 값으로 유지하세요:
 
 ```bash
 APP_ENV=development
-MULTICA_DEV_VERIFICATION_CODE=888888
 ```
 
 이 단축키는 `APP_ENV=production`일 때 무시됩니다.
 </Callout>
 
-프로덕션 배포에서는 `MULTICA_DEV_VERIFICATION_CODE`를 비워 두고 `APP_ENV=production`으로 설정해야 합니다. `make selfhost` / `docker-compose.selfhost.yml`로 배포하는 경우 `APP_ENV`는 기본적으로 `production`입니다.
 
 ## Google OAuth 구성
 

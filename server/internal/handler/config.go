@@ -30,10 +30,6 @@ type AppConfig struct {
 	// from the JSON when false to keep responses identical to the
 	// previous shape for the common managed-cloud case (#3433).
 	WorkspaceCreationDisabled bool `json:"workspace_creation_disabled,omitempty"`
-	// EmailCodeAuthEnabled mirrors EMAIL_CODE_AUTH_ENABLED so self-hosted
-	// deployments can render only Google OAuth in the login UI when email
-	// verification codes are disabled.
-	EmailCodeAuthEnabled bool `json:"email_code_auth_enabled"`
 	// Public daemon setup config consumed by the web app at runtime so
 	// self-hosted instances can show `multica setup self-host` commands
 	// with the operator's own domains instead of Multica Cloud defaults.
@@ -59,7 +55,6 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:            os.Getenv("GOOGLE_CLIENT_ID"),
 		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
-		EmailCodeAuthEnabled:      strings.ToLower(strings.TrimSpace(os.Getenv("EMAIL_CODE_AUTH_ENABLED"))) != "false",
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()

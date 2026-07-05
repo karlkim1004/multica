@@ -156,23 +156,18 @@ SMTP 路径把每个失败都按阶段包装好，所以 server 日志已经告�
 
 **可能原因**（互斥）：
 
-1. **`MULTICA_DEV_VERIFICATION_CODE` 为空** —— 固定验证码默认关闭
 2. **`APP_ENV=production`** —— 这是正确的生产配置；固定本地测试验证码在 production 中会被忽略
 3. **配置的验证码不是 6 位数字** —— 这个快捷码只接受 6 位数字
 
 **怎么查**：
 
 ```bash
-cat .env | grep -E 'APP_ENV|MULTICA_DEV_VERIFICATION_CODE'
-docker exec <container> env | grep -E 'APP_ENV|MULTICA_DEV_VERIFICATION_CODE'
 ```
 
 检查邮箱（含 spam）看有没有收到真实验证码。
 
 **怎么修**：
 
-- 生产环境保持 `MULTICA_DEV_VERIFICATION_CODE` 为空，配好 Resend 后使用真实验证码
-- 本地开发或内网测试可以从 server 日志抄生成的验证码；如果需要 `888888`，设置 `APP_ENV=development` 和 `MULTICA_DEV_VERIFICATION_CODE=888888`。不要在公网实例启用固定验证码（详见 [登录与注册配置 → 固定本地测试验证码](/auth-setup#固定本地测试验证码)）
 
 ## Usage 看板一直是 0
 

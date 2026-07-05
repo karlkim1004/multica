@@ -156,23 +156,18 @@ SMTP 경로는 모든 실패를 실패한 단계와 함께 감싸므로, 서버 
 
 **가능한 원인**(상호 배타적):
 
-1. **`MULTICA_DEV_VERIFICATION_CODE`가 비어 있음** — 고정 코드는 기본적으로 비활성화되어 있습니다
 2. **`APP_ENV=production`** — 이것은 **올바른** 프로덕션 구성입니다. 고정 로컬 테스트 코드는 프로덕션에서 무시됩니다
 3. **구성된 코드가 6자리가 아님** — 이 단축 코드는 6자리 값만 허용합니다
 
 **진단 방법**:
 
 ```bash
-cat .env | grep -E 'APP_ENV|MULTICA_DEV_VERIFICATION_CODE'
-docker exec <container> env | grep -E 'APP_ENV|MULTICA_DEV_VERIFICATION_CODE'
 ```
 
 인박스(스팸 포함)에서 실제 인증 코드를 확인하세요.
 
 **해결 방법**:
 
-- 프로덕션에서는 `MULTICA_DEV_VERIFICATION_CODE`를 비워 두고, Resend를 구성하여 실제 코드를 사용하세요
-- 로컬 개발이나 내부 테스트의 경우 서버 로그에서 생성된 코드를 복사하거나, `APP_ENV=development`와 `MULTICA_DEV_VERIFICATION_CODE=888888`을 설정하세요 — 공개 인스턴스에서는 고정 코드를 절대 활성화하지 마세요(자세한 내용은 [로그인 및 회원가입 구성 → 고정 로컬 테스트 코드](/auth-setup#fixed-local-testing-codes) 참고)
 
 ## 사용량 대시보드가 0으로 유지됨
 

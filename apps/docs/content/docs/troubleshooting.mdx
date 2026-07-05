@@ -156,23 +156,18 @@ The SMTP path wraps every failure with the stage it failed at, so the server log
 
 **Likely causes** (mutually exclusive):
 
-1. **`MULTICA_DEV_VERIFICATION_CODE` is empty** — fixed codes are disabled by default
 2. **`APP_ENV=production`** — this is the **correct** production configuration; fixed local test codes are ignored in production
 3. **The configured code is not 6 digits** — the shortcut only accepts a 6-digit value
 
 **How to diagnose**:
 
 ```bash
-cat .env | grep -E 'APP_ENV|MULTICA_DEV_VERIFICATION_CODE'
-docker exec <container> env | grep -E 'APP_ENV|MULTICA_DEV_VERIFICATION_CODE'
 ```
 
 Check your inbox (including spam) for the real verification code.
 
 **How to fix**:
 
-- In production, leave `MULTICA_DEV_VERIFICATION_CODE` empty — configure Resend and use real codes
-- For local development or internal testing, either copy the generated code from server logs or set `APP_ENV=development` plus `MULTICA_DEV_VERIFICATION_CODE=888888` — never enable a fixed code on a public instance (see [Sign-in and signup configuration → Fixed local testing codes](/auth-setup#fixed-local-testing-codes))
 
 ## Usage dashboard stays at zero
 

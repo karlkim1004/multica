@@ -27,7 +27,6 @@ images:
 #     --from-literal=RESEND_API_KEY="" \
 #     --from-literal=GOOGLE_CLIENT_SECRET="" \
 #     --from-literal=CLOUDFRONT_PRIVATE_KEY="" \
-#     --from-literal=MULTICA_DEV_VERIFICATION_CODE=""
 #
 # The chart references this Secret by name; it does not template it, so real
 # values never need to land in git.
@@ -100,8 +99,6 @@ backend:
     allowSignup: true
     allowedEmails: ""
     allowedEmailDomains: ""
-    # Set false to disable email-code auth and run Google OAuth only.
-    emailCodeAuthEnabled: true
     # Self-host gate (#3433): set true to make POST /api/workspaces 403 for
     # every caller. Bootstrap the workspace with this false, then flip to
     # true so users can only join via invitation.

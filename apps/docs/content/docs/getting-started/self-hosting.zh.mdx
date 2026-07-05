@@ -72,12 +72,10 @@ Open http://localhost:3000. The Docker self-host stack defaults to `APP_ENV=prod
 
 - **Recommended (production):** configure `RESEND_API_KEY` in `.env`, then restart the backend. Real verification codes will be sent to the email address you enter. See [Configuration](#configuration) below.
 - **Without email configured:** the verification code is generated server-side and printed to the backend container logs (look for `[DEV] Verification code for ...:`). Useful for one-off testing on a single machine.
-- **Deterministic local/private testing:** set `APP_ENV=development` and `MULTICA_DEV_VERIFICATION_CODE=888888` in `.env`, then restart the backend. This fixed code is ignored when `APP_ENV=production`.
 
 Changes to `ALLOW_SIGNUP` and `GOOGLE_CLIENT_ID` also take effect after restarting the backend / compose stack. The web UI reads both from `/api/config` at runtime, so no web rebuild is needed.
 
 <Callout>
-**Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
 </Callout>
 
 ### Step 3 — Install CLI & Start Daemon

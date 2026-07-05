@@ -118,7 +118,6 @@ Multica = **人 + AI agent 在同一个看板上协作的任务管理平台**。
 | Overview | 决策树（哪种部署模式适合你） |
 | Docker Compose deployment | `make selfhost` vs `make selfhost-build` |
 | Environment variables reference | 完整 env 表 |
-| Authentication setup | **🚨 固定测试验证码必须显式设置 `MULTICA_DEV_VERIFICATION_CODE`，生产保持为空**；Google OAuth 配置；signup 白名单 |
 | Storage | S3 / CloudFront / 本地磁盘 |
 | Email | Resend 配置；**没配会落到 stderr** |
 | Upgrading | 版本升级 + migration 策略 |
@@ -145,7 +144,6 @@ Installation / Authentication / Setup / Daemon / Workspace / Issue / Comment / A
 | 5 | Webhook autopilot trigger 字段建了但没接路由——第一版不文档化 | Autopilots |
 | 6 | custom_env merge 是覆盖而非合并——不能用 custom_env"取消设置"系统 env | Agents |
 | 7 | 旧 assignee 取消分配后不会被取消订阅 | Subscriptions |
-| 8 | 固定本地测试验证码默认关闭；`MULTICA_DEV_VERIFICATION_CODE` 仅用于非 production 私有测试 | Self-Hosting → Auth |
 | 9 | Signup 白名单优先级：ALLOWED_EMAILS > ALLOWED_EMAIL_DOMAINS > ALLOW_SIGNUP | Self-Hosting → Auth |
 | 10 | One daemon ↔ many runtimes；one runtime ↔ ONE provider；同 daemon_id 重启复用旧 runtime 行 | Runtimes / Daemon |
 | 11 | Inbox 10 种类型，mention dedup 只在单 event 内生效 | Inbox |

@@ -373,15 +373,14 @@ done
 
 #### 2. Create a test user and token (automated auth)
 
-For deterministic local automation, set `MULTICA_DEV_VERIFICATION_CODE=888888`
 in your env file before starting the backend:
 
 ```bash
-curl -s -X POST "$SERVER/auth/send-code" \
+curl -s -X POST "$SERVER/auth/google" \
   -H "Content-Type: application/json" \
   -d '{"email": "dev@localhost"}'
 
-JWT=$(curl -s -X POST "$SERVER/auth/verify-code" \
+JWT=$(curl -s -X POST "$SERVER/auth/google" \
   -H "Content-Type: application/json" \
   -d '{"email": "dev@localhost", "code": "888888"}' | jq -r '.token')
 
@@ -478,7 +477,6 @@ This automatically:
 4. Connects to the local backend
 
 Login in the Desktop UI with `dev@localhost` and the generated code from the
-backend logs. If you set `MULTICA_DEV_VERIFICATION_CODE=888888` before starting
 the backend, you can use `888888` instead.
 
 If the backend runs on a non-default port (worktree), create
