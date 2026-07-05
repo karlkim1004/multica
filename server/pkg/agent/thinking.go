@@ -107,6 +107,7 @@ var claudeModelEffortAllow = map[string]map[string]bool{
 	"claude-opus-4-8":           {"low": true, "medium": true, "high": true, "xhigh": true, "max": true},
 	"claude-opus-4-7":           {"low": true, "medium": true, "high": true, "xhigh": true, "max": true},
 	"claude-opus-4-6":           {"low": true, "medium": true, "high": true, "xhigh": true, "max": true},
+	"claude-sonnet-5":           {"low": true, "medium": true, "high": true, "max": true},
 	"claude-sonnet-4-6":         {"low": true, "medium": true, "high": true, "max": true},
 	"claude-sonnet-4-5":         {"low": true, "medium": true, "high": true, "max": true},
 	"claude-haiku-4-5-20251001": {"low": true, "medium": true, "high": true},
