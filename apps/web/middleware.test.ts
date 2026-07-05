@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
-import { middleware } from "./middleware";
+import { proxy } from "./proxy";
 
 function req(path: string, init: { host?: string; cookie?: string; accept?: string } = {}) {
   return new NextRequest(`https://${init.host ?? "multica.nexai.co.kr"}${path}`, {
@@ -14,14 +14,14 @@ function req(path: string, init: { host?: string; cookie?: string; accept?: stri
 
 describe("legacy host middleware", () => {
   it("redirects unauthenticated document requests to nexai.co.kr", () => {
-    const res = middleware(req("/"));
+    const res = proxy(req("/"));
 
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toBe("https://nexai.co.kr/");
   });
 
   it("allows OAuth callback and authenticated browser sessions", () => {
-    expect(middleware(req("/auth/callback?code=ok")).headers.get("location")).toBeNull();
-    expect(middleware(req("/", { cookie: "multica_logged_in=1" })).headers.get("location")).toBeNull();
+    expect(proxy(req("/auth/callback?code=ok")).headers.get("location")).toBeNull();
+    expect(proxy(req("/", { cookie: "multica_logged_in=1" })).headers.get("location")).toBeNull();
   });
 });
