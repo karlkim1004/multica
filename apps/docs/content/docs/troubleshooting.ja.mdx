@@ -156,23 +156,18 @@ SMTP の経路はすべての失敗を失敗した段階とともにラップす
 
 **考えられる原因**（相互に排他的）:
 
-1. **`MULTICA_DEV_VERIFICATION_CODE` が空** — 固定コードはデフォルトで無効です
 2. **`APP_ENV=production`** — これは**正しい**プロダクション構成です。固定のローカルテストコードはプロダクションでは無視されます
 3. **構成されたコードが 6 桁でない** — このショートカットは 6 桁の値のみを受け付けます
 
 **診断方法**:
 
 ```bash
-cat .env | grep -E 'APP_ENV|MULTICA_DEV_VERIFICATION_CODE'
-docker exec <container> env | grep -E 'APP_ENV|MULTICA_DEV_VERIFICATION_CODE'
 ```
 
 インボックス（スパムを含む）で実際の認証コードを確認してください。
 
 **解決方法**:
 
-- プロダクションでは `MULTICA_DEV_VERIFICATION_CODE` を空のままにし、Resend を構成して実際のコードを使用してください
-- ローカル開発や内部テストの場合は、サーバーログから生成されたコードをコピーするか、`APP_ENV=development` と `MULTICA_DEV_VERIFICATION_CODE=888888` を設定してください — 公開インスタンスでは固定コードを絶対に有効にしないでください（詳細は[サインインとサインアップの構成 → 固定のローカルテストコード](/auth-setup#fixed-local-testing-codes)を参照）
 
 ## 使用量ダッシュボードが 0 のままになる
 

@@ -37,9 +37,6 @@ In day-to-day use you'll only touch the first two directly. The **[daemon](/daem
 1. Enter your email; the server sends a 6-digit code.
 2. Enter the code; the server issues a JWT cookie (browser) or exchanges it for a PAT (CLI).
 
-<Callout type="warning">
-**Self-hosting operators, take note**: keep `MULTICA_DEV_VERIFICATION_CODE` empty on public deployments. If you enable a fixed local test code, anyone who can request a code can sign in with that value while `APP_ENV` is non-production. See [Self-host auth configuration](/auth-setup).
-</Callout>
 
 ### Google OAuth
 

@@ -6,12 +6,14 @@
 
 import "./env";
 import pg from "pg";
+import { createHmac } from "node:crypto";
 
 // `||` (not `??`) so an empty `NEXT_PUBLIC_API_URL=` in .env still falls
 // back to localhost. dotenv sets unset-vs-empty both as "" — treating them
 // the same matches user intent.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
+const JWT_SECRET = process.env.JWT_SECRET || "multica-dev-secret-change-in-production";
 
 interface TestWorkspace {
   id: string;
@@ -30,57 +32,21 @@ export class TestApiClient {
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
     try {
-      // Keep each E2E login isolated so previous test runs do not trip the
-      // per-email send-code rate limit.
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
-
-      // Step 1: Send verification code
-      const sendRes = await fetch(`${API_BASE}/auth/send-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      if (!sendRes.ok) {
-        throw new Error(`send-code failed: ${sendRes.status}`);
-      }
-
-      // Step 2: Read code from database
       const result = await client.query(
-        "SELECT code FROM verification_code WHERE email = $1 AND used = FALSE AND expires_at > now() ORDER BY created_at DESC LIMIT 1",
-        [email],
+        `
+          INSERT INTO "user" (name, email)
+          VALUES ($1, $2)
+          ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+          RETURNING id, name, email
+        `,
+        [name || email, email],
       );
-      if (result.rows.length === 0) {
-        throw new Error(`No verification code found for ${email}`);
-      }
+      const user = result.rows[0];
+      const token = signTestJwt({ sub: user.id, email: user.email, name: user.name });
 
-      const configuredDevCode = process.env.MULTICA_DEV_VERIFICATION_CODE?.trim();
-      const code = configuredDevCode || result.rows[0].code;
-
-      // Step 3: Verify code to get JWT
-      const verifyRes = await fetch(`${API_BASE}/auth/verify-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
-      });
-      if (!verifyRes.ok) {
-        throw new Error(`verify-code failed: ${verifyRes.status}`);
-      }
-      const data = await verifyRes.json();
-
-      this.token = data.token;
+      this.token = token;
       this.email = email;
-
-      // Update user name if needed
-      if (name && data.user?.name !== name) {
-        await this.authedFetch("/api/me", {
-          method: "PATCH",
-          body: JSON.stringify({ name }),
-        });
-      }
-
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
-
-      return data;
+      return { token, user };
     } finally {
       await client.end();
     }
@@ -204,4 +170,17 @@ export class TestApiClient {
     else if (this.workspaceId) headers["X-Workspace-ID"] = this.workspaceId;
     return fetch(`${API_BASE}${path}`, { ...init, headers });
   }
+}
+
+function base64url(value: Buffer | string) {
+  return Buffer.from(value).toString("base64url");
+}
+
+function signTestJwt(claims: { sub: string; email: string; name: string }) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = base64url(JSON.stringify({ ...claims, iat: now, exp: now + 30 * 24 * 60 * 60 }));
+  const signingInput = `${header}.${payload}`;
+  const signature = createHmac("sha256", JWT_SECRET).update(signingInput).digest("base64url");
+  return `${signingInput}.${signature}`;
 }

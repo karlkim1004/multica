@@ -54,13 +54,6 @@ make selfhost
 
 ## 2. 중요: 프로덕션 안전 설정 유지하기
 
-<Callout type="warning">
-**`docker-compose.selfhost.yml`은 기본적으로 `APP_ENV`를 `production`으로 설정하고** `MULTICA_DEV_VERIFICATION_CODE`를 비워 두므로, 공개 인스턴스에는 고정 코드가 없습니다.
-
-`MULTICA_DEV_VERIFICATION_CODE`는 로컬 또는 비공개 테스트 자동화에서만 설정하세요. `APP_ENV`가 non-production일 때 고정 코드가 활성화되어 있으면, 코드를 요청할 수 있는 누구나 그 고정 값으로 로그인할 수 있습니다. [인증 설정 → 고정 로컬 테스트 코드](/auth-setup#fixed-local-testing-codes)를 참고하세요.
-
-공개 배포 전에는 `.env`에 `APP_ENV=production`이 설정되어 있고 `MULTICA_DEV_VERIFICATION_CODE`가 비어 있는지 반드시 확인하세요.
-</Callout>
 
 ## 3. 이메일 서비스 구성하기(선택 사항이지만 권장)
 
@@ -135,7 +128,6 @@ RESEND_FROM_EMAIL=noreply@yourdomain.com
 
 - 이메일을 입력합니다
 - 구성한 이메일 백엔드(Resend 또는 SMTP relay)에서 인증 코드를 받습니다. 둘 다 구성하지 않았다면 서버 컨테이너 stdout에서 복사하세요 — `[DEV] Verification code` 줄을 찾으면 됩니다
-- non-production 비공개 인스턴스에서 `MULTICA_DEV_VERIFICATION_CODE=888888`을 명시적으로 설정한 경우가 아니라면 `888888`을 사용하지 마세요
 - 로그인하고 첫 워크스페이스를 생성합니다
 
 ## 5. CLI를 자체 서버로 연결하기
@@ -232,7 +224,6 @@ kubectl -n multica create secret generic multica-secrets \
   --from-literal=RESEND_API_KEY="" \
   --from-literal=GOOGLE_CLIENT_SECRET="" \
   --from-literal=CLOUDFRONT_PRIVATE_KEY="" \
-  --from-literal=MULTICA_DEV_VERIFICATION_CODE=""
 ```
 
 그런 다음 차트를 설치합니다.

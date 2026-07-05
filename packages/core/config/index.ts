@@ -9,7 +9,6 @@ interface ConfigState {
   cdnSigned: boolean;
   allowSignup: boolean;
   googleClientId: string;
-  emailCodeAuthEnabled: boolean;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
@@ -20,7 +19,6 @@ interface ConfigState {
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
-    emailCodeAuthEnabled?: boolean;
     workspaceCreationDisabled?: boolean;
   }) => void;
   setDaemonConfig: (config: {
@@ -37,15 +35,13 @@ export const configStore = createStore<ConfigState>((set) => ({
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
-  emailCodeAuthEnabled: true,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
   setAuthConfig: ({
     allowSignup,
     googleClientId = "",
-    emailCodeAuthEnabled = true,
     workspaceCreationDisabled = false,
   }) =>
-    set({ allowSignup, googleClientId, workspaceCreationDisabled, emailCodeAuthEnabled }),
+    set({ allowSignup, googleClientId, workspaceCreationDisabled }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
 }));

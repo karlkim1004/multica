@@ -18,7 +18,6 @@ data:
   ALLOWED_EMAIL_DOMAINS: {{ .Values.backend.config.allowedEmailDomains | quote }}
   DISABLE_WORKSPACE_CREATION: {{ .Values.backend.config.disableWorkspaceCreation | quote }}
   GOOGLE_CLIENT_ID: {{ .Values.backend.config.googleClientId | quote }}
-  EMAIL_CODE_AUTH_ENABLED: {{ .Values.backend.config.emailCodeAuthEnabled | quote }}
   GOOGLE_REDIRECT_URI: {{ .Values.backend.config.googleRedirectUri | quote }}
   S3_BUCKET: {{ .Values.backend.config.s3Bucket | quote }}
   S3_REGION: {{ .Values.backend.config.s3Region | quote }}

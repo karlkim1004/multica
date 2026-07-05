@@ -18,11 +18,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 | `JWT_SECRET` | `multica-dev-secret-change-in-production` | **예** (기본값은 안전하지 않음) |
 | `APP_ENV` | 비어 있음 | **예** (`production`이어야 함) |
 | `FRONTEND_ORIGIN` | 비어 있음 | **예** (자체 호스팅은 자체 도메인을 설정해야 함) |
-| `MULTICA_DEV_VERIFICATION_CODE` | 비어 있음 | 아니오 (프로덕션에서는 반드시 비워 두어야 함) |
 
-<Callout type="warning">
-**프로덕션에서는 `MULTICA_DEV_VERIFICATION_CODE`를 비워 두세요.** 고정된 로컬 테스트 코드는 기본적으로 비활성화되어 있지만, `MULTICA_DEV_VERIFICATION_CODE=888888`로 활성화하면 `APP_ENV`가 production이 아닌 동안에는 코드를 요청할 수 있는 누구나 그 고정 값으로 로그인할 수 있습니다. 이 단축 코드는 `APP_ENV=production`일 때 무시됩니다.
-</Callout>
 
 ### 데이터베이스 커넥션 풀
 
@@ -152,19 +148,19 @@ S3 앞에 CloudFront를 두는 경우 세 가지 변수가 적용됩니다: `CLO
 
 ## 속도 제한 (선택적 Redis)
 
-공개 auth 엔드포인트 — `/auth/send-code`, `/auth/verify-code`, `/auth/google` — 앞에는 IP별 고정 윈도우 속도 제한이 있습니다. 리미터는 Redis로 뒷받침됩니다. `REDIS_URL`을 설정하지 않으면 미들웨어는 **no-op**(fail-open)이 되고, 백엔드는 시작 시 `rate limiting disabled: REDIS_URL not configured`를 로깅합니다.
+공개 auth 엔드포인트 — `/auth/google`, `/auth/google`, `/auth/google` — 앞에는 IP별 고정 윈도우 속도 제한이 있습니다. 리미터는 Redis로 뒷받침됩니다. `REDIS_URL`을 설정하지 않으면 미들웨어는 **no-op**(fail-open)이 되고, 백엔드는 시작 시 `rate limiting disabled: REDIS_URL not configured`를 로깅합니다.
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `REDIS_URL` | 비어 있음 | Redis 연결 URL (예: `redis://localhost:6379/0`). 설정하지 않으면 auth 엔드포인트의 속도 제한이 비활성화됩니다. 동일한 Redis는 실시간 허브 fan-out, PAT 캐시, 데몬 토큰 캐시에서도 사용됩니다 — 설정하지 않으면 모두 인메모리 / 직접 DB 모드로 폴백합니다 |
-| `RATE_LIMIT_AUTH` | `5` | `/auth/send-code` 및 `/auth/google`에 대한 IP당 분당 최대 요청 수 |
-| `RATE_LIMIT_AUTH_VERIFY` | `20` | `/auth/verify-code`에 대한 IP당 분당 최대 요청 수 |
+| `RATE_LIMIT_AUTH` | `5` | `/auth/google` 및 `/auth/google`에 대한 IP당 분당 최대 요청 수 |
+| `RATE_LIMIT_AUTH_VERIFY` | `20` | `/auth/google`에 대한 IP당 분당 최대 요청 수 |
 | `RATE_LIMIT_TRUSTED_PROXIES` | 비어 있음 | 리미터가 그 `X-Forwarded-For` 헤더를 신뢰하도록 허용하는, 쉼표로 구분된 CIDR. 비어 있음(기본값)은 **XFF를 절대 신뢰하지 않음**을 의미합니다 — 리미터는 직접 연결의 `RemoteAddr`만 사용합니다 |
 
 요청이 제한을 초과하면 서버는 `429 Too Many Requests`, `Retry-After: 60`, 그리고 본문 `{"error":"too many requests"}`로 응답합니다.
 
 <Callout type="warning">
-**리버스 프록시 뒤에서는 `RATE_LIMIT_TRUSTED_PROXIES`를 반드시 설정해야 합니다.** 그렇지 않으면 백엔드 관점에서 모든 실제 사용자가 프록시의 IP를 공유하게 되어, 배포 전체가 하나의 버킷에 들어가고, `/auth/send-code`가 사이트 전체에 대해 분당 5회가 됩니다. 일반적인 값: 같은 호스트의 Caddy / Nginx에는 `127.0.0.1/32,::1/128`; Cloudflare / ALB / CloudFront에는 해당 CDN의 공개된 IP 범위. `RemoteAddr`이 이 CIDR 중 하나에 속하는 IP만 `X-Forwarded-For`를 사용해 클라이언트를 식별할 수 있습니다.
+**리버스 프록시 뒤에서는 `RATE_LIMIT_TRUSTED_PROXIES`를 반드시 설정해야 합니다.** 그렇지 않으면 백엔드 관점에서 모든 실제 사용자가 프록시의 IP를 공유하게 되어, 배포 전체가 하나의 버킷에 들어가고, `/auth/google`가 사이트 전체에 대해 분당 5회가 됩니다. 일반적인 값: 같은 호스트의 Caddy / Nginx에는 `127.0.0.1/32,::1/128`; Cloudflare / ALB / CloudFront에는 해당 CDN의 공개된 IP 범위. `RemoteAddr`이 이 CIDR 중 하나에 속하는 IP만 `X-Forwarded-For`를 사용해 클라이언트를 식별할 수 있습니다.
 </Callout>
 
 이 별도의 `RATE_LIMIT_TRUSTED_PROXIES`는 오토파일럿 webhook 리미터(`/api/webhooks/autopilots/{token}`)를 제어하는 `MULTICA_TRUSTED_PROXIES`와는 **다릅니다**. 각 리미터는 자체 목록을 파싱하므로, 프록시 뒤에 있는 배포는 둘 다 설정해야 합니다.

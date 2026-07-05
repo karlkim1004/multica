@@ -725,7 +725,6 @@ multica issue assign <issue-id> --agent <agent-slug>
 - **目标读者**: self-host 运维
 - **叙事位置**: self-host 的 auth 配置。
 - **写什么**（1500-2000 字）:
-  - **🚨 超醒目 warning block**：生产环境必须保持 `MULTICA_DEV_VERIFICATION_CODE` 为空；固定测试验证码只用于非 production 私有测试
   - Email + verification code 登录流程（依赖 Resend）
   - Google OAuth 配置步骤（创建 OAuth client → redirect URI → 填 env）
   - **Signup 白名单三层优先级决策树**:
@@ -752,7 +751,6 @@ multica issue assign <issue-id> --agent <agent-slug>
   - 任务一直 queued（runtime offline / max_concurrent 满 / agent 配错）
   - WebSocket 连不上（cookie / CORS / proxy）
   - Email 没收到（Resend 未配置 → 看 stderr）
-  - 固定测试验证码不工作（APP_ENV / MULTICA_DEV_VERIFICATION_CODE 检查）
   - Port 冲突
   - 日志位置：daemon / server / browser console
 - **不写**: 深度 bug report（去 GitHub issue）

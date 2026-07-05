@@ -37,9 +37,6 @@ Multica 有三种令牌，对应三种使用场景：浏览器 Web UI、命令�
 1. 填邮箱，server 发一封带 6 位验证码的邮件
 2. 输入验证码，server 签发 JWT cookie（浏览器）或交换出 PAT（CLI）
 
-<Callout type="warning">
-**自部署运维注意**：公网部署时保持 `MULTICA_DEV_VERIFICATION_CODE` 为空。如果启用固定本地测试验证码，在 `APP_ENV` 非 production 时，任何能请求验证码的人都能用该固定值登录。详见 [自部署的认证配置](/auth-setup)。
-</Callout>
 
 ### Google OAuth
 

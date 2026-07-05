@@ -18,11 +18,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 | `JWT_SECRET` | `multica-dev-secret-change-in-production` | **はい**（デフォルトは安全ではありません） |
 | `APP_ENV` | 空 | **はい**（`production` である必要があります） |
 | `FRONTEND_ORIGIN` | 空 | **はい**（セルフホストは自身のドメインを設定する必要があります） |
-| `MULTICA_DEV_VERIFICATION_CODE` | 空 | いいえ（プロダクションでは必ず空のままにしてください） |
 
-<Callout type="warning">
-**プロダクションでは `MULTICA_DEV_VERIFICATION_CODE` を空のままにしてください。** 固定のローカルテストコードはデフォルトで無効になっていますが、`MULTICA_DEV_VERIFICATION_CODE=888888` で有効にすると、`APP_ENV` が production 以外の間は、コードを要求できる誰もがその固定値でサインインできてしまいます。このショートカットは `APP_ENV=production` のときには無視されます。
-</Callout>
 
 ### データベース接続プール
 
@@ -152,19 +148,19 @@ S3 の前段に CloudFront を置く場合、3 つの変数が適用されます
 
 ## レート制限（任意の Redis）
 
-公開 auth エンドポイント — `/auth/send-code`、`/auth/verify-code`、`/auth/google` — の前段には、IP ごとの固定ウィンドウのレート制限があります。リミッターは Redis によって支えられています。`REDIS_URL` を設定しない場合、ミドルウェアは **no-op**（fail-open）になり、バックエンドは起動時に `rate limiting disabled: REDIS_URL not configured` をログに記録します。
+公開 auth エンドポイント — `/auth/google`、`/auth/google`、`/auth/google` — の前段には、IP ごとの固定ウィンドウのレート制限があります。リミッターは Redis によって支えられています。`REDIS_URL` を設定しない場合、ミドルウェアは **no-op**（fail-open）になり、バックエンドは起動時に `rate limiting disabled: REDIS_URL not configured` をログに記録します。
 
 | 変数 | デフォルト | 説明 |
 |---|---|---|
 | `REDIS_URL` | 空 | Redis 接続 URL（例: `redis://localhost:6379/0`）。設定しないと auth エンドポイントのレート制限が無効になります。同じ Redis はリアルタイムハブの fan-out、PAT キャッシュ、デーモントークンキャッシュでも使われます — 設定しない場合はすべてインメモリ / 直接 DB モードにフォールバックします |
-| `RATE_LIMIT_AUTH` | `5` | `/auth/send-code` および `/auth/google` に対する IP あたり毎分の最大リクエスト数 |
-| `RATE_LIMIT_AUTH_VERIFY` | `20` | `/auth/verify-code` に対する IP あたり毎分の最大リクエスト数 |
+| `RATE_LIMIT_AUTH` | `5` | `/auth/google` および `/auth/google` に対する IP あたり毎分の最大リクエスト数 |
+| `RATE_LIMIT_AUTH_VERIFY` | `20` | `/auth/google` に対する IP あたり毎分の最大リクエスト数 |
 | `RATE_LIMIT_TRUSTED_PROXIES` | 空 | リミッターがその `X-Forwarded-For` ヘッダーを信頼することを許可する、カンマ区切りの CIDR。空（デフォルト）は **XFF を決して信頼しない**ことを意味します — リミッターは直接接続の `RemoteAddr` のみを使用します |
 
 リクエストが制限を超えると、サーバーは `429 Too Many Requests`、`Retry-After: 60`、そして本文 `{"error":"too many requests"}` で応答します。
 
 <Callout type="warning">
-**リバースプロキシの背後では `RATE_LIMIT_TRUSTED_PROXIES` を必ず設定する必要があります。** そうしないと、バックエンドの観点ではすべての実際のユーザーがプロキシの IP を共有することになり、デプロイ全体が 1 つのバケットに入り、`/auth/send-code` がサイト全体で毎分 5 リクエストになってしまいます。一般的な値: 同一ホストの Caddy / Nginx には `127.0.0.1/32,::1/128`、Cloudflare / ALB / CloudFront には該当 CDN が公開している IP 範囲。`RemoteAddr` がこれらの CIDR のいずれかに含まれる IP のみが、`X-Forwarded-For` を使ってクライアントを識別できます。
+**リバースプロキシの背後では `RATE_LIMIT_TRUSTED_PROXIES` を必ず設定する必要があります。** そうしないと、バックエンドの観点ではすべての実際のユーザーがプロキシの IP を共有することになり、デプロイ全体が 1 つのバケットに入り、`/auth/google` がサイト全体で毎分 5 リクエストになってしまいます。一般的な値: 同一ホストの Caddy / Nginx には `127.0.0.1/32,::1/128`、Cloudflare / ALB / CloudFront には該当 CDN が公開している IP 範囲。`RemoteAddr` がこれらの CIDR のいずれかに含まれる IP のみが、`X-Forwarded-For` を使ってクライアントを識別できます。
 </Callout>
 
 この独立した `RATE_LIMIT_TRUSTED_PROXIES` は、オートパイロット webhook リミッター（`/api/webhooks/autopilots/{token}`）を制御する `MULTICA_TRUSTED_PROXIES` とは**異なります**。各リミッターは自身のリストをパースするため、プロキシの背後にあるデプロイは両方を設定すべきです。
