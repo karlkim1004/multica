@@ -20,7 +20,9 @@ describe("legacy host middleware", () => {
     expect(res.headers.get("location")).toBe("https://nexai.co.kr/");
   });
 
-  it("allows OAuth callback and authenticated browser sessions", () => {
+  it("allows login, OAuth, and authenticated browser sessions", () => {
+    expect(proxy(req("/login")).headers.get("location")).toBeNull();
+    expect(proxy(req("/auth/google")).headers.get("location")).toBeNull();
     expect(proxy(req("/auth/callback?code=ok")).headers.get("location")).toBeNull();
     expect(proxy(req("/", { cookie: "multica_logged_in=1" })).headers.get("location")).toBeNull();
   });

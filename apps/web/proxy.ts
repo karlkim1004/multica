@@ -30,7 +30,9 @@ const LOGGED_IN_COOKIE = "multica_logged_in";
 
 function isNexaiRedirectExemptPath(pathname: string): boolean {
   return (
+    pathname === "/login" ||
     pathname.startsWith("/api/") ||
+    pathname.startsWith("/auth/google") ||
     pathname.startsWith("/auth/callback") ||
     pathname.startsWith("/_next/") ||
     pathname === "/favicon.ico" ||
