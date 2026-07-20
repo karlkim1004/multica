@@ -566,6 +566,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/", h.ListWorkspaces)
 			r.Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
+				r.Post("/membership-applications", h.CreateMembershipApplication)
 				// Member-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))

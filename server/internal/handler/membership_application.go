@@ -4,7 +4,43 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+// CreateMembershipApplication lets an authenticated OAuth user ask to join a
+// specific workspace. It does not create a member or grant workspace access.
+func (h *Handler) CreateMembershipApplication(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID, ok := parseUUIDOrBadRequest(w, workspaceIDFromURL(r, "id"), "workspace id")
+	if !ok {
+		return
+	}
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
+	if !ok {
+		return
+	}
+	if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{WorkspaceID: workspaceID, UserID: userUUID}); err == nil {
+		writeError(w, http.StatusConflict, "user is already a member")
+		return
+	}
+	var applicationID string
+	err := h.DB.QueryRow(r.Context(), `
+		INSERT INTO workspace_membership_application (workspace_id, user_id)
+		VALUES ($1, $2) RETURNING id
+	`, workspaceID, userUUID).Scan(&applicationID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "membership application already pending")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create membership application")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": applicationID, "status": "pending"})
+}
 
 // ApproveMembershipApplication atomically turns one pending application into
 // a general-member membership. Row locking makes a second concurrent approval

@@ -240,6 +240,11 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				WorkspaceID: wsUUID,
 			})
 			if err != nil {
+				pending, pendingErr := queries.HasPendingMembershipApplication(r.Context(), wsUUID, userUUID)
+				if pendingErr == nil && pending {
+					writeError(w, http.StatusForbidden, "membership approval pending")
+					return
+				}
 				writeError(w, http.StatusNotFound, "workspace not found")
 				return
 			}

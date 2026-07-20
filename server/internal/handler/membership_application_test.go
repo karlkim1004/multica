@@ -58,3 +58,24 @@ func TestConcurrentMembershipApplicationApprovalCreatesOneMembership(t *testing.
 		t.Fatalf("memberships = %d, want 1", memberships)
 	}
 }
+
+func TestCreateMembershipApplicationRejectsDuplicatePending(t *testing.T) {
+	ctx := t.Context()
+	var applicantID string
+	email := fmt.Sprintf("application-duplicate-%d@multica.ai", time.Now().UnixNano())
+	if err := testPool.QueryRow(ctx, `INSERT INTO "user" (name, email) VALUES ('Duplicate Applicant', $1) RETURNING id`, email).Scan(&applicantID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, applicantID) })
+
+	for attempt, want := range []int{http.StatusCreated, http.StatusConflict} {
+		req := newRequest(http.MethodPost, "/", nil)
+		req.Header.Set("X-User-ID", applicantID)
+		req = withURLParam(req, "id", testWorkspaceID)
+		rr := httptest.NewRecorder()
+		testHandler.CreateMembershipApplication(rr, req)
+		if rr.Code != want {
+			t.Fatalf("attempt %d status = %d, want %d: %s", attempt+1, rr.Code, want, rr.Body.String())
+		}
+	}
+}
