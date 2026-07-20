@@ -28,6 +28,8 @@ import { Mic, MicOff } from "lucide-react";
 
 const logger = createLogger("chat.ui");
 const EMPTY_ATTACHMENTS: Attachment[] = [];
+const VOICE_SILENCE_TIMEOUT_MS = 3_500;
+const VOICE_RESTART_DELAY_MS = 250;
 
 function attachmentReferenceUrls(attachment: Attachment): string[] {
   const withUploadFields = attachment as Attachment & {
@@ -53,6 +55,7 @@ type SpeechRecognitionLike = {
   interimResults: boolean;
   continuous: boolean;
   start: () => void;
+  stop: () => void;
   onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
   onerror: ((event: { error?: string }) => void) | null;
   onend: (() => void) | null;
@@ -60,8 +63,14 @@ type SpeechRecognitionLike = {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 type SpeechRecognitionResultEvent = {
-  results: ArrayLike<ArrayLike<{ transcript?: string }>>;
+  resultIndex?: number;
+  results: ArrayLike<ArrayLike<{ transcript?: string }> & { isFinal?: boolean }>;
 };
+
+function isAidoWakeWord(transcript: string): boolean {
+  const normalized = transcript.trim().toLowerCase().replace(/\s+/g, " ");
+  return normalized === "hi aido" || normalized === "하이 아이두";
+}
 
 function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
   if (typeof window === "undefined") return null;
@@ -174,6 +183,11 @@ export function ChatInput({
   const [voiceSupport, setVoiceSupport] = useState<"checking" | "supported" | "unsupported">("checking");
   const [isListening, setIsListening] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const keepListeningRef = useRef(false);
+  const wakeWordDetectedRef = useRef(false);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRestore = editorRestore?.draftKey === draftKey ? editorRestore : null;
   const editorKey = `${selectedAgentId ?? "no-agent"}:${activeRestore?.id ?? "base"}`;
   // Number of in-flight uploads. We track this explicitly (rather than
@@ -203,6 +217,35 @@ export function ChatInput({
     setVoiceSupport(supported ? "supported" : "unsupported");
     if (!supported) setVoiceStatus(t(($) => $.input.voice_unsupported));
   }, [t]);
+
+  const clearVoiceTimers = useCallback(() => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+    silenceTimerRef.current = null;
+    restartTimerRef.current = null;
+  }, []);
+
+  const stopVoiceInput = useCallback(
+    (status?: string) => {
+      keepListeningRef.current = false;
+      clearVoiceTimers();
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      if (status) setVoiceStatus(status);
+    },
+    [clearVoiceTimers],
+  );
+
+  useEffect(() => {
+    const stopWhenHidden = () => {
+      if (document.visibilityState !== "visible") stopVoiceInput();
+    };
+    document.addEventListener("visibilitychange", stopWhenHidden);
+    return () => {
+      document.removeEventListener("visibilitychange", stopWhenHidden);
+      stopVoiceInput();
+    };
+  }, [stopVoiceInput]);
 
   useEffect(() => {
     if (!restoreDraftRequest) {
@@ -285,23 +328,47 @@ export function ChatInput({
   );
 
   const handleVoiceInput = useCallback(() => {
+    if (isListening) {
+      stopVoiceInput();
+      return;
+    }
+
     const Recognition = getSpeechRecognitionConstructor();
     if (!Recognition) {
       setVoiceSupport("unsupported");
       setVoiceStatus(t(($) => $.input.voice_unsupported));
       return;
     }
+    if (document.visibilityState !== "visible") {
+      setVoiceStatus(t(($) => $.input.voice_active_screen_only));
+      return;
+    }
 
     const recognition = new Recognition();
+    recognitionRef.current = recognition;
+    keepListeningRef.current = true;
+    wakeWordDetectedRef.current = false;
     recognition.lang = "ko-KR";
     recognition.interimResults = true;
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.onresult = (event) => {
       const transcript = Array.from(event.results)
+        .slice(event.resultIndex ?? 0)
         .map((result) => result[0]?.transcript ?? "")
         .join("")
         .trim();
       if (!transcript) return;
+
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(() => {
+        stopVoiceInput(t(($) => $.input.voice_complete));
+      }, VOICE_SILENCE_TIMEOUT_MS);
+
+      if (!wakeWordDetectedRef.current && isAidoWakeWord(transcript)) {
+        wakeWordDetectedRef.current = true;
+        setVoiceStatus(t(($) => $.input.voice_wake_word_detected));
+        return;
+      }
       setDraftFromVoice(transcript);
       setVoiceStatus(t(($) => $.input.voice_captured));
     };
@@ -318,19 +385,30 @@ export function ChatInput({
             : audioUnavailable
               ? t(($) => $.input.voice_audio_unavailable)
               : serviceUnavailable
-                ? t(($) => $.input.voice_service_unavailable)
+              ? t(($) => $.input.voice_service_unavailable)
                 : t(($) => $.input.voice_failed),
       );
-      setIsListening(false);
+      if (!noSpeech) stopVoiceInput();
     };
     recognition.onend = () => {
-      setIsListening(false);
+      if (!keepListeningRef.current || document.visibilityState !== "visible") {
+        setIsListening(false);
+        return;
+      }
+      restartTimerRef.current = setTimeout(() => {
+        if (!keepListeningRef.current || document.visibilityState !== "visible") return;
+        try {
+          recognition.start();
+        } catch {
+          stopVoiceInput(t(($) => $.input.voice_failed));
+        }
+      }, VOICE_RESTART_DELAY_MS);
     };
 
     setVoiceStatus(t(($) => $.input.voice_listening));
     setIsListening(true);
     recognition.start();
-  }, [setDraftFromVoice, t]);
+  }, [isListening, setDraftFromVoice, stopVoiceInput, t]);
 
   const handleSend = async () => {
     const content = editorRef.current?.getMarkdown()?.replace(/(\n\s*)+$/, "").trim();
