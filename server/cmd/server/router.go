@@ -585,9 +585,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
 				})
 				// Admin-level access
-				r.Group(func(r chi.Router) {
-					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
-					r.Put("/", h.UpdateWorkspace)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
+				r.Post("/membership-applications/{applicationId}/approve", h.ApproveMembershipApplication)
+				r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
 					r.Route("/members/{memberId}", func(r chi.Router) {
