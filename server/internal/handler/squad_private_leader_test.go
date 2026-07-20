@@ -265,15 +265,22 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, child.ID)
 	})
 
-	// Plain member moves child to done.
+	// General members may create issues but cannot change their status.
 	w = httptest.NewRecorder()
 	r = newRequestAs(memberID, "PATCH", "/api/issues/"+child.ID, map[string]any{
 		"status": "done",
 	})
 	r = withURLParam(r, "id", child.ID)
 	testHandler.UpdateIssue(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue (child done): expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("UpdateIssue (child done): expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, child.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "in_progress" {
+		t.Fatalf("status = %q, want in_progress", status)
 	}
 
 	// The private leader must NOT have a queued task on the parent.
