@@ -88,7 +88,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO member (workspace_id, user_id, role)
-		VALUES ($1, $2, 'member')
+		VALUES ($1, $2, 'super_user')
 	`, testWorkspaceID, runtimeOwnerID); err != nil {
 		t.Fatalf("add runtime owner as member: %v", err)
 	}

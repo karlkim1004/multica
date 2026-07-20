@@ -482,7 +482,7 @@ func canEditRuntime(member db.Member, rt db.AgentRuntime) bool {
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
 	}
-	return rt.OwnerID.Valid && uuidToString(rt.OwnerID) == uuidToString(member.UserID)
+	return member.Role == "super_user" && rt.OwnerID.Valid && uuidToString(rt.OwnerID) == uuidToString(member.UserID)
 }
 
 // canUseRuntimeForAgent reports whether a workspace member is allowed to
