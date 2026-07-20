@@ -2,14 +2,42 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestRequireWorkspaceMemberRejectsPendingApplicationWithForbidden(t *testing.T) {
+	pool := openPool(t)
+	defer pool.Close()
+	workspaceID, cleanup := setupResolverFixture(t, pool)
+	defer cleanup()
+	ctx := context.Background()
+	var userID string
+	email := fmt.Sprintf("pending-middleware-%d@multica.ai", time.Now().UnixNano())
+	if err := pool.QueryRow(ctx, `INSERT INTO "user" (name, email) VALUES ('Pending Middleware', $1) RETURNING id`, email).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
+	if _, err := pool.Exec(ctx, `INSERT INTO workspace_membership_application (workspace_id, user_id) VALUES ($1, $2)`, workspaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	req := httptest.NewRequest(http.MethodGet, "/api/issues?workspace_id="+workspaceID, nil)
+	req.Header.Set("X-User-ID", userID)
+	rr := httptest.NewRecorder()
+	RequireWorkspaceMember(db.New(pool))(next).ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rr.Code, rr.Body.String())
+	}
+}
 
 const testResolverSlug = "middleware-resolver-test"
 
