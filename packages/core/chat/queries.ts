@@ -1,4 +1,4 @@
-import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { TaskMessagePayload } from "../types/events";
 
@@ -130,4 +130,30 @@ export function pendingChatTasksOptions(wsId: string) {
     queryFn: () => api.listPendingChatTasks(),
     staleTime: Infinity,
   });
+}
+
+/**
+ * Manual "refresh" action on the chat window. Every query here has
+ * `staleTime: Infinity` and depends entirely on WS invalidation to stay
+ * fresh (see useRealtimeSync) — a missed or delayed WS event (dropped
+ * connection, reconnect race) can leave the message list, the pending-task
+ * status, or the live task timeline stuck showing stale state. Re-syncing
+ * only the message list left `isRunning` / `TimelineView` pinned to the
+ * stale signal, so the user needed a hard page reload to recover. Ports the
+ * NEX-692 AIDO fix (refetch every session-scoped signal a stuck run
+ * depends on, not just the transcript) to this query-cache-based client.
+ */
+export function refreshChatSessionQueries(
+  qc: QueryClient,
+  params: { sessionId: string; wsId: string; pendingTaskId?: string | null },
+): Promise<unknown> {
+  const { sessionId, wsId, pendingTaskId } = params;
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) }),
+    qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) }),
+    isTaskMessageTaskId(pendingTaskId)
+      ? qc.invalidateQueries({ queryKey: chatKeys.taskMessages(pendingTaskId) })
+      : Promise.resolve(),
+    qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) }),
+  ]);
 }
