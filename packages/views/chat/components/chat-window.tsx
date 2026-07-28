@@ -37,6 +37,7 @@ import {
   pendingChatTasksOptions,
   chatKeys,
   isTaskMessageTaskId,
+  refreshChatSessionQueries,
 } from "@multica/core/chat/queries";
 import {
   useCreateChatSession,
@@ -217,6 +218,7 @@ export function ChatWindow() {
   } | null>(null);
   const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
   const [voiceOutputSupported, setVoiceOutputSupported] = useState(false);
+  const [isRefreshingSession, setIsRefreshingSession] = useState(false);
   const handleRestoreDraftConsumed = useCallback(() => {
     setRestoreDraftRequest(null);
   }, []);
@@ -660,6 +662,19 @@ export function ChatWindow() {
     setOpen(false);
   }, [activeSessionId, pendingTaskId, setOpen]);
 
+  // Manual refresh — see refreshChatSessionQueries for why this re-syncs
+  // more than just the message list (ports the NEX-692 AIDO fix pattern).
+  const handleRefreshSession = useCallback(async () => {
+    if (!activeSessionId || isRefreshingSession) return;
+    uiLogger.info("refreshSession", { activeSessionId, pendingTaskId });
+    setIsRefreshingSession(true);
+    try {
+      await refreshChatSessionQueries(qc, { sessionId: activeSessionId, wsId, pendingTaskId });
+    } finally {
+      setIsRefreshingSession(false);
+    }
+  }, [activeSessionId, pendingTaskId, isRefreshingSession, qc, wsId]);
+
   const isExpanded = useChatStore((s) => s.isExpanded);
 
   const windowRef = useRef<HTMLDivElement>(null);
@@ -767,15 +782,14 @@ export function ChatWindow() {
                   size="icon-sm"
                   className="text-muted-foreground"
                   data-acceptance="chat-messages-manual-refresh"
+                  disabled={!activeSessionId || isRefreshingSession}
                   onClick={() => {
-                    if (activeSessionId) {
-                      void qc.invalidateQueries({ queryKey: chatKeys.messagesPage(activeSessionId) });
-                    }
+                    void handleRefreshSession();
                   }}
                 />
               }
             >
-              <RefreshCw className="size-3.5" />
+              <RefreshCw className={cn("size-3.5", isRefreshingSession && "animate-spin")} />
             </TooltipTrigger>
             <TooltipContent side="top">{CHAT_MESSAGES_REFRESH_LABEL}</TooltipContent>
           </Tooltip>

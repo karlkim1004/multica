@@ -1,11 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it, vi } from "vitest";
 
 import type { TaskMessagePayload } from "../types/events";
 import {
+  chatKeys,
   isTaskMessageTaskId,
   mergeTaskMessagesBySeq,
+  refreshChatSessionQueries,
   taskMessagesOptions,
 } from "./queries";
+
+function createQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+}
 
 const msg = (seq: number): TaskMessagePayload => ({
   task_id: "task-1",
@@ -28,6 +39,44 @@ describe("taskMessagesOptions", () => {
 
     expect(isTaskMessageTaskId(taskId)).toBe(false);
     expect(taskMessagesOptions(taskId).enabled).toBe(false);
+  });
+});
+
+describe("refreshChatSessionQueries", () => {
+  const sessionId = "session-1";
+  const wsId = "ws-1";
+
+  it("re-syncs messages, pending-task status, and the session list — not just the transcript", async () => {
+    const qc = createQueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+
+    await refreshChatSessionQueries(qc, { sessionId, wsId, pendingTaskId: null });
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.messagesPage(sessionId) });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.pendingTask(sessionId) });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.sessions(wsId) });
+  });
+
+  it("also re-syncs the live task timeline when a real task is pending", async () => {
+    const qc = createQueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    const pendingTaskId = "4a2e8d1c-7f9b-4e2a-9c1d-123456789abc";
+
+    await refreshChatSessionQueries(qc, { sessionId, wsId, pendingTaskId });
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.taskMessages(pendingTaskId) });
+  });
+
+  it("skips the task-timeline invalidation for an optimistic (not-yet-persisted) task id", async () => {
+    const qc = createQueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    const optimisticTaskId = "optimistic-optimistic-1778739487737";
+
+    await refreshChatSessionQueries(qc, { sessionId, wsId, pendingTaskId: optimisticTaskId });
+
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: chatKeys.taskMessages(optimisticTaskId),
+    });
   });
 });
 
