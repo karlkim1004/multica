@@ -98,7 +98,7 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 		annotateClaudeThinking(ctx, models, executablePath)
 		return models, nil
 	case "codex":
-		models := codexStaticModels()
+		models := mergeRegisteredModels(providerType, codexStaticModels())
 		annotateCodexThinking(ctx, models, executablePath)
 		return models, nil
 	case "gemini":
@@ -176,12 +176,11 @@ func ModelSelectionSupported(providerType string) bool {
 	return true
 }
 
-// ModelKnownIncompatibleWithProvider reports whether a saved model is a known
-// mismatch for a target runtime provider. For first-party providers with
-// maintained static catalogs, compatibility is exact: the model must be one of
-// the IDs that runtime advertises. Unknown/custom model strings still return
-// false because the UI and CLI allow manual entries and the server should not
-// erase values it cannot confidently classify.
+// ModelKnownIncompatibleWithProvider reports whether a saved model is rejected
+// by a target runtime provider. For first-party providers with maintained
+// catalogs, compatibility is exact: the model must be one of the IDs that
+// runtime advertises. This keeps typos or stale catalog entries from being
+// persisted and later making an agent silently unclaimable.
 func ModelKnownIncompatibleWithProvider(providerType, model string) bool {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -195,7 +194,7 @@ func ModelKnownIncompatibleWithProvider(providerType, model string) bool {
 	if accepted[model] {
 		return false
 	}
-	return isRuntimeSpecificModelID(model)
+	return true
 }
 
 func acceptedModelIDsForProvider(providerType string) (map[string]bool, bool) {
@@ -203,7 +202,7 @@ func acceptedModelIDsForProvider(providerType string) (map[string]bool, bool) {
 	case providerType == "claude":
 		return modelIDSet(claudeStaticModels()), true
 	case providerType == "codex":
-		return modelIDSet(codexStaticModels()), true
+		return modelIDSet(mergeRegisteredModels(providerType, codexStaticModels())), true
 	case providerType == "gemini":
 		return modelIDSet(geminiStaticModels()), true
 	default:
@@ -299,13 +298,12 @@ func claudeStaticModels() []Model {
 
 func codexStaticModels() []Model {
 	return []Model{
-		{ID: "gpt-5.4-mini", Label: "GPT-5.4 mini", Provider: "openai"},
-		{ID: "gpt-5.6-luna", Label: "GPT-5.6 Luna", Provider: "openai"},
-		{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol", Provider: "openai"},
 		{ID: "gpt-5.6-terra", Label: "GPT-5.6 Terra", Provider: "openai"},
-		{ID: "gpt-5.5", Label: "GPT-5.5", Provider: "openai", Default: true},
-		{ID: "gpt-5.5-mini", Label: "GPT-5.5 mini", Provider: "openai"},
+		{ID: "gpt-5.6-luna", Label: "GPT-5.6 Luna", Provider: "openai", Default: true},
+		{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol", Provider: "openai"},
+		{ID: "gpt-5.5", Label: "GPT-5.5", Provider: "openai"},
 		{ID: "gpt-5.4", Label: "GPT-5.4", Provider: "openai"},
+		{ID: "gpt-5.4-mini", Label: "GPT-5.4 mini", Provider: "openai"},
 		{ID: "gpt-5.3-codex", Label: "GPT-5.3 Codex", Provider: "openai"},
 		{ID: "gpt-5", Label: "GPT-5", Provider: "openai"},
 		{ID: "o3", Label: "o3", Provider: "openai"},
