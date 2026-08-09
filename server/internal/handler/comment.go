@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1006,6 +1007,8 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	req.Content = rewriteHumanMentions(req.Content, authorType == "agent")
+
 	// NOTE: Comment content is stored as Markdown source. XSS is handled at the
 	// rendering layer (rehype-sanitize) and at the editor layer
 	// (@tiptap/markdown with html:false). Running an HTML sanitizer here would
@@ -1073,6 +1076,53 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 // whitespace-delimited token is this prefix (case-insensitive) is stored like
 // any other comment but never triggers an agent.
 const noteCommentPrefix = "/note"
+
+var humanMentionRe = regexp.MustCompile(`\[@([^\]]+)\]\(mention://member/[0-9a-fA-F-]+\)`)
+
+// teamLeaderMentionUUID is 아이유(TeamLeader) — the default reroute target for
+// bot→human mentions blocked by the NEX-789 escalation gate.
+const teamLeaderMentionUUID = "a9b0fb13-bfaf-4cea-a6e4-d27e243ec2b0"
+
+func hasHumanEscalationTag(content string) bool {
+	upper := strings.ToUpper(content)
+	if strings.Contains(upper, "P0") || strings.Contains(upper, "P1") {
+		return true
+	}
+	for _, token := range []string{"외부비용", "PROD", "DB", "외부발송", "메일", "PR", "라이선스", "공개노출"} {
+		if strings.Contains(upper, strings.ToUpper(token)) {
+			return true
+		}
+	}
+	return false
+}
+
+// rewriteHumanMentions enforces the NEX-789 escalation gate: a bot-authored
+// comment may only keep a live mention://member link (which fires a human
+// notification) when the content carries one of the 협의체 트리거 tags. Without
+// a tag, the mention link is stripped (so no notification fires) and rerouted
+// to 아이유(TeamLeader) instead. Human-authored comments are never touched —
+// the gate scopes strictly to 봇→사람 mentions per the Canonical Goal.
+func rewriteHumanMentions(content string, isAgentAuthor bool) string {
+	if !isAgentAuthor {
+		return content
+	}
+	matches := humanMentionRe.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return content
+	}
+	if hasHumanEscalationTag(content) {
+		slog.Info("human_mention_guard_allowed", "member_mention_count", len(matches))
+		return content
+	}
+	rewritten := humanMentionRe.ReplaceAllString(content,
+		"@$1 (자동 재라우팅: [@아이유(TeamLeader)](mention://agent/"+teamLeaderMentionUUID+"))")
+	slog.Warn("human_mention_guard_blocked",
+		"member_mention_count", len(matches),
+		"routed_to", teamLeaderMentionUUID,
+		"routed_to_label", "아이유(TeamLeader)",
+	)
+	return rewritten
+}
 
 // isNoteComment reports whether content opts out of agent triggering via the
 // reserved /note prefix. The prefix must be the comment's first token, so
@@ -1531,6 +1581,8 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	req.Content = rewriteHumanMentions(req.Content, actorType == "agent")
 
 	// NOTE: See CreateComment — Markdown is sanitized at render/edit time, not here.
 
