@@ -371,7 +371,7 @@ describe("ChatInput attachment wiring", () => {
 
 describe("ChatInput voice input", () => {
   type SpeechRecognitionResultEvent = {
-    results: ArrayLike<ArrayLike<{ transcript?: string }>>;
+    results: ArrayLike<ArrayLike<{ transcript?: string }> & { isFinal?: boolean }>;
   };
 
   class MockSpeechRecognition {
@@ -383,6 +383,7 @@ describe("ChatInput voice input", () => {
     onerror: ((event: { error: string }) => void) | null = null;
     onend: (() => void) | null = null;
     start = vi.fn();
+    stop = vi.fn();
 
     constructor() {
       MockSpeechRecognition.instances.push(this);
@@ -411,6 +412,59 @@ describe("ChatInput voice input", () => {
       results: [
         [{ transcript: "오늘 일정 알려줘" }],
       ],
+    } as SpeechRecognitionResultEvent);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toHaveValue("오늘 일정 알려줘");
+    });
+  });
+
+  it("keeps the mobile voice session through a short pause and ends it after 3.5 seconds", async () => {
+    renderInput();
+    const button = await screen.findByRole("button", { name: "Start voice input" });
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(button);
+      const recognition = MockSpeechRecognition.instances[0]!;
+
+      expect(recognition.continuous).toBe(true);
+      recognition.onresult?.({
+        results: [Object.assign([{ transcript: "회의 일정" }], { isFinal: true })],
+      } as SpeechRecognitionResultEvent);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(recognition.stop).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(recognition.stop).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Voice input complete.")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("switches from an active-screen wake word to dictation without placing the wake word in the draft", async () => {
+    renderInput();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
+    const recognition = MockSpeechRecognition.instances[0]!;
+
+    recognition.onresult?.({
+        results: [Object.assign([{ transcript: "하이 아이두" }], { isFinal: true })],
+    } as SpeechRecognitionResultEvent);
+
+    await waitFor(() => {
+      expect(screen.getByText("Wake word detected. Listening for your message.")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("editor")).toHaveValue("");
+
+    recognition.onresult?.({
+        results: [Object.assign([{ transcript: "오늘 일정 알려줘" }], { isFinal: true })],
     } as SpeechRecognitionResultEvent);
 
     await waitFor(() => {
