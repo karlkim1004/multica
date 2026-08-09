@@ -37,6 +37,7 @@ import {
   pendingChatTasksOptions,
   chatKeys,
   isTaskMessageTaskId,
+  pickLatestSessionForAgent,
   refreshChatSessionQueries,
 } from "@multica/core/chat/queries";
 import {
@@ -623,10 +624,12 @@ export function ChatWindow() {
         previousSessionId: activeSessionId,
       });
       setSelectedAgentId(agent.id);
-      // Reset session when switching agent
-      setActiveSession(null);
+      // Resume the agent's most recent conversation instead of always
+      // landing on a blank "new chat" — from the user's side, switching
+      // agents shouldn't look like the prior conversation vanished (NEX-881).
+      setActiveSession(pickLatestSessionForAgent(sessions, agent.id)?.id ?? null);
     },
-    [activeAgent, selectedAgentId, activeSessionId, setSelectedAgentId, setActiveSession],
+    [activeAgent, selectedAgentId, activeSessionId, sessions, setSelectedAgentId, setActiveSession],
   );
 
   const handleNewChat = useCallback(() => {

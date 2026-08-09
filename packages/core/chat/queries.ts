@@ -1,6 +1,7 @@
 import { infiniteQueryOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { TaskMessagePayload } from "../types/events";
+import type { ChatSession } from "../types";
 
 // NOTE on workspace scoping:
 // `wsId` is used only as part of queryKey for cache isolation per workspace.
@@ -35,6 +36,23 @@ export function chatSessionsOptions(wsId: string) {
     queryFn: () => api.listChatSessions({ status: "all" }),
     staleTime: Infinity,
   });
+}
+
+/**
+ * Most recently updated non-archived session belonging to `agentId`, or
+ * `null` if the agent has none. Switching to an agent should resume that
+ * conversation rather than always landing on a blank "new chat" (NEX-881).
+ */
+export function pickLatestSessionForAgent(
+  sessions: ChatSession[],
+  agentId: string,
+): ChatSession | null {
+  let latest: ChatSession | null = null;
+  for (const session of sessions) {
+    if (session.agent_id !== agentId || session.status === "archived") continue;
+    if (!latest || session.updated_at > latest.updated_at) latest = session;
+  }
+  return latest;
 }
 
 export function chatSessionOptions(wsId: string, id: string) {

@@ -4,12 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import type { TaskMessagePayload } from "../types/events";
-import type { ChatMessagesPage } from "../types";
+import type { ChatMessagesPage, ChatSession } from "../types";
 import {
   chatKeys,
   chatMessagesPageOptions,
   isTaskMessageTaskId,
   mergeTaskMessagesBySeq,
+  pickLatestSessionForAgent,
   refreshChatSessionQueries,
   taskMessagesOptions,
 } from "./queries";
@@ -161,5 +162,45 @@ describe("mergeTaskMessagesBySeq", () => {
     // Query observers don't re-render on replayed events.
     expect(mergeTaskMessagesBySeq(existing, [])).toBe(existing);
     expect(mergeTaskMessagesBySeq(existing, [msg(1), msg(2)])).toBe(existing);
+  });
+});
+
+function session(overrides: Partial<ChatSession> & Pick<ChatSession, "id" | "agent_id">): ChatSession {
+  return {
+    workspace_id: "ws-1",
+    creator_id: "user-1",
+    title: "",
+    status: "active",
+    has_unread: false,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+describe("pickLatestSessionForAgent", () => {
+  it("returns the most recently updated session for the given agent", () => {
+    const sessions = [
+      session({ id: "s-old", agent_id: "agent-1", updated_at: "2026-08-01T00:00:00Z" }),
+      session({ id: "s-new", agent_id: "agent-1", updated_at: "2026-08-09T00:00:00Z" }),
+      session({ id: "s-other-agent", agent_id: "agent-2", updated_at: "2026-08-10T00:00:00Z" }),
+    ];
+
+    expect(pickLatestSessionForAgent(sessions, "agent-1")?.id).toBe("s-new");
+  });
+
+  it("skips archived sessions", () => {
+    const sessions = [
+      session({ id: "s-archived", agent_id: "agent-1", status: "archived", updated_at: "2026-08-09T00:00:00Z" }),
+      session({ id: "s-active", agent_id: "agent-1", updated_at: "2026-08-01T00:00:00Z" }),
+    ];
+
+    expect(pickLatestSessionForAgent(sessions, "agent-1")?.id).toBe("s-active");
+  });
+
+  it("returns null when the agent has no session", () => {
+    const sessions = [session({ id: "s-1", agent_id: "agent-2" })];
+
+    expect(pickLatestSessionForAgent(sessions, "agent-1")).toBeNull();
   });
 });
