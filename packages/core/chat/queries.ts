@@ -55,7 +55,7 @@ export function chatMessagesOptions(sessionId: string) {
   });
 }
 
-export function chatMessagesPageOptions(sessionId: string, limit = 50) {
+export function chatMessagesPageOptions(sessionId: string, limit = 5) {
   return infiniteQueryOptions({
     queryKey: chatKeys.messagesPage(sessionId),
     queryFn: ({ pageParam }) =>

@@ -146,18 +146,26 @@ export function ChatMessageList({
         atBottomThreshold={120}
         atBottomStateChange={setIsNearBottom}
         followOutput={() => (!isFetchingOlderMessages && isNearBottom ? "smooth" : false)}
-        startReached={() => {
-          if (hasOlderMessages && !isFetchingOlderMessages) {
-            onLoadOlderMessages?.();
-          }
-        }}
         computeItemKey={(_, msg) => msg.id}
         components={{
           Header: () => (
             <div className="mx-auto w-full max-w-4xl px-5 pt-4">
-              {isFetchingOlderMessages && (
+              {isFetchingOlderMessages ? (
                 <div className="text-center text-xs text-muted-foreground">{t(($) => $.message_list.loading_older)}</div>
-              )}
+              ) : hasOlderMessages ? (
+                <div className="flex justify-center pb-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-muted-foreground"
+                    data-testid="load-older-messages-button"
+                    onClick={() => onLoadOlderMessages?.()}
+                  >
+                    {t(($) => $.message_list.load_older_button)}
+                  </Button>
+                </div>
+              ) : null}
             </div>
           ),
           Footer: () => (

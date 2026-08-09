@@ -1,14 +1,27 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
+import { setApiInstance } from "../api";
+import type { ApiClient } from "../api/client";
 import type { TaskMessagePayload } from "../types/events";
+import type { ChatMessagesPage } from "../types";
 import {
   chatKeys,
+  chatMessagesPageOptions,
   isTaskMessageTaskId,
   mergeTaskMessagesBySeq,
   refreshChatSessionQueries,
   taskMessagesOptions,
 } from "./queries";
+
+function installFakeApi(
+  listChatMessagesPage: (
+    sessionId: string,
+    params?: { before?: { created_at: string; id: string } | null; limit?: number },
+  ) => Promise<ChatMessagesPage>,
+) {
+  setApiInstance({ listChatMessagesPage } as unknown as ApiClient);
+}
 
 function createQueryClient() {
   return new QueryClient({
@@ -39,6 +52,48 @@ describe("taskMessagesOptions", () => {
 
     expect(isTaskMessageTaskId(taskId)).toBe(false);
     expect(taskMessagesOptions(taskId).enabled).toBe(false);
+  });
+});
+
+describe("chatMessagesPageOptions", () => {
+  it("defaults the initial page to 5 messages — NEX-881 web chat 5+more", async () => {
+    const listChatMessagesPage = vi.fn(async () => ({
+      messages: [],
+      limit: 5,
+      has_more: false,
+      next_cursor: null,
+    }));
+    installFakeApi(listChatMessagesPage);
+
+    const options = chatMessagesPageOptions("session-1");
+    await options.queryFn!({
+      pageParam: options.initialPageParam,
+    } as Parameters<NonNullable<typeof options.queryFn>>[0]);
+
+    expect(listChatMessagesPage).toHaveBeenCalledWith("session-1", {
+      before: null,
+      limit: 5,
+    });
+  });
+
+  it("still allows an explicit limit override for follow-up pages", async () => {
+    const listChatMessagesPage = vi.fn(async () => ({
+      messages: [],
+      limit: 20,
+      has_more: false,
+      next_cursor: null,
+    }));
+    installFakeApi(listChatMessagesPage);
+
+    const options = chatMessagesPageOptions("session-1", 20);
+    await options.queryFn!({
+      pageParam: options.initialPageParam,
+    } as Parameters<NonNullable<typeof options.queryFn>>[0]);
+
+    expect(listChatMessagesPage).toHaveBeenCalledWith("session-1", {
+      before: null,
+      limit: 20,
+    });
   });
 });
 

@@ -1,6 +1,6 @@
 import { forwardRef, useImperativeHandle } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import enChat from "../../locales/en/chat.json";
@@ -8,19 +8,24 @@ import enCommon from "../../locales/en/common.json";
 import type { ChatMessage, ChatPendingTask } from "@multica/core/types";
 import { ChatMessageList } from "./chat-message-list";
 
+// Captures the props Virtuoso receives on the most recent render so tests can
+// assert on things the mock doesn't otherwise expose (e.g. that no
+// `startReached` auto-scroll handler is wired — NEX-881 requires an explicit
+// button, not silent infinite-scroll).
+let lastVirtuosoProps: Record<string, unknown> | null = null;
+
 vi.mock("react-virtuoso", () => ({
   Virtuoso: forwardRef(function MockVirtuoso(
-    {
-      data,
-      itemContent,
-      components,
-    }: {
+    props: {
       data: unknown[];
       itemContent: (i: number, item: unknown) => unknown;
       components?: { Header?: () => React.ReactNode; Footer?: () => React.ReactNode };
+      startReached?: () => void;
     },
     ref: React.Ref<unknown>,
   ) {
+    lastVirtuosoProps = props;
+    const { data, itemContent, components } = props;
     useImperativeHandle(ref, () => ({
       scrollIntoView: vi.fn(),
       scrollToIndex: vi.fn(),
@@ -42,9 +47,15 @@ const TEST_RESOURCES = { en: { common: enCommon, chat: enChat } };
 function renderList({
   messages,
   pendingTask = null,
+  hasOlderMessages = false,
+  isFetchingOlderMessages = false,
+  onLoadOlderMessages,
 }: {
   messages: ChatMessage[];
   pendingTask?: ChatPendingTask | null;
+  hasOlderMessages?: boolean;
+  isFetchingOlderMessages?: boolean;
+  onLoadOlderMessages?: () => void;
 }) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -57,6 +68,9 @@ function renderList({
           messages={messages}
           pendingTask={pendingTask}
           availability="online"
+          hasOlderMessages={hasOlderMessages}
+          isFetchingOlderMessages={isFetchingOlderMessages}
+          onLoadOlderMessages={onLoadOlderMessages}
         />
       </I18nProvider>
     </QueryClientProvider>,
@@ -95,6 +109,68 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
     ...overrides,
   };
 }
+
+describe("ChatMessageList load-older pagination — NEX-881", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    lastVirtuosoProps = null;
+  });
+
+  it("shows an explicit 'load older' button when more history is available", () => {
+    renderList({
+      messages: [message({})],
+      hasOlderMessages: true,
+      isFetchingOlderMessages: false,
+    });
+
+    expect(screen.getByTestId("load-older-messages-button")).toBeInTheDocument();
+  });
+
+  it("calls onLoadOlderMessages when the button is clicked — not an auto scroll trigger", () => {
+    const onLoadOlderMessages = vi.fn();
+    renderList({
+      messages: [message({})],
+      hasOlderMessages: true,
+      isFetchingOlderMessages: false,
+      onLoadOlderMessages,
+    });
+
+    fireEvent.click(screen.getByTestId("load-older-messages-button"));
+
+    expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the button once the conversation start is reached (has_more: false)", () => {
+    renderList({
+      messages: [message({})],
+      hasOlderMessages: false,
+      isFetchingOlderMessages: false,
+    });
+
+    expect(screen.queryByTestId("load-older-messages-button")).not.toBeInTheDocument();
+  });
+
+  it("shows the loading indicator instead of the button while fetching", () => {
+    renderList({
+      messages: [message({})],
+      hasOlderMessages: true,
+      isFetchingOlderMessages: true,
+    });
+
+    expect(screen.queryByTestId("load-older-messages-button")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading older messages…")).toBeInTheDocument();
+  });
+
+  it("does not wire an auto-scroll startReached handler — button click is the only trigger", () => {
+    renderList({
+      messages: [message({})],
+      hasOlderMessages: true,
+      isFetchingOlderMessages: false,
+    });
+
+    expect(lastVirtuosoProps?.startReached).toBeUndefined();
+  });
+});
 
 describe("ChatMessageList timing metadata", () => {
   beforeEach(() => {
