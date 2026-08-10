@@ -1654,6 +1654,51 @@ func TestInjectRuntimeConfigCommentGuardrailIsProviderAgnostic(t *testing.T) {
 	}
 }
 
+// TestInjectRuntimeConfigAssignOrderingRule pins the NEX-897 chain-integrity
+// fix: Multica keeps only one live run per issue, so `multica issue assign`
+// cancels the caller's own in-flight run the instant it enqueues a
+// replacement agent. An agent that assigns before posting its result comment
+// loses that comment permanently (observed twice on NEX-892). The Comment
+// Formatting section must tell every provider, on every host, to post the
+// result comment first and treat assignment as the final handoff action.
+//
+// Not parallel: mutates the package-level runtimeGOOS.
+func TestInjectRuntimeConfigAssignOrderingRule(t *testing.T) {
+	saved := runtimeGOOS
+	t.Cleanup(func() { runtimeGOOS = saved })
+
+	for _, host := range []string{"linux", "darwin", "windows"} {
+		for _, provider := range []string{"claude", "codex", "opencode"} {
+			t.Run(provider+"/"+host, func(t *testing.T) {
+				runtimeGOOS = host
+				dir := t.TempDir()
+				if _, err := InjectRuntimeConfig(dir, provider, TaskContextForEnv{IssueID: "issue-1"}); err != nil {
+					t.Fatalf("InjectRuntimeConfig failed: %v", err)
+				}
+
+				configFile := "CLAUDE.md"
+				if provider != "claude" {
+					configFile = "AGENTS.md"
+				}
+				data, err := os.ReadFile(filepath.Join(dir, configFile))
+				if err != nil {
+					t.Fatalf("read %s: %v", configFile, err)
+				}
+				s := string(data)
+
+				for _, want := range []string{
+					"post your result comment successfully first",
+					"is the final handoff action",
+				} {
+					if !strings.Contains(s, want) {
+						t.Errorf("%s missing assign-ordering rule %q\n---\n%s", configFile, want, s)
+					}
+				}
+			})
+		}
+	}
+}
+
 // TestInjectRuntimeConfigLinuxCommentFormattingEmphasizesFile pins that the
 // "## Comment Formatting" section emits the file-first mandate on non-Windows
 // hosts for EVERY provider (post-#4182). The previous quoted-HEREDOC

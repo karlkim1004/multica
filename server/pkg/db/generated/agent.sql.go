@@ -1262,6 +1262,90 @@ func (q *Queries) FailAgentTask(ctx context.Context, arg FailAgentTaskParams) (A
 	return i, err
 }
 
+const failSilentQuotaLimitRetries = `-- name: FailSilentQuotaLimitRetries :many
+UPDATE agent_task_queue
+SET status = 'failed', completed_at = now(),
+    error = 'no issue comment observed within the post-quota-limit-retry silence window',
+    failure_reason = 'timeout',
+    prepare_lease_expires_at = NULL
+WHERE status = 'running'
+  AND issue_id IS NOT NULL
+  AND started_at < now() - make_interval(secs => $1::double precision)
+  AND parent_task_id IN (
+      SELECT id FROM agent_task_queue WHERE failure_reason = 'agent_error.provider_quota_limit'
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM comment c
+      WHERE c.issue_id = agent_task_queue.issue_id
+        AND c.created_at > agent_task_queue.started_at
+  )
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at
+`
+
+// NEX-897: a provider_quota_limit failure (e.g. a Claude Code session/usage
+// window limit) is now auto-retried (see retryableReasons in task.go), but
+// the retried run can itself stall without ever producing a visible result —
+// that gap, not the retry itself, caused the 4h27m silent stretch on
+// NEX-893. Internal provider/session activity does NOT satisfy this check;
+// only a new comment on the issue does, per the "success = observable
+// output, not run-started" requirement. Deliberately scoped to retries of a
+// provider_quota_limit failure (via parent_task_id) rather than every
+// running task: a blanket "no comment in N minutes" rule would misfire on
+// ordinary long-running tasks that legitimately work silently before
+// posting a single result comment. failure_reason is set to 'timeout' (not
+// a new taxonomy value) so it lands in the existing retryableReasons
+// allow-list and HandleFailedTasks auto-retries it again, same as any other
+// stale-task sweep.
+func (q *Queries) FailSilentQuotaLimitRetries(ctx context.Context, silenceTimeoutSecs float64) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, failSilentQuotaLimitRetries, silenceTimeoutSecs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const failStaleTasks = `-- name: FailStaleTasks :many
 UPDATE agent_task_queue
 SET status = 'failed', completed_at = now(), error = 'task timed out',

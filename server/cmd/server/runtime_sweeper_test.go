@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -687,6 +688,122 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 	if remaining != 3 {
 		t.Fatalf("expected 3 queued tasks remaining after batched sweep, got %d", remaining)
 	}
+}
+
+// TestSweepSilentQuotaLimitRetries verifies the NEX-897 fix: a task that
+// resumed after a provider_quota_limit failure (Claude Code session/usage
+// limit) but produced no new issue comment within the silence window is
+// failed with reason 'timeout' and auto-retried again — closing the gap
+// where "run started" alone was treated as a successful fallback and a
+// silently stalled Codex run went unnoticed for 4h27m (NEX-893).
+func TestSweepSilentQuotaLimitRetries(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	ctx := context.Background()
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id FROM agent a
+		JOIN member m ON m.workspace_id = a.workspace_id
+		JOIN "user" u ON u.id = m.user_id
+		WHERE u.email = $1
+		LIMIT 1
+	`, integrationTestEmail).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("failed to find test agent: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id)
+		SELECT $1, 'Silent quota-limit retry test issue', 'todo', 'none', 'member', m.user_id, 'agent', $2
+		FROM member m WHERE m.workspace_id = $1 LIMIT 1
+		RETURNING id
+	`, testWorkspaceID, agentID).Scan(&issueID); err != nil {
+		t.Fatalf("failed to create test issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		testPool.Exec(ctx, `UPDATE agent SET status = 'idle' WHERE id = $1`, agentID)
+	})
+
+	mkParent := func() string {
+		var parentID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, failure_reason)
+			VALUES ($1, $2, $3, 'failed', 0, now() - interval '20 minutes', now() - interval '16 minutes', 'agent_error.provider_quota_limit')
+			RETURNING id
+		`, agentID, runtimeID, issueID).Scan(&parentID); err != nil {
+			t.Fatalf("failed to create parent task: %v", err)
+		}
+		return parentID
+	}
+
+	queries := db.New(testPool)
+	taskSvc := &service.TaskService{Queries: queries, Bus: events.New()}
+
+	t.Run("no comment since retry started: fails and auto-retries again", func(t *testing.T) {
+		parentID := mkParent()
+		var childID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, parent_task_id, attempt, max_attempts)
+			VALUES ($1, $2, $3, 'running', 0, now() - interval '16 minutes', $4, 2, 5)
+			RETURNING id
+		`, agentID, runtimeID, issueID, parentID).Scan(&childID); err != nil {
+			t.Fatalf("failed to create retry task: %v", err)
+		}
+
+		sweepSilentQuotaLimitRetries(ctx, queries, taskSvc)
+
+		var status, failureReason string
+		if err := testPool.QueryRow(ctx, `SELECT status, failure_reason FROM agent_task_queue WHERE id = $1`, childID).Scan(&status, &failureReason); err != nil {
+			t.Fatalf("failed to reload retry task: %v", err)
+		}
+		if status != "failed" {
+			t.Errorf("expected retry task to be failed, got %q", status)
+		}
+		if failureReason != "timeout" {
+			t.Errorf("expected failure_reason 'timeout', got %q", failureReason)
+		}
+
+		var grandchildCount int
+		if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE parent_task_id = $1`, childID).Scan(&grandchildCount); err != nil {
+			t.Fatalf("failed to count grandchild retries: %v", err)
+		}
+		if grandchildCount != 1 {
+			t.Errorf("expected the silent retry itself to be auto-retried exactly once, got %d", grandchildCount)
+		}
+	})
+
+	t.Run("comment posted since retry started: left running", func(t *testing.T) {
+		parentID := mkParent()
+		var childID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, parent_task_id, attempt, max_attempts)
+			VALUES ($1, $2, $3, 'running', 0, now() - interval '16 minutes', $4, 2, 5)
+			RETURNING id
+		`, agentID, runtimeID, issueID, parentID).Scan(&childID); err != nil {
+			t.Fatalf("failed to create retry task: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content)
+			VALUES ($1, $2, 'agent', $3, 'progress update after retry')
+		`, issueID, testWorkspaceID, agentID); err != nil {
+			t.Fatalf("failed to create comment: %v", err)
+		}
+
+		sweepSilentQuotaLimitRetries(ctx, queries, taskSvc)
+
+		var status string
+		if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, childID).Scan(&status); err != nil {
+			t.Fatalf("failed to reload retry task: %v", err)
+		}
+		if status != "running" {
+			t.Errorf("expected retry task with a new comment to stay 'running', got %q", status)
+		}
+	})
 }
 
 // parseUUIDBytes converts a UUID string to the 16-byte array used by pgtype.UUID.

@@ -508,6 +508,39 @@ WHERE (
    OR (status = 'running' AND started_at < now() - make_interval(secs => @running_timeout_secs::double precision))
 RETURNING *;
 
+-- name: FailSilentQuotaLimitRetries :many
+-- NEX-897: a provider_quota_limit failure (e.g. a Claude Code session/usage
+-- window limit) is now auto-retried (see retryableReasons in task.go), but
+-- the retried run can itself stall without ever producing a visible result —
+-- that gap, not the retry itself, caused the 4h27m silent stretch on
+-- NEX-893. Internal provider/session activity does NOT satisfy this check;
+-- only a new comment on the issue does, per the "success = observable
+-- output, not run-started" requirement. Deliberately scoped to retries of a
+-- provider_quota_limit failure (via parent_task_id) rather than every
+-- running task: a blanket "no comment in N minutes" rule would misfire on
+-- ordinary long-running tasks that legitimately work silently before
+-- posting a single result comment. failure_reason is set to 'timeout' (not
+-- a new taxonomy value) so it lands in the existing retryableReasons
+-- allow-list and HandleFailedTasks auto-retries it again, same as any other
+-- stale-task sweep.
+UPDATE agent_task_queue
+SET status = 'failed', completed_at = now(),
+    error = 'no issue comment observed within the post-quota-limit-retry silence window',
+    failure_reason = 'timeout',
+    prepare_lease_expires_at = NULL
+WHERE status = 'running'
+  AND issue_id IS NOT NULL
+  AND started_at < now() - make_interval(secs => @silence_timeout_secs::double precision)
+  AND parent_task_id IN (
+      SELECT id FROM agent_task_queue WHERE failure_reason = 'agent_error.provider_quota_limit'
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM comment c
+      WHERE c.issue_id = agent_task_queue.issue_id
+        AND c.created_at > agent_task_queue.started_at
+  )
+RETURNING *;
+
 -- name: ExpireStaleQueuedTasks :many
 -- Fails tasks that have been sitting in 'queued' for longer than the TTL.
 -- This is the cleanup arm of the MUL-1899 "queued backlog" fix: even with the

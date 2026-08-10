@@ -180,6 +180,11 @@ func TestTaskFailureClassifiers(t *testing.T) {
 		{reason: "iteration_limit", wantType: "agent_output", wantResumeOK: false, wantRetry: false},
 		{reason: "api_invalid_request", wantType: "agent_error", wantResumeOK: false, wantRetry: false},
 		{reason: "agent_error", wantType: "agent_error", wantResumeOK: true, wantRetry: false},
+		// NEX-897: a Claude session/usage-window limit classifies as
+		// agent_error.provider_quota_limit and must auto-retry — before this
+		// was retryable, a session-limited task sat "failed" until a human
+		// or another bot noticed (the 4h27m NEX-893 stall).
+		{reason: "agent_error.provider_quota_limit", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
 	}
 
 	for _, tc := range cases {
