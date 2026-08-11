@@ -81,6 +81,62 @@ export function ChatMessageList({
   const fadeStyle = useScrollFade(scrollRef);
   const { t } = useT("chat");
 
+  // NEX-881 completion condition 4: prepending older messages must not move
+  // the messages the user was already looking at. Virtuoso's firstItemIndex
+  // anchoring (chat-window.tsx) alone doesn't keep customScrollParent's
+  // scrollTop stable here — measured live against the production session,
+  // the container's scrollTop barely moved (2649 → 2631) while scrollHeight
+  // grew by 2732px after a "load older" click, i.e. everything the user was
+  // reading was shoved ~2.7k px down. We compensate by hand: track the
+  // scroll container's own scrollHeight across the frames following a click
+  // and add every delta straight to scrollTop, so growth above the fold
+  // never displaces what's on screen. Runs on rAF (not a single
+  // useLayoutEffect) because Virtuoso measures/settles prepended item
+  // heights across more than one frame — a single adjustment right after
+  // the messages array grows undercorrects.
+  const scrollCompensationRef = useRef<{ lastHeight: number } | null>(null);
+  const scrollCompensationFrameRef = useRef<number | null>(null);
+
+  const stopScrollCompensation = useCallback(() => {
+    if (scrollCompensationFrameRef.current != null) {
+      cancelAnimationFrame(scrollCompensationFrameRef.current);
+      scrollCompensationFrameRef.current = null;
+    }
+    scrollCompensationRef.current = null;
+  }, []);
+
+  const tickScrollCompensation = useCallback(() => {
+    const el = scrollRef.current;
+    const state = scrollCompensationRef.current;
+    if (!el || !state) return;
+    const newHeight = el.scrollHeight;
+    if (newHeight !== state.lastHeight) {
+      el.scrollTop += newHeight - state.lastHeight;
+      state.lastHeight = newHeight;
+    }
+    scrollCompensationFrameRef.current = requestAnimationFrame(tickScrollCompensation);
+  }, []);
+
+  const beginScrollCompensation = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    scrollCompensationRef.current = { lastHeight: el.scrollHeight };
+    if (scrollCompensationFrameRef.current == null) {
+      scrollCompensationFrameRef.current = requestAnimationFrame(tickScrollCompensation);
+    }
+  }, [tickScrollCompensation]);
+
+  // Stop a beat after the fetch settles rather than the instant it resolves
+  // — Virtuoso is still re-measuring newly-mounted items for a frame or two
+  // after isFetchingOlderMessages flips false.
+  useEffect(() => {
+    if (isFetchingOlderMessages || !scrollCompensationRef.current) return;
+    const timer = setTimeout(stopScrollCompensation, 300);
+    return () => clearTimeout(timer);
+  }, [isFetchingOlderMessages, stopScrollCompensation]);
+
+  useEffect(() => stopScrollCompensation, [stopScrollCompensation]);
+
   const pendingTaskId = pendingTask?.task_id ?? null;
 
   // Once the assistant message for this pending task has landed in the
@@ -160,7 +216,10 @@ export function ChatMessageList({
                     size="sm"
                     className="text-xs text-muted-foreground"
                     data-testid="load-older-messages-button"
-                    onClick={() => onLoadOlderMessages?.()}
+                    onClick={() => {
+                      beginScrollCompensation();
+                      onLoadOlderMessages?.();
+                    }}
                   >
                     {t(($) => $.message_list.load_older_button)}
                   </Button>
