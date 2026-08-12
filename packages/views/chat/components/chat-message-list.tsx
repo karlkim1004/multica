@@ -83,28 +83,23 @@ export function ChatMessageList({
 
   // NEX-881 completion condition 4: prepending older messages must not move
   // what the user was looking at. This only reproduced when the user was
-  // scrolled to the bottom (isNearBottom) — 4/5 runs, non-deterministic.
-  // Root cause: followOutput below is meant to auto-scroll to the newest
-  // message when one arrives at the bottom, but its guard
-  // (!isFetchingOlderMessages && isNearBottom) races the "load older" fetch
-  // — the instant isFetchingOlderMessages flips back to false, Virtuoso may
-  // call followOutput again before it has finished re-anchoring the
-  // prepended items via firstItemIndex, and "isNearBottom" is still true
-  // (nothing scrolled — the click prepended history, it didn't move the
-  // user), so followOutput fires "smooth" and yanks the view down to the
-  // new (much taller) bottom. Suppress followOutput for a settle window
-  // around the older-messages fetch so it can never race the prepend.
-  const suppressFollowOutputRef = useRef(false);
-  const beginSuppressFollowOutput = useCallback(() => {
-    suppressFollowOutputRef.current = true;
-  }, []);
+  // scrolled to the bottom (isNearBottom). followOutput below exists to
+  // auto-scroll to a *newly arrived* message when the user is at the
+  // bottom — but Virtuoso calls it on every `data` size change, including
+  // a "load older" prepend, which also grows the array. A time-boxed
+  // suppression window (tried first) cut the failure rate but stayed
+  // racy: Virtuoso's firstItemIndex re-anchoring after a prepend doesn't
+  // have a fixed settle time, so any fixed window is a guess that fails
+  // under slow renders. Fix it at the source instead: only follow output
+  // when the *last* message actually changed — a prepend never changes
+  // the tail, an append always does, so this is a deterministic
+  // (non-timing-based) way to tell the two apart.
+  const lastMessageId = messages[messages.length - 1]?.id ?? null;
+  const prevLastMessageIdRef = useRef(lastMessageId);
+  const isNewMessageAtTail = lastMessageId !== prevLastMessageIdRef.current;
   useEffect(() => {
-    if (isFetchingOlderMessages || !suppressFollowOutputRef.current) return;
-    const timer = setTimeout(() => {
-      suppressFollowOutputRef.current = false;
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [isFetchingOlderMessages]);
+    prevLastMessageIdRef.current = lastMessageId;
+  }, [lastMessageId]);
 
   const pendingTaskId = pendingTask?.task_id ?? null;
 
@@ -170,7 +165,7 @@ export function ChatMessageList({
         increaseViewportBy={{ top: 400, bottom: 600 }}
         atBottomThreshold={120}
         atBottomStateChange={setIsNearBottom}
-        followOutput={() => (!isFetchingOlderMessages && !suppressFollowOutputRef.current && isNearBottom ? "smooth" : false)}
+        followOutput={() => (!isFetchingOlderMessages && isNewMessageAtTail && isNearBottom ? "smooth" : false)}
         computeItemKey={(_, msg) => msg.id}
         components={{
           Header: () => (
@@ -185,10 +180,7 @@ export function ChatMessageList({
                     size="sm"
                     className="text-xs text-muted-foreground"
                     data-testid="load-older-messages-button"
-                    onClick={() => {
-                      beginSuppressFollowOutput();
-                      onLoadOlderMessages?.();
-                    }}
+                    onClick={() => onLoadOlderMessages?.()}
                   >
                     {t(($) => $.message_list.load_older_button)}
                   </Button>
