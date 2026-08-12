@@ -101,68 +101,6 @@ export function ChatMessageList({
     prevLastMessageIdRef.current = lastMessageId;
   }, [lastMessageId]);
 
-  // Even with the followOutput race gone, Virtuoso's firstItemIndex
-  // anchoring leaves a small residual (~16-36px, live-measured) after a
-  // prepend — it renders newly-inserted items against an estimated height
-  // before their real size is measured, and that estimation gap doesn't
-  // always get corrected back into scrollTop. Rather than guess at that
-  // gap, lock onto whatever message was actually at the top edge when the
-  // user clicked and hold it there for real: every frame during the
-  // settle window, re-measure that exact element (by data-message-id, so
-  // it survives the prepend and any Virtuoso remounts) and nudge
-  // scrollTop by the observed drift. This can't double-compensate the way
-  // the old rAF fix did — it corrects against a live measurement of the
-  // actual anchor, not an assumed formula, so if Virtuoso is already
-  // exactly right the correction is zero.
-  const anchorLockRef = useRef<{ id: string; targetY: number } | null>(null);
-  const anchorLockFrameRef = useRef<number | null>(null);
-
-  const stopAnchorLock = useCallback(() => {
-    if (anchorLockFrameRef.current != null) {
-      cancelAnimationFrame(anchorLockFrameRef.current);
-      anchorLockFrameRef.current = null;
-    }
-    anchorLockRef.current = null;
-  }, []);
-
-  const tickAnchorLock = useCallback(() => {
-    const el = scrollRef.current;
-    const lock = anchorLockRef.current;
-    if (!el || !lock) return;
-    const target = el.querySelector<HTMLElement>(
-      `[data-message-id="${CSS.escape(lock.id)}"]`,
-    );
-    if (target) {
-      const delta = target.getBoundingClientRect().top - lock.targetY;
-      if (Math.abs(delta) > 0.5) el.scrollTop += delta;
-    }
-    anchorLockFrameRef.current = requestAnimationFrame(tickAnchorLock);
-  }, []);
-
-  const beginAnchorLock = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const containerTop = el.getBoundingClientRect().top;
-    const candidates = Array.from(el.querySelectorAll<HTMLElement>("[data-message-id]"));
-    const anchor = candidates.find((node) => node.getBoundingClientRect().bottom > containerTop);
-    const id = anchor?.getAttribute("data-message-id");
-    if (!anchor || !id) return;
-    anchorLockRef.current = { id, targetY: anchor.getBoundingClientRect().top };
-    if (anchorLockFrameRef.current == null) {
-      anchorLockFrameRef.current = requestAnimationFrame(tickAnchorLock);
-    }
-  }, [tickAnchorLock]);
-
-  // Keep locking for a beat after the fetch resolves — Virtuoso is still
-  // settling newly-mounted item heights for a frame or two past that point.
-  useEffect(() => {
-    if (isFetchingOlderMessages || !anchorLockRef.current) return;
-    const timer = setTimeout(stopAnchorLock, 500);
-    return () => clearTimeout(timer);
-  }, [isFetchingOlderMessages, stopAnchorLock]);
-
-  useEffect(() => stopAnchorLock, [stopAnchorLock]);
-
   const pendingTaskId = pendingTask?.task_id ?? null;
 
   // Once the assistant message for this pending task has landed in the
@@ -242,10 +180,7 @@ export function ChatMessageList({
                     size="sm"
                     className="text-xs text-muted-foreground"
                     data-testid="load-older-messages-button"
-                    onClick={() => {
-                      beginAnchorLock();
-                      onLoadOlderMessages?.();
-                    }}
+                    onClick={() => onLoadOlderMessages?.()}
                   >
                     {t(($) => $.message_list.load_older_button)}
                   </Button>
@@ -271,7 +206,7 @@ export function ChatMessageList({
           ),
         }}
         itemContent={(_, msg) => (
-          <div className="mx-auto w-full max-w-4xl px-5 py-2" data-message-id={msg.id}>
+          <div className="mx-auto w-full max-w-4xl px-5 py-2">
             <MessageBubble
               message={msg}
               isPending={!!pendingTaskId && msg.task_id === pendingTaskId}
