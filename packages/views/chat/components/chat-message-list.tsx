@@ -81,6 +81,31 @@ export function ChatMessageList({
   const fadeStyle = useScrollFade(scrollRef);
   const { t } = useT("chat");
 
+  // NEX-881 completion condition 4: prepending older messages must not move
+  // what the user was looking at. This only reproduced when the user was
+  // scrolled to the bottom (isNearBottom) — 4/5 runs, non-deterministic.
+  // Root cause: followOutput below is meant to auto-scroll to the newest
+  // message when one arrives at the bottom, but its guard
+  // (!isFetchingOlderMessages && isNearBottom) races the "load older" fetch
+  // — the instant isFetchingOlderMessages flips back to false, Virtuoso may
+  // call followOutput again before it has finished re-anchoring the
+  // prepended items via firstItemIndex, and "isNearBottom" is still true
+  // (nothing scrolled — the click prepended history, it didn't move the
+  // user), so followOutput fires "smooth" and yanks the view down to the
+  // new (much taller) bottom. Suppress followOutput for a settle window
+  // around the older-messages fetch so it can never race the prepend.
+  const suppressFollowOutputRef = useRef(false);
+  const beginSuppressFollowOutput = useCallback(() => {
+    suppressFollowOutputRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (isFetchingOlderMessages || !suppressFollowOutputRef.current) return;
+    const timer = setTimeout(() => {
+      suppressFollowOutputRef.current = false;
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [isFetchingOlderMessages]);
+
   const pendingTaskId = pendingTask?.task_id ?? null;
 
   // Once the assistant message for this pending task has landed in the
@@ -145,7 +170,7 @@ export function ChatMessageList({
         increaseViewportBy={{ top: 400, bottom: 600 }}
         atBottomThreshold={120}
         atBottomStateChange={setIsNearBottom}
-        followOutput={() => (!isFetchingOlderMessages && isNearBottom ? "smooth" : false)}
+        followOutput={() => (!isFetchingOlderMessages && !suppressFollowOutputRef.current && isNearBottom ? "smooth" : false)}
         computeItemKey={(_, msg) => msg.id}
         components={{
           Header: () => (
@@ -160,7 +185,10 @@ export function ChatMessageList({
                     size="sm"
                     className="text-xs text-muted-foreground"
                     data-testid="load-older-messages-button"
-                    onClick={() => onLoadOlderMessages?.()}
+                    onClick={() => {
+                      beginSuppressFollowOutput();
+                      onLoadOlderMessages?.();
+                    }}
                   >
                     {t(($) => $.message_list.load_older_button)}
                   </Button>
