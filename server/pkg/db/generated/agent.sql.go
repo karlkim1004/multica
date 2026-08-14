@@ -1263,22 +1263,34 @@ func (q *Queries) FailAgentTask(ctx context.Context, arg FailAgentTaskParams) (A
 }
 
 const failSilentQuotaLimitRetries = `-- name: FailSilentQuotaLimitRetries :many
+WITH RECURSIVE lineage AS (
+    SELECT id, parent_task_id, failure_reason, id AS retry_id
+    FROM agent_task_queue
+    WHERE status = 'running'
+      AND issue_id IS NOT NULL
+      AND started_at < now() - make_interval(secs => $1::double precision)
+      AND parent_task_id IS NOT NULL
+    UNION ALL
+    SELECT p.id, p.parent_task_id, p.failure_reason, l.retry_id
+    FROM agent_task_queue p
+    JOIN lineage l ON p.id = l.parent_task_id
+)
 UPDATE agent_task_queue
 SET status = 'failed', completed_at = now(),
-    error = 'no issue comment observed within the post-quota-limit-retry silence window',
+    error = 'no issue comment observed from the owning agent within the post-quota-limit-retry silence window',
     failure_reason = 'timeout',
     prepare_lease_expires_at = NULL
-WHERE status = 'running'
-  AND issue_id IS NOT NULL
-  AND started_at < now() - make_interval(secs => $1::double precision)
-  AND parent_task_id IN (
-      SELECT id FROM agent_task_queue WHERE failure_reason = 'agent_error.provider_quota_limit'
-  )
-  AND NOT EXISTS (
-      SELECT 1 FROM comment c
-      WHERE c.issue_id = agent_task_queue.issue_id
-        AND c.created_at > agent_task_queue.started_at
-  )
+WHERE id IN (
+    SELECT DISTINCT retry_id FROM lineage
+    WHERE failure_reason = 'agent_error.provider_quota_limit'
+)
+AND NOT EXISTS (
+    SELECT 1 FROM comment c
+    WHERE c.issue_id = agent_task_queue.issue_id
+      AND c.author_type = 'agent'
+      AND c.author_id = agent_task_queue.agent_id
+      AND c.created_at > agent_task_queue.started_at
+)
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at
 `
 
@@ -1287,15 +1299,40 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 // the retried run can itself stall without ever producing a visible result —
 // that gap, not the retry itself, caused the 4h27m silent stretch on
 // NEX-893. Internal provider/session activity does NOT satisfy this check;
-// only a new comment on the issue does, per the "success = observable
-// output, not run-started" requirement. Deliberately scoped to retries of a
-// provider_quota_limit failure (via parent_task_id) rather than every
-// running task: a blanket "no comment in N minutes" rule would misfire on
-// ordinary long-running tasks that legitimately work silently before
-// posting a single result comment. failure_reason is set to 'timeout' (not
-// a new taxonomy value) so it lands in the existing retryableReasons
-// allow-list and HandleFailedTasks auto-retries it again, same as any other
-// stale-task sweep.
+// only a new comment FROM THE OWNING AGENT on the issue does, per the
+// "success = observable output, not run-started" requirement.
+//
+// Two validator-caught gaps fixed here (both PLAUSIBLE→CONFIRMED against
+// 7e1b584e):
+//  1. Lineage: a naive `parent_task_id`-only check only catches the FIRST
+//     silent retry. Once that retry is failed with failure_reason='timeout'
+//     (below), its own child's immediate parent reason is 'timeout', not
+//     'agent_error.provider_quota_limit', so a second silent generation
+//     would slip past a direct-parent check. The recursive `lineage` CTE
+//     walks the full parent_task_id chain so every descendant of a
+//     quota-limit-origin retry stays covered, however many generations deep.
+//  2. Attribution: checking `comment.issue_id` alone lets an unrelated
+//     comment from a human or a different agent (or even a different task
+//     on the same issue) satisfy the check while the actual stalled run is
+//     still silent. Scoped to `author_type = 'agent' AND author_id =
+//     agent_task_queue.agent_id` — the same "did THIS agent produce
+//     anything" signal HasAgentCommentedSince (comment.sql) already uses
+//     elsewhere. comment.source_task_id is NOT used here: it is only
+//     populated by the internal system-comment path
+//     (TaskService.createAgentComment), not by the CLI-driven
+//     `multica issue comment add` handler that produces the actual result
+//     comments this check cares about (internal/handler/comment.go
+//     CreateComment never sets SourceTaskID) — keying on it would make
+//     every real agent result comment invisible to this check.
+//
+// Deliberately scoped to retries descended from a provider_quota_limit
+// failure rather than every running task: a blanket "no comment in N
+// minutes" rule would misfire on ordinary long-running tasks that
+// legitimately work silently before posting a single result comment.
+// failure_reason is set to 'timeout' (not a new taxonomy value) so it lands
+// in the existing retryableReasons allow-list and HandleFailedTasks
+// auto-retries it again, same as any other stale-task sweep — including any
+// further silent generation, via the lineage walk above.
 func (q *Queries) FailSilentQuotaLimitRetries(ctx context.Context, silenceTimeoutSecs float64) ([]AgentTaskQueue, error) {
 	rows, err := q.db.Query(ctx, failSilentQuotaLimitRetries, silenceTimeoutSecs)
 	if err != nil {
