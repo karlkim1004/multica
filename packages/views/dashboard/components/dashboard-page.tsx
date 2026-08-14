@@ -489,6 +489,16 @@ function clampPct(value: number | undefined): number {
   return Math.max(0, Math.min(100, Math.round(value ?? 0)));
 }
 
+function koreanResetLabel(label: string | undefined): string {
+  if (!label || label === "—" || label === "-") return "—";
+
+  const match = label.trim().match(/^resets\s+([A-Za-z]+)\s+(\d{1,2})$/i);
+  if (!match) return label;
+
+  const month = new Date(`${match[1]} 1, 2000`).getMonth();
+  return Number.isNaN(month) ? label : `${month + 1}월 ${Number(match[2])}일 재설정`;
+}
+
 function LlmLimitGauge({
   data,
   isFetching,
@@ -501,11 +511,11 @@ function LlmLimitGauge({
   const weekDayIndex = Math.max(0, Math.min(6, Math.round(data.week_day_index ?? 0)));
   const codexStatus = data.gpt_status_source === "codex_status_snapshot" ? "ok" : "stale";
   const cards = [
-    { label: "세션 (5h)", pct: data.five_hour_pct, reset: data.five_hour_reset_label },
-    { label: "주간 전체모델 (7d)", pct: data.seven_day_pct, reset: data.seven_day_reset_label },
-    { label: "Sonnet만", pct: data.sonnet_pct, reset: data.sonnet_reset_label },
-    { label: "GPT 5h limit", pct: data.gpt_five_hour_pct, reset: data.gpt_five_reset_label },
-    { label: "GPT 7d limit", pct: data.gpt_seven_day_pct, reset: data.gpt_seven_reset_label },
+    { label: "Claude 5시간", pct: data.five_hour_pct, reset: data.five_hour_reset_label },
+    { label: "Claude 7일", pct: data.seven_day_pct, reset: data.seven_day_reset_label },
+    { label: "Claude Sonnet", pct: data.sonnet_pct, reset: data.sonnet_reset_label },
+    { label: "GPT 5시간", pct: data.gpt_five_hour_pct, reset: data.gpt_five_reset_label },
+    { label: "GPT 7일", pct: data.gpt_seven_day_pct, reset: data.gpt_seven_reset_label },
   ];
 
   return (
@@ -552,7 +562,7 @@ function LlmLimitGauge({
               <p className="mt-2 text-xs text-muted-foreground">
                 {remaining === null ? "잔량 확인 불가" : `잔량 ${remaining}%`}
               </p>
-              <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{card.reset ?? "—"}</p>
+              <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{koreanResetLabel(card.reset)}</p>
             </div>
           );
         })}

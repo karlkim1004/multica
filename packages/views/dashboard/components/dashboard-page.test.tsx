@@ -28,6 +28,7 @@ vi.mock("@tanstack/react-query", async () => {
             sonnet_pct: 20,
             gpt_five_hour_pct: 12,
             gpt_seven_day_pct: 4,
+            gpt_seven_reset_label: "resets Aug 8",
             weekly_progress_pct: 71,
             gpt_status_source: "codex_status_snapshot",
           },
@@ -78,11 +79,12 @@ describe("DashboardPage — LLM limit gauge acceptance markers", () => {
     renderWithI18n(<DashboardPage />);
 
     expect(document.body.textContent).toContain("LLM 잔량 게이지");
-    expect(document.body.textContent).toContain("세션 (5h)");
-    expect(document.body.textContent).toContain("주간 전체모델 (7d)");
-    expect(document.body.textContent).toContain("Sonnet만");
-    expect(document.body.textContent).toContain("GPT 5h limit");
-    expect(document.body.textContent).toContain("GPT 7d limit");
+    expect(document.body.textContent).toContain("Claude 5시간");
+    expect(document.body.textContent).toContain("Claude 7일");
+    expect(document.body.textContent).toContain("Claude Sonnet");
+    expect(document.body.textContent).toContain("GPT 5시간");
+    expect(document.body.textContent).toContain("GPT 7일");
+    expect(document.body.textContent).toContain("8월 8일 재설정");
     expect(document.querySelector("[data-llm-refresh-interval-ms='60000']")).toBeTruthy();
     expect(document.querySelector("[data-acceptance='llm-gauge-manual-refresh']")).toBeTruthy();
     expect(document.querySelector("[data-acceptance='gpt-token-status'][data-codex-status='ok']")).toBeTruthy();
