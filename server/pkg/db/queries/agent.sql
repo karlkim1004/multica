@@ -508,6 +508,92 @@ WHERE (
    OR (status = 'running' AND started_at < now() - make_interval(secs => @running_timeout_secs::double precision))
 RETURNING *;
 
+-- name: FailSilentQuotaLimitRetries :many
+-- NEX-897: a provider_quota_limit failure (e.g. a Claude Code session/usage
+-- window limit) is now auto-retried (see retryableReasons in task.go), but
+-- the retried run can itself stall without ever producing a visible result —
+-- that gap, not the retry itself, caused the 4h27m silent stretch on
+-- NEX-893. Internal provider/session activity does NOT satisfy this check;
+-- only a new comment FROM THE OWNING AGENT on the issue does, per the
+-- "success = observable output, not run-started" requirement.
+--
+-- Two validator-caught gaps fixed here (both PLAUSIBLE→CONFIRMED against
+-- 7e1b584e):
+--   1. Lineage: a naive `parent_task_id`-only check only catches the FIRST
+--      silent retry. Once that retry is failed with failure_reason='timeout'
+--      (below), its own child's immediate parent reason is 'timeout', not
+--      'agent_error.provider_quota_limit', so a second silent generation
+--      would slip past a direct-parent check. The recursive `lineage` CTE
+--      walks the full parent_task_id chain so every descendant of a
+--      quota-limit-origin retry stays covered, however many generations deep.
+--   2. Attribution: checking `comment.issue_id` alone lets an unrelated
+--      comment from a human or a different agent (or even a different task
+--      on the same issue) satisfy the check while the actual stalled run is
+--      still silent. Scoped to `author_type = 'agent' AND author_id =
+--      agent_task_queue.agent_id` — the same "did THIS agent produce
+--      anything" signal HasAgentCommentedSince (comment.sql) already uses
+--      elsewhere. comment.source_task_id is NOT used here: it is only
+--      populated by the internal system-comment path
+--      (TaskService.createAgentComment), not by the CLI-driven
+--      `multica issue comment add` handler that produces the actual result
+--      comments this check cares about (internal/handler/comment.go
+--      CreateComment never sets SourceTaskID) — keying on it would make
+--      every real agent result comment invisible to this check.
+--
+-- Deliberately scoped to retries descended from a provider_quota_limit
+-- failure rather than every running task: a blanket "no comment in N
+-- minutes" rule would misfire on ordinary long-running tasks that
+-- legitimately work silently before posting a single result comment.
+-- failure_reason is set to 'timeout' (not a new taxonomy value) so it lands
+-- in the existing retryableReasons allow-list and HandleFailedTasks
+-- auto-retries it again, same as any other stale-task sweep — including any
+-- further silent generation, via the lineage walk above.
+WITH RECURSIVE lineage AS (
+    SELECT id, parent_task_id, failure_reason, id AS retry_id
+    FROM agent_task_queue
+    WHERE status = 'running'
+      AND issue_id IS NOT NULL
+      AND started_at < now() - make_interval(secs => @silence_timeout_secs::double precision)
+      AND parent_task_id IS NOT NULL
+    UNION ALL
+    SELECT p.id, p.parent_task_id, p.failure_reason, l.retry_id
+    FROM agent_task_queue p
+    JOIN lineage l ON p.id = l.parent_task_id
+)
+--
+-- Completion race (validator REJECT, 2026-08-14 06:50Z, against b04fcef4): the
+-- `lineage` CTE's `status = 'running'` filter only reflects a snapshot taken
+-- when the CTE runs. If the daemon completes this same task (status ->
+-- 'completed') between that snapshot and this UPDATE actually visiting the
+-- row, the row is still in the CTE's materialized `retry_id` list, and
+-- neither `id IN (...)` nor the `NOT EXISTS (comment ...)` clause re-checks
+-- status — so a task that finished a split second earlier could be flipped
+-- back to 'failed' and spuriously auto-retried. `status = 'running'` is
+-- re-added directly on the target table in the UPDATE's own WHERE clause so
+-- Postgres re-evaluates it (EvalPlanQual) against the row's current,
+-- possibly-concurrently-committed version, not just the CTE's stale
+-- snapshot — the same reason FailStaleTasks and ExpireStaleQueuedTasks key
+-- their UPDATE WHERE clauses directly off status rather than trusting an
+-- upstream candidate list alone.
+UPDATE agent_task_queue
+SET status = 'failed', completed_at = now(),
+    error = 'no issue comment observed from the owning agent within the post-quota-limit-retry silence window',
+    failure_reason = 'timeout',
+    prepare_lease_expires_at = NULL
+WHERE status = 'running'
+  AND id IN (
+    SELECT DISTINCT retry_id FROM lineage
+    WHERE failure_reason = 'agent_error.provider_quota_limit'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM comment c
+    WHERE c.issue_id = agent_task_queue.issue_id
+      AND c.author_type = 'agent'
+      AND c.author_id = agent_task_queue.agent_id
+      AND c.created_at > agent_task_queue.started_at
+  )
+RETURNING *;
+
 -- name: ExpireStaleQueuedTasks :many
 -- Fails tasks that have been sitting in 'queued' for longer than the TTL.
 -- This is the cleanup arm of the MUL-1899 "queued backlog" fix: even with the

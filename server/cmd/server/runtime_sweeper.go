@@ -60,6 +60,15 @@ const (
 	// ticks and 500 rows/tick we drain 60k rows/hour worst case — plenty
 	// of headroom for the documented backlog without monopolising DB CPU.
 	queuedExpireBatchSize = 500
+	// quotaLimitRetrySilenceTimeoutSeconds fails a running task that resumed
+	// after a provider_quota_limit failure (NEX-897, e.g. a Claude Code
+	// session/usage-window limit) if the issue has received no new comment
+	// since the retry started. 15 minutes comfortably exceeds the daemon's
+	// own codex_semantic_inactivity default (10 minutes, config.go) so this
+	// sweep only fires when even that internal-activity watchdog didn't
+	// catch the stall — e.g. the run kept emitting internal provider events
+	// without ever producing an observable result, the exact NEX-893 gap.
+	quotaLimitRetrySilenceTimeoutSeconds = 900.0
 )
 
 // runRuntimeSweeper periodically marks runtimes as offline if their
@@ -84,6 +93,7 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 		case <-ticker.C:
 			sweepStaleRuntimes(ctx, queries, liveness, taskSvc, bus)
 			sweepStaleTasks(ctx, queries, taskSvc, bus)
+			sweepSilentQuotaLimitRetries(ctx, queries, taskSvc)
 			sweepExpiredQueuedTasks(ctx, queries, taskSvc)
 			gcRuntimes(ctx, queries, bus)
 		}
@@ -258,6 +268,27 @@ func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.
 
 	slog.Info("task sweeper: failed stale tasks", "count", len(failedTasks))
 	taskSvc.CaptureLeaseExpiredTasks(ctx, failedTasks)
+	taskSvc.HandleFailedTasks(ctx, failedTasks)
+}
+
+// sweepSilentQuotaLimitRetries fails a running task retried after a
+// provider_quota_limit failure (NEX-897) when the issue has had no new
+// comment since the retry started — the "success = observable output"
+// check the run-started/started status alone cannot make. Failing it with
+// reason 'timeout' routes it back through HandleFailedTasks' existing
+// auto-retry path (see retryableReasons in task.go), same as any other
+// stale-task sweep.
+func sweepSilentQuotaLimitRetries(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService) {
+	failedTasks, err := queries.FailSilentQuotaLimitRetries(ctx, quotaLimitRetrySilenceTimeoutSeconds)
+	if err != nil {
+		slog.Warn("task sweeper: failed to fail silent quota-limit retries", "error", err)
+		return
+	}
+	if len(failedTasks) == 0 {
+		return
+	}
+
+	slog.Info("task sweeper: failed silent quota-limit retries", "count", len(failedTasks))
 	taskSvc.HandleFailedTasks(ctx, failedTasks)
 }
 

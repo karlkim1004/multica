@@ -1598,11 +1598,20 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 // allowed to act on. Agent-side errors (compile failures, model rejections,
 // etc.) are intentionally excluded — those are real problems that the user
 // should see, not infrastructure flakiness.
+//
+// agent_error.provider_quota_limit (NEX-897) is the one agent-side exception:
+// it also fires for a Claude Code session/usage-window limit, which clears on
+// its own within hours, not just for a hard-exhausted paid quota. Before this
+// was retryable, a session-limited task just sat "failed" until a human or
+// another bot noticed and manually reassigned it — that's the root cause of
+// the 4h27m stall observed on NEX-893. max_attempts still bounds the blast
+// radius for the genuinely-exhausted-quota case, so this doesn't hot-loop.
 var retryableReasons = map[string]bool{
 	"runtime_offline":           true,
 	"runtime_recovery":          true,
 	"timeout":                   true,
 	"codex_semantic_inactivity": true,
+	taskfailure.ReasonAgentProviderQuotaLimit.String(): true,
 }
 
 func resumeUnsafeFailureReason(reason string) bool {

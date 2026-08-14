@@ -533,11 +533,13 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	if runtimeGOOS == "windows" {
 		b.WriteString("On Windows, **always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`** — do NOT pipe via `--content-stdin`. PowerShell 5.1's `$OutputEncoding` defaults to ASCIIEncoding when piping to a native command, silently dropping non-ASCII characters as `?` before they reach `multica.exe`. Never use inline `--content` for agent-authored comments. ")
 		b.WriteString("Keep the same `--parent` value from the trigger comment when replying. ")
+		b.WriteString("**Before reassigning an issue in a way that can enqueue a replacement agent, post your result comment successfully first.** Assignment can cancel the current run, so it is the final handoff action; never assign before recording the verdict, evidence, or blocker. ")
 		b.WriteString("After posting, remove the temp file with `Remove-Item ./reply.md` (or your chosen path) so a later run does not pick up stale content. ")
 		b.WriteString("Do not compress a multi-paragraph answer into one line and do not rely on `\\n` escapes.\n\n")
 	} else {
 		b.WriteString("For issue comments, **always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`**. Never use inline `--content` for agent-authored comments — the shell rewrites backticks, `$()`, `$VAR`, or quotes in the body before the CLI receives them (MUL-2904). Do NOT use `--content-stdin` with a HEREDOC either: when extra flags accompany the command (e.g. `--assignee`, `--project` on `multica issue create`), the bash heredoc/flag boundary is fragile and flags can be silently swallowed into the stdin stream while the command still exits 0 (GitHub #4182). ")
 		b.WriteString("Keep the same `--parent` value from the trigger comment when replying. ")
+		b.WriteString("**Before reassigning an issue in a way that can enqueue a replacement agent, post your result comment successfully first.** Assignment can cancel the current run, so it is the final handoff action; never assign before recording the verdict, evidence, or blocker. ")
 		b.WriteString("After posting, remove the temp file with `rm ./reply.md` (or your chosen path) so a later run does not pick up stale content. ")
 		b.WriteString("Do not compress a multi-paragraph answer into one line and do not rely on `\\n` escapes.\n\n")
 	}
