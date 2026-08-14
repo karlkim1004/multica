@@ -170,6 +170,39 @@ describe("ChatMessageList load-older pagination — NEX-881", () => {
 
     expect(lastVirtuosoProps?.startReached).toBeUndefined();
   });
+
+  // Residual +20.25px regression guard (NEX-881 completion condition 4):
+  // Virtuoso re-anchors firstItemIndex once, at the moment a prepend lands,
+  // using whatever the Header slot's height is at that instant. It never
+  // re-anchors again if the slot's height changes afterward — so if the
+  // slot's height differs between the button / loading / reached-start
+  // states, the list visibly jumps by that delta right after a load-older
+  // completes. Asserting the slot's className is byte-identical across all
+  // three states pins the fixed-height contract at the DOM level (jsdom
+  // doesn't compute real layout, so offsetHeight can't be asserted here —
+  // the live px values were confirmed with a real browser before this fix).
+  it("keeps the load-older slot's height class identical across button / loading / reached-start states", () => {
+    const states = [
+      { hasOlderMessages: true, isFetchingOlderMessages: false },
+      { hasOlderMessages: true, isFetchingOlderMessages: true },
+      { hasOlderMessages: false, isFetchingOlderMessages: false },
+    ];
+
+    const classNames = states.map(({ hasOlderMessages, isFetchingOlderMessages }) => {
+      const { unmount, getByTestId } = renderList({
+        messages: [message({})],
+        hasOlderMessages,
+        isFetchingOlderMessages,
+      });
+      const className = getByTestId("chat-load-older-slot").className;
+      unmount();
+      return className;
+    });
+
+    expect(classNames[0]).toBe(classNames[1]);
+    expect(classNames[1]).toBe(classNames[2]);
+    expect(classNames[0]).toContain("h-[52px]");
+  });
 });
 
 describe("ChatMessageList timing metadata", () => {

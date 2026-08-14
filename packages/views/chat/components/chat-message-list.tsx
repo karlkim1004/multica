@@ -168,23 +168,37 @@ export function ChatMessageList({
         followOutput={() => (!isFetchingOlderMessages && isNewMessageAtTail && isNearBottom ? "smooth" : false)}
         computeItemKey={(_, msg) => msg.id}
         components={{
+          // NEX-881 completion condition 4 (residual): this slot's *height*
+          // must never change between its three states (button / loading /
+          // reached-start), not just its content. Virtuoso re-anchors
+          // firstItemIndex once at the moment a prepend lands, using
+          // whatever Header height is current then — it does not re-run
+          // that anchoring if Header's height changes afterward. Letting
+          // this box grow/shrink with its content (pt-4+pb-2+h-7 button =
+          // 52px vs a pt-4+one line of text-xs = 32px vs pt-4 alone = 16px)
+          // reliably shifted the list by exactly that delta right after
+          // load-older settled. A fixed-height slot with only the inner
+          // content varying removes the shift at the source, independent
+          // of Virtuoso's re-anchor timing — a time-boxed suppression
+          // window was tried first and stayed racy (no fixed settle time).
           Header: () => (
-            <div className="mx-auto w-full max-w-4xl px-5 pt-4">
+            <div
+              data-testid="chat-load-older-slot"
+              className="mx-auto flex h-[52px] w-full max-w-4xl items-center justify-center px-5"
+            >
               {isFetchingOlderMessages ? (
                 <div className="text-center text-xs text-muted-foreground">{t(($) => $.message_list.loading_older)}</div>
               ) : hasOlderMessages ? (
-                <div className="flex justify-center pb-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs text-muted-foreground"
-                    data-testid="load-older-messages-button"
-                    onClick={() => onLoadOlderMessages?.()}
-                  >
-                    {t(($) => $.message_list.load_older_button)}
-                  </Button>
-                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-muted-foreground"
+                  data-testid="load-older-messages-button"
+                  onClick={() => onLoadOlderMessages?.()}
+                >
+                  {t(($) => $.message_list.load_older_button)}
+                </Button>
               ) : null}
             </div>
           ),
