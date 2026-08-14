@@ -1280,17 +1280,18 @@ SET status = 'failed', completed_at = now(),
     error = 'no issue comment observed from the owning agent within the post-quota-limit-retry silence window',
     failure_reason = 'timeout',
     prepare_lease_expires_at = NULL
-WHERE id IN (
+WHERE status = 'running'
+  AND id IN (
     SELECT DISTINCT retry_id FROM lineage
     WHERE failure_reason = 'agent_error.provider_quota_limit'
-)
-AND NOT EXISTS (
+  )
+  AND NOT EXISTS (
     SELECT 1 FROM comment c
     WHERE c.issue_id = agent_task_queue.issue_id
       AND c.author_type = 'agent'
       AND c.author_id = agent_task_queue.agent_id
       AND c.created_at > agent_task_queue.started_at
-)
+  )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at
 `
 
@@ -1333,6 +1334,21 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 // in the existing retryableReasons allow-list and HandleFailedTasks
 // auto-retries it again, same as any other stale-task sweep — including any
 // further silent generation, via the lineage walk above.
+//
+// Completion race (validator REJECT, 2026-08-14 06:50Z, against b04fcef4): the
+// `lineage` CTE's `status = 'running'` filter only reflects a snapshot taken
+// when the CTE runs. If the daemon completes this same task (status ->
+// 'completed') between that snapshot and this UPDATE actually visiting the
+// row, the row is still in the CTE's materialized `retry_id` list, and
+// neither `id IN (...)` nor the `NOT EXISTS (comment ...)` clause re-checks
+// status — so a task that finished a split second earlier could be flipped
+// back to 'failed' and spuriously auto-retried. `status = 'running'` is
+// re-added directly on the target table in the UPDATE's own WHERE clause so
+// Postgres re-evaluates it (EvalPlanQual) against the row's current,
+// possibly-concurrently-committed version, not just the CTE's stale
+// snapshot — the same reason FailStaleTasks and ExpireStaleQueuedTasks key
+// their UPDATE WHERE clauses directly off status rather than trusting an
+// upstream candidate list alone.
 func (q *Queries) FailSilentQuotaLimitRetries(ctx context.Context, silenceTimeoutSecs float64) ([]AgentTaskQueue, error) {
 	rows, err := q.db.Query(ctx, failSilentQuotaLimitRetries, silenceTimeoutSecs)
 	if err != nil {
