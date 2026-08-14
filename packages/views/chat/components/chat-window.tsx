@@ -849,7 +849,17 @@ export function ChatWindow() {
           firstItemIndex={firstItemIndex}
           hasOlderMessages={!!hasOlderMessages}
           isFetchingOlderMessages={isFetchingOlderMessages}
-          onLoadOlderMessages={() => void fetchOlderMessages()}
+          onLoadOlderMessages={() => {
+            // Guards against overlapping fetchNextPage() calls: the button
+            // only swaps for the loading indicator on the *next* render,
+            // so a second click (or any other re-invocation) reaching this
+            // handler before that state update lands would otherwise issue
+            // a second real network request — TanStack Query's default
+            // cancelRefetch cancels its own tracking of the first fetch's
+            // result but the underlying HTTP request isn't wired to an
+            // AbortSignal, so it isn't actually aborted.
+            if (!isFetchingOlderMessages) void fetchOlderMessages();
+          }}
           voiceOutputEnabled={voiceOutputEnabled}
         />
       ) : (
