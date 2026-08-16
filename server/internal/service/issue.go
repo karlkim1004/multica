@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -67,6 +68,9 @@ type IssueCreateParams struct {
 	OriginID       pgtype.UUID
 	AttachmentIDs  []pgtype.UUID
 	AllowDuplicate bool
+	// PoolDispatch opts this unassigned todo into automatic worker-pool claim.
+	// It is explicit so ordinary backlog grooming never changes ownership.
+	PoolDispatch bool
 	// Stage groups this issue into an ordered barrier group under its parent
 	// (NULL = unstaged). See issue_child_done.go for the staged-barrier wake.
 	Stage pgtype.Int4
@@ -282,8 +286,51 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	s.publishIssueCreated(issue, attachments, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
 	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
+	// A todo without an explicit owner enters the worker pool. The claim is
+	// atomic, so two simultaneous creates/pool ticks cannot assign the same
+	// issue twice. Explicit assignment continues to take precedence.
+	if p.PoolDispatch {
+		s.dispatchUnassignedTodo(ctx, issue, p.CreatorType, actorID)
+	}
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
+}
+
+// dispatchUnassignedTodo assigns one newly-created unassigned todo to an
+// already-idle worker on the same workspace and wakes its runtime through the
+// normal task queue. It intentionally never repurposes a working/offline
+// worker; overload handling belongs to the clone policy, not this fast path.
+func (s *IssueService) dispatchUnassignedTodo(ctx context.Context, issue db.Issue, creatorType, actorID string) {
+	if issue.Status != "todo" || issue.AssigneeID.Valid || issue.AssigneeType.Valid || s.TaskService == nil {
+		return
+	}
+	agents, err := s.Queries.ListAgents(ctx, issue.WorkspaceID)
+	if err != nil {
+		slog.Warn("pool dispatch: list workers failed", "workspace_id", util.UUIDToString(issue.WorkspaceID), "error", err)
+		return
+	}
+	for _, worker := range agents {
+		if worker.Status != "idle" || !worker.RuntimeID.Valid {
+			continue
+		}
+		claimed, err := s.Queries.ClaimUnassignedTodoIssueForAgent(ctx, db.ClaimUnassignedTodoIssueForAgentParams{
+			WorkspaceID: issue.WorkspaceID,
+			AssigneeID:  worker.ID,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return
+			}
+			slog.Warn("pool dispatch: claim failed", "workspace_id", util.UUIDToString(issue.WorkspaceID), "worker_id", util.UUIDToString(worker.ID), "error", err)
+			return
+		}
+		if _, err := s.TaskService.EnqueueTaskForIssue(ctx, claimed); err != nil {
+			slog.Error("pool dispatch: enqueue failed", "issue_id", util.UUIDToString(claimed.ID), "worker_id", util.UUIDToString(worker.ID), "error", err)
+			return
+		}
+		slog.Info("pool dispatch: unassigned todo claimed", "issue_id", util.UUIDToString(claimed.ID), "worker_id", util.UUIDToString(worker.ID), "runtime_id", util.UUIDToString(worker.RuntimeID))
+		return
+	}
 }
 
 // linkAttachments links the given attachment IDs to the newly created

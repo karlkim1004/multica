@@ -2069,6 +2069,7 @@ type CreateIssueRequest struct {
 	OriginID   *string `json:"origin_id,omitempty"`
 
 	AllowDuplicate bool `json:"allow_duplicate,omitempty"`
+	PoolDispatch   bool `json:"pool_dispatch,omitempty"`
 }
 
 func duplicateIssueMessage(issue IssueResponse) string {
@@ -2256,6 +2257,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		Stage:          ptrToInt4(req.Stage),
 		AttachmentIDs:  attachmentIDs,
 		AllowDuplicate: req.AllowDuplicate,
+		PoolDispatch:   req.PoolDispatch,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,

@@ -68,6 +68,30 @@ func taskCountFor(t *testing.T, issueID, agentID string) int {
 	return n
 }
 
+func TestCreateIssuePoolDispatchClaimsUnassignedTodo(t *testing.T) {
+	// The fixture's ready agent is explicitly made idle so the pool has a
+	// deterministic eligible worker. The request itself has no assignee.
+	workerID := seededReadyAgentID(t)
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET status = 'idle' WHERE id = $1`, workerID); err != nil {
+		t.Fatalf("mark pool worker idle: %v", err)
+	}
+	issue := createIssueForTest(t, map[string]any{
+		"title":         "pool auto-claim regression",
+		"status":        "todo",
+		"pool_dispatch": true,
+	})
+	var assigneeID string
+	if err := testPool.QueryRow(context.Background(), `SELECT assignee_id FROM issue WHERE id = $1`, issue.ID).Scan(&assigneeID); err != nil {
+		t.Fatalf("load pool assignment: %v", err)
+	}
+	if assigneeID == "" {
+		t.Fatal("pool dispatch left todo unassigned")
+	}
+	if taskCountFor(t, issue.ID, assigneeID) != 1 {
+		t.Fatalf("expected one queued task for pool claim, issue=%s agent=%s", issue.ID, assigneeID)
+	}
+}
+
 // TestPreviewIssueTrigger_CreateAgentVsBacklog covers the create entry point:
 // an active status with an agent assignee previews one run; the same assignee
 // parked in backlog previews none.
