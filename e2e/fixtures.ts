@@ -139,6 +139,10 @@ export class TestApiClient {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
+  async deleteChatSession(id: string) {
+    await this.authedFetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
+  }
+
   /** Clean up all issues created during this test. */
   async cleanup() {
     for (const id of this.createdIssueIds) {

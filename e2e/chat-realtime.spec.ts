@@ -38,13 +38,29 @@ test.describe("chat realtime rendering", () => {
 
     const setupDb = new pg.Client(DATABASE_URL);
     await setupDb.connect();
+    const runtimeResult = await setupDb.query<{ id: string }>(
+      `INSERT INTO agent_runtime (
+         workspace_id, daemon_id, name, runtime_mode, provider, status,
+         device_info, metadata, owner_id, last_seen_at
+       ) VALUES ($1, NULL, $2, 'cloud', $3, 'online', $4, '{}'::jsonb, $5, now())
+       RETURNING id`,
+      [
+        workspace.id,
+        `E2E Realtime Runtime ${Date.now()}`,
+        "e2e_chat_realtime",
+        "E2E realtime regression runtime",
+        user.id,
+      ],
+    );
+    const runtime = runtimeResult.rows[0];
+    if (!runtime) throw new Error("Failed to seed isolated E2E realtime runtime");
     const agentResult = await setupDb.query<{ id: string }>(
       `INSERT INTO agent (
          workspace_id, name, description, runtime_mode, runtime_config,
          runtime_id, visibility, max_concurrent_tasks, owner_id
-       ) VALUES ($1, $2, '', 'cloud', '{}'::jsonb, NULL, 'workspace', 1, $3)
+       ) VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 1, $4)
        RETURNING id`,
-      [workspace.id, `E2E Realtime Agent ${Date.now()}`, user.id],
+      [workspace.id, `E2E Realtime Agent ${Date.now()}`, runtime.id, user.id],
     );
     const agent = agentResult.rows[0];
     if (!agent) throw new Error("Failed to seed isolated E2E realtime agent");
