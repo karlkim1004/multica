@@ -1079,21 +1079,17 @@ const noteCommentPrefix = "/note"
 
 var humanMentionRe = regexp.MustCompile(`\[@([^\]]+)\]\(mention://member/[0-9a-fA-F-]+\)`)
 
+// humanEscalationTagRe deliberately accepts only an explicit declaration on
+// the first line. Escalation keywords in prose (or UUID hex) must never grant
+// permission to notify a human.
+var humanEscalationTagRe = regexp.MustCompile(`(?i)\A\s*\[협의체:\s*(P0|P1|외부비용|PROD/DB|외부발송|라이선스/공개노출)\s*\]`)
+
 // teamLeaderMentionUUID is 아이유(TeamLeader) — the default reroute target for
 // bot→human mentions blocked by the NEX-789 escalation gate.
 const teamLeaderMentionUUID = "a9b0fb13-bfaf-4cea-a6e4-d27e243ec2b0"
 
 func hasHumanEscalationTag(content string) bool {
-	upper := strings.ToUpper(content)
-	if strings.Contains(upper, "P0") || strings.Contains(upper, "P1") {
-		return true
-	}
-	for _, token := range []string{"외부비용", "PROD", "DB", "외부발송", "메일", "PR", "라이선스", "공개노출"} {
-		if strings.Contains(upper, strings.ToUpper(token)) {
-			return true
-		}
-	}
-	return false
+	return humanEscalationTagRe.MatchString(content)
 }
 
 // rewriteHumanMentions enforces the NEX-789 escalation gate: a bot-authored
