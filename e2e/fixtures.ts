@@ -67,7 +67,9 @@ export class TestApiClient {
 
   async ensureWorkspace(name = "E2E Workspace", slug = "e2e-workspace") {
     const workspaces = await this.getWorkspaces();
-    const workspace = workspaces.find((item) => item.slug === slug) ?? workspaces[0];
+    // Never fall back to an arbitrary workspace: a missing isolated slug must
+    // fail rather than silently targeting the representative workspace.
+    const workspace = workspaces.find((item) => item.slug === slug);
     if (workspace) {
       this.workspaceId = workspace.id;
       this.workspaceSlug = workspace.slug;
@@ -86,7 +88,7 @@ export class TestApiClient {
     }
 
     const refreshed = await this.getWorkspaces();
-    const created = refreshed.find((item) => item.slug === slug) ?? refreshed[0];
+    const created = refreshed.find((item) => item.slug === slug);
     if (created) {
       this.workspaceId = created.id;
       this.workspaceSlug = created.slug;
@@ -135,6 +137,34 @@ export class TestApiClient {
 
   async deleteIssue(id: string) {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
+  }
+
+  async createChatSession(agentId: string, title: string) {
+    const res = await this.authedFetch("/api/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId, title }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(`Failed to create isolated chat session: ${res.status} ${JSON.stringify(body)}`);
+    }
+    return { ...(body as { id: string; workspace_id: string; agent_id: string }), http_status: res.status };
+  }
+
+  async sendChatMessage(sessionId: string, content: string) {
+    const res = await this.authedFetch(`/api/chat/sessions/${sessionId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(`Failed to send isolated chat message: ${res.status} ${JSON.stringify(body)}`);
+    }
+    return { ...(body as { message_id: string; task_id: string; created_at: string }), http_status: res.status };
+  }
+
+  async deleteChatSession(id: string) {
+    await this.authedFetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
   }
 
   /** Clean up all issues created during this test. */
