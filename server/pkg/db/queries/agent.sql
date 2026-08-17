@@ -24,6 +24,29 @@ INSERT INTO agent (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 RETURNING *;
 
+-- name: ClonePersonaToRuntime :one
+-- A pool clone keeps only portable persona fields. Runtime/session credentials
+-- (runtime_config, custom_env, custom_args and mcp_config) are deliberately
+-- reset: the destination runtime supplies its own authenticated environment.
+INSERT INTO agent (
+    workspace_id, name, description, avatar_url, runtime_mode, runtime_config,
+    runtime_id, visibility, max_concurrent_tasks, owner_id, instructions,
+    custom_env, custom_args, mcp_config, model, thinking_level
+)
+SELECT a.workspace_id, a.name || ' (pool clone)', a.description, a.avatar_url,
+       r.runtime_mode, '{}', r.id, a.visibility, a.max_concurrent_tasks,
+       a.owner_id, a.instructions, '{}', '[]', NULL, a.model, a.thinking_level
+FROM agent a
+JOIN agent_runtime source_runtime ON source_runtime.id = a.runtime_id
+JOIN agent_runtime r ON r.id = $3
+WHERE a.id = $1
+  AND a.workspace_id = $2
+  AND a.archived_at IS NULL
+  AND r.workspace_id = a.workspace_id
+  AND r.status = 'online'
+  AND r.provider = source_runtime.provider
+RETURNING *;
+
 -- name: UpdateAgent :one
 UPDATE agent SET
     name = COALESCE(sqlc.narg('name'), name),

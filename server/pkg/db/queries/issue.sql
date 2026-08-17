@@ -117,12 +117,12 @@ RETURNING *;
 UPDATE issue
 SET assignee_type = 'agent', assignee_id = $2, updated_at = now()
 WHERE id = (
-    SELECT id FROM issue
-    WHERE workspace_id = $1
-      AND status = 'todo'
-      AND assignee_id IS NULL
-      AND assignee_type IS NULL
-    ORDER BY priority DESC, created_at ASC
+    SELECT candidate.id FROM issue AS candidate
+    WHERE candidate.workspace_id = $1
+      AND candidate.status = 'todo'
+      AND candidate.assignee_id IS NULL
+      AND candidate.assignee_type IS NULL
+    ORDER BY candidate.priority DESC, candidate.created_at ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )
