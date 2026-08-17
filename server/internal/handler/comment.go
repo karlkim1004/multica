@@ -1080,10 +1080,11 @@ const noteCommentPrefix = "/note"
 var humanMentionRe = regexp.MustCompile(`\[@([^\]]+)\]\(mention://member/[0-9a-fA-F-]+\)`)
 
 // humanEscalationTagRe deliberately accepts only an explicit declaration on
-// the first line. Leading ASCII spaces and tabs are intentional indentation;
-// newlines and all other whitespace are not. Escalation keywords in prose (or
-// UUID hex) must never grant permission to notify a human.
-var humanEscalationTagRe = regexp.MustCompile(`(?i)\A[ \t]*\[협의체:[ \t]*(P0|P1|외부비용|PROD/DB|외부발송|라이선스/공개노출)[ \t]*\]`)
+// the first line. Only zero to three ASCII spaces may precede it: four spaces
+// or a tab start a Markdown code block. Newlines and other whitespace are
+// never accepted. Escalation keywords in prose (or UUID hex) must never grant
+// permission to notify a human.
+var humanEscalationTagRe = regexp.MustCompile(`(?i)\A {0,3}\[협의체:[ ]*(P0|P1|외부비용|PROD/DB|외부발송|라이선스/공개노출)[ ]*\]`)
 
 // teamLeaderMentionUUID is 아이유(TeamLeader) — the default reroute target for
 // bot→human mentions blocked by the NEX-789 escalation gate.

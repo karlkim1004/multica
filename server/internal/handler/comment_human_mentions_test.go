@@ -12,9 +12,9 @@ func TestHasHumanEscalationTag(t *testing.T) {
 		want    bool
 	}{
 		{name: "plain mention", content: "[@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
-		// Horizontal ASCII indentation is intentional; it does not hide the declaration.
+		// Up to three leading ASCII spaces preserve a visible declaration without creating a Markdown code block.
 		{name: "leading spaces before explicit tag are allowed", content: "  [협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
-		{name: "leading tab before explicit tag is allowed", content: "\t[협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
+		{name: "three leading spaces before explicit tag are allowed", content: "   [협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
 		{name: "explicit p0 tag", content: "[협의체: P0] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
 		{name: "explicit p1 tag", content: "[협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
 		{name: "explicit external cost tag", content: "[협의체: 외부비용] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
@@ -25,6 +25,9 @@ func TestHasHumanEscalationTag(t *testing.T) {
 		{name: "technical db prose is not a tag", content: "`data_cache.db`를 확인하세요 [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
 		{name: "leading newline before tag is not a declaration", content: "\n[협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
 		{name: "newline inside tag is not a declaration", content: "[협의체:\nP1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
+		{name: "leading tab before tag is not a declaration", content: "\t[협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
+		{name: "four leading spaces before tag is not a declaration", content: "    [협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
+		{name: "tab inside tag is not a declaration", content: "[협의체:\tP1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
 		{name: "fullwidth space before tag is not a declaration", content: "　[협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
 		{name: "zero width space before tag is not a declaration", content: "\u200b[협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
 		{name: "code block tag is not a declaration", content: "```\n[협의체: P1]\n``` [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
