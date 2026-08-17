@@ -12,10 +12,16 @@ func TestHasHumanEscalationTag(t *testing.T) {
 		want    bool
 	}{
 		{name: "plain mention", content: "[@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
+		{name: "explicit p0 tag", content: "[협의체: P0] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
 		{name: "explicit p1 tag", content: "[협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
 		{name: "explicit external cost tag", content: "[협의체: 외부비용] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
+		{name: "explicit prod db tag", content: "[협의체: PROD/DB] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
+		{name: "explicit external send tag", content: "[협의체: 외부발송] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
+		{name: "explicit public exposure tag", content: "[협의체: 라이선스/공개노출] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: true},
 		{name: "uuid containing db is not a tag", content: "참조 mention://issue/ddf52e21-7511-46f3-a38c-5db83c45fab7 [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
 		{name: "technical db prose is not a tag", content: "`data_cache.db`를 확인하세요 [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
+		{name: "leading newline before tag is not a declaration", content: "\n[협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
+		{name: "newline inside tag is not a declaration", content: "[협의체:\nP1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
 		{name: "tag outside first line is not a declaration", content: "검토 요청\n[협의체: P1] [@Mib](mention://member/11111111-1111-1111-1111-111111111111)", want: false},
 	}
 
@@ -59,6 +65,18 @@ func TestRewriteHumanMentions(t *testing.T) {
 			got := rewriteHumanMentions(content, true)
 			if strings.Contains(got, "mention://member/") || !strings.Contains(got, "mention://agent/"+teamLeaderMentionUUID) {
 				t.Fatalf("rewriteHumanMentions() did not block incidental DB text: %q", got)
+			}
+		}
+	})
+
+	t.Run("newline-bypassed tags are blocked and rerouted", func(t *testing.T) {
+		for _, content := range []string{
+			"\n[협의체: P1] " + content,
+			"[협의체:\nP1] " + content,
+		} {
+			got := rewriteHumanMentions(content, true)
+			if strings.Contains(got, "mention://member/") || !strings.Contains(got, "mention://agent/"+teamLeaderMentionUUID) {
+				t.Fatalf("rewriteHumanMentions() did not block a newline-bypassed tag: %q", got)
 			}
 		}
 	})

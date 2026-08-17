@@ -1082,7 +1082,7 @@ var humanMentionRe = regexp.MustCompile(`\[@([^\]]+)\]\(mention://member/[0-9a-f
 // humanEscalationTagRe deliberately accepts only an explicit declaration on
 // the first line. Escalation keywords in prose (or UUID hex) must never grant
 // permission to notify a human.
-var humanEscalationTagRe = regexp.MustCompile(`(?i)\A\s*\[협의체:\s*(P0|P1|외부비용|PROD/DB|외부발송|라이선스/공개노출)\s*\]`)
+var humanEscalationTagRe = regexp.MustCompile(`(?i)\A[ \t]*\[협의체:[ \t]*(P0|P1|외부비용|PROD/DB|외부발송|라이선스/공개노출)[ \t]*\]`)
 
 // teamLeaderMentionUUID is 아이유(TeamLeader) — the default reroute target for
 // bot→human mentions blocked by the NEX-789 escalation gate.
