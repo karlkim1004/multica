@@ -1007,7 +1007,8 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	req.Content = rewriteHumanMentions(req.Content, authorType == "agent")
+	routeUUID, routeLabel, routeReason := resolveRerouteTarget(issue, authorType, authorID)
+	req.Content = rewriteHumanMentions(req.Content, authorType == "agent", routeUUID, routeLabel, routeReason)
 
 	// NOTE: Comment content is stored as Markdown source. XSS is handled at the
 	// rendering layer (rehype-sanitize) and at the editor layer
@@ -1089,6 +1090,7 @@ var humanEscalationTagRe = regexp.MustCompile(`(?i)\A {0,3}\[협의체:[ ]*(P0|P
 // teamLeaderMentionUUID is 아이유(TeamLeader) — the default reroute target for
 // bot→human mentions blocked by the NEX-789 escalation gate.
 const teamLeaderMentionUUID = "a9b0fb13-bfaf-4cea-a6e4-d27e243ec2b0"
+const chainKeeperMentionUUID = "46900436-a414-408e-9ed4-b995a78be254"
 
 func hasHumanEscalationTag(content string) bool {
 	return humanEscalationTagRe.MatchString(content)
@@ -1100,7 +1102,20 @@ func hasHumanEscalationTag(content string) bool {
 // a tag, the mention link is stripped (so no notification fires) and rerouted
 // to 아이유(TeamLeader) instead. Human-authored comments are never touched —
 // the gate scopes strictly to 봇→사람 mentions per the Canonical Goal.
-func rewriteHumanMentions(content string, isAgentAuthor bool) string {
+func resolveRerouteTarget(issue db.Issue, authorType, authorID string) (uuid, label, reason string) {
+	if issue.Status == "blocked" {
+		return chainKeeperMentionUUID, "민주(chain-keeper)", "blocked_status"
+	}
+	if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid {
+		assigneeID := uuidToString(issue.AssigneeID)
+		if !(authorType == "agent" && assigneeID == authorID) {
+			return assigneeID, "담당 봇", "issue_assignee"
+		}
+	}
+	return teamLeaderMentionUUID, "아이유(TeamLeader)", "default_teamleader"
+}
+
+func rewriteHumanMentions(content string, isAgentAuthor bool, rerouteUUID, rerouteLabel, routeReason string) string {
 	if !isAgentAuthor {
 		return content
 	}
@@ -1113,11 +1128,12 @@ func rewriteHumanMentions(content string, isAgentAuthor bool) string {
 		return content
 	}
 	rewritten := humanMentionRe.ReplaceAllString(content,
-		"@$1 (자동 재라우팅: [@아이유(TeamLeader)](mention://agent/"+teamLeaderMentionUUID+"))")
+		"@$1 (자동 재라우팅: [@"+rerouteLabel+"](mention://agent/"+rerouteUUID+"))")
 	slog.Warn("human_mention_guard_blocked",
 		"member_mention_count", len(matches),
-		"routed_to", teamLeaderMentionUUID,
-		"routed_to_label", "아이유(TeamLeader)",
+		"routed_to", rerouteUUID,
+		"routed_to_label", rerouteLabel,
+		"route_reason", routeReason,
 	)
 	return rewritten
 }
@@ -1580,7 +1596,13 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Content = rewriteHumanMentions(req.Content, actorType == "agent")
+	routeUUID, routeLabel, routeReason := teamLeaderMentionUUID, "아이유(TeamLeader)", "default_teamleader"
+	if issue, err := h.Queries.GetIssue(r.Context(), existing.IssueID); err != nil {
+		slog.Warn("load issue for human mention reroute failed", "issue_id", uuidToString(existing.IssueID), "error", err)
+	} else {
+		routeUUID, routeLabel, routeReason = resolveRerouteTarget(issue, actorType, actorID)
+	}
+	req.Content = rewriteHumanMentions(req.Content, actorType == "agent", routeUUID, routeLabel, routeReason)
 
 	// NOTE: See CreateComment — Markdown is sanitized at render/edit time, not here.
 
