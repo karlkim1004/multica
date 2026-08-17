@@ -174,6 +174,17 @@ func (q *Queries) ArchiveAgentsByRuntime(ctx context.Context, arg ArchiveAgentsB
 	return items, nil
 }
 
+const archivePoolClone = `-- name: ArchivePoolClone :exec
+UPDATE agent
+SET archived_at = now(), updated_at = now()
+WHERE id = $1 AND archived_at IS NULL
+`
+
+func (q *Queries) ArchivePoolClone(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, archivePoolClone, id)
+	return err
+}
+
 const cancelAgentTask = `-- name: CancelAgentTask :one
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
@@ -1537,6 +1548,93 @@ func (q *Queries) FailStaleTasks(ctx context.Context, arg FailStaleTasksParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const findCloneTargetRuntimeForAgent = `-- name: FindCloneTargetRuntimeForAgent :one
+SELECT r.id, r.workspace_id, r.daemon_id, r.name, r.runtime_mode, r.provider, r.status, r.device_info, r.metadata, r.last_seen_at, r.created_at, r.updated_at, r.owner_id, r.legacy_daemon_id, r.visibility, r.profile_id
+FROM agent source
+JOIN agent_runtime source_runtime ON source_runtime.id = source.runtime_id
+JOIN agent_runtime r ON r.workspace_id = source.workspace_id
+LEFT JOIN agent bound ON bound.runtime_id = r.id AND bound.archived_at IS NULL
+WHERE source.id = $1
+  AND r.id <> source.runtime_id
+  AND r.status = 'online'
+  AND r.provider = source_runtime.provider
+GROUP BY r.id
+ORDER BY count(bound.id) ASC, r.created_at ASC
+LIMIT 1
+`
+
+// A clone must land on another online runtime with the same provider. The
+// least-loaded compatible runtime wins, which keeps overload routing stable.
+func (q *Queries) FindCloneTargetRuntimeForAgent(ctx context.Context, id pgtype.UUID) (AgentRuntime, error) {
+	row := q.db.QueryRow(ctx, findCloneTargetRuntimeForAgent, id)
+	var i AgentRuntime
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DaemonID,
+		&i.Name,
+		&i.RuntimeMode,
+		&i.Provider,
+		&i.Status,
+		&i.DeviceInfo,
+		&i.Metadata,
+		&i.LastSeenAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerID,
+		&i.LegacyDaemonID,
+		&i.Visibility,
+		&i.ProfileID,
+	)
+	return i, err
+}
+
+const findOverloadedAgentForPool = `-- name: FindOverloadedAgentForPool :one
+SELECT a.id, a.workspace_id, a.name, a.avatar_url, a.runtime_mode, a.runtime_config, a.visibility, a.status, a.max_concurrent_tasks, a.owner_id, a.created_at, a.updated_at, a.description, a.runtime_id, a.instructions, a.archived_at, a.archived_by, a.custom_env, a.custom_args, a.mcp_config, a.model, a.thinking_level
+FROM agent a
+JOIN agent_task_queue t ON t.agent_id = a.id
+WHERE a.workspace_id = $1
+  AND a.archived_at IS NULL
+  AND a.status = 'working'
+  AND t.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+GROUP BY a.id
+HAVING count(t.id) >= a.max_concurrent_tasks
+ORDER BY count(t.id) DESC, a.created_at ASC
+LIMIT 1
+`
+
+// The clone path is entered only when the source has already consumed its
+// configured concurrency. This never changes an ordinary explicit assignee.
+func (q *Queries) FindOverloadedAgentForPool(ctx context.Context, workspaceID pgtype.UUID) (Agent, error) {
+	row := q.db.QueryRow(ctx, findOverloadedAgentForPool, workspaceID)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.RuntimeMode,
+		&i.RuntimeConfig,
+		&i.Visibility,
+		&i.Status,
+		&i.MaxConcurrentTasks,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Description,
+		&i.RuntimeID,
+		&i.Instructions,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.CustomEnv,
+		&i.CustomArgs,
+		&i.McpConfig,
+		&i.Model,
+		&i.ThinkingLevel,
+	)
+	return i, err
 }
 
 const getAgent = `-- name: GetAgent :one

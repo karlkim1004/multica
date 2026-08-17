@@ -70,3 +70,18 @@ func (s *WorkerPoolService) ReleaseFileLock(ctx context.Context, workspaceID pgt
 	_, err := s.Queries.ReleaseWorkerPoolLock(ctx, db.ReleaseWorkerPoolLockParams{WorkspaceID: workspaceID, ResourceType: "file", ResourceKey: clean, HolderID: holderID})
 	return err
 }
+
+// Deploy locks serialize deploy attempts for a named target (for example
+// "production"). They share the same expiring lease semantics as issue/file
+// locks so a dead deploy worker cannot freeze the release lane forever.
+func (s *WorkerPoolService) AcquireDeployLock(ctx context.Context, workspaceID pgtype.UUID, target string, holderID pgtype.UUID) error {
+	if strings.TrimSpace(target) == "" {
+		return errors.New("worker pool deploy lock requires a target")
+	}
+	return s.acquire(ctx, workspaceID, "deploy", strings.TrimSpace(target), holderID)
+}
+
+func (s *WorkerPoolService) ReleaseDeployLock(ctx context.Context, workspaceID pgtype.UUID, target string, holderID pgtype.UUID) error {
+	_, err := s.Queries.ReleaseWorkerPoolLock(ctx, db.ReleaseWorkerPoolLockParams{WorkspaceID: workspaceID, ResourceType: "deploy", ResourceKey: strings.TrimSpace(target), HolderID: holderID})
+	return err
+}

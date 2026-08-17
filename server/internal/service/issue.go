@@ -35,6 +35,7 @@ type IssueService struct {
 	// Metrics as "PostHog only", so leaving it unset is safe.
 	Metrics     *obsmetrics.BusinessMetrics
 	TaskService *TaskService
+	WorkerPool  *WorkerPoolService
 }
 
 func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.Client, ts *TaskService) *IssueService {
@@ -44,6 +45,7 @@ func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.
 		Bus:         bus,
 		Analytics:   ac,
 		TaskService: ts,
+		WorkerPool:  NewWorkerPoolService(q),
 	}
 }
 
@@ -331,6 +333,53 @@ func (s *IssueService) dispatchUnassignedTodo(ctx context.Context, issue db.Issu
 		slog.Info("pool dispatch: unassigned todo claimed", "issue_id", util.UUIDToString(claimed.ID), "worker_id", util.UUIDToString(worker.ID), "runtime_id", util.UUIDToString(worker.RuntimeID))
 		return
 	}
+	// Every ready worker is busy. Clone the overloaded persona onto a distinct
+	// compatible online runtime, then use the same atomic claim and task queue
+	// path as idle dispatch. No normal todo is ever considered: this method is
+	// called only for an explicit pool_dispatch request.
+	s.dispatchOverloadClone(ctx, issue)
+}
+
+func (s *IssueService) dispatchOverloadClone(ctx context.Context, issue db.Issue) {
+	if s.WorkerPool == nil {
+		return
+	}
+	source, err := s.Queries.FindOverloadedAgentForPool(ctx, issue.WorkspaceID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("pool clone: find overload failed", "error", err)
+		}
+		return
+	}
+	target, err := s.Queries.FindCloneTargetRuntimeForAgent(ctx, source.ID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("pool clone: find target failed", "error", err)
+		}
+		return
+	}
+	clone, err := s.WorkerPool.ClonePersonaToRuntime(ctx, source.ID, issue.WorkspaceID, target.ID)
+	if err != nil {
+		slog.Warn("pool clone: create failed", "error", err)
+		return
+	}
+	claimed, err := s.Queries.ClaimUnassignedTodoIssueForAgent(ctx, db.ClaimUnassignedTodoIssueForAgentParams{WorkspaceID: issue.WorkspaceID, AssigneeID: clone.ID})
+	if err == nil {
+		_, err = s.TaskService.EnqueueTaskForIssue(ctx, claimed)
+	}
+	if err == nil {
+		slog.Info("pool clone: dispatched", "issue_id", util.UUIDToString(claimed.ID), "source_agent_id", util.UUIDToString(source.ID), "clone_agent_id", util.UUIDToString(clone.ID), "runtime_id", util.UUIDToString(target.ID))
+		return
+	}
+	// Compensate only resources this dispatch created. The conditional unclaim
+	// prevents a late retry from removing somebody else's assignment.
+	if !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("pool clone: dispatch failed; compensating", "error", err)
+	}
+	if claimed.ID.Valid {
+		_, _ = s.Queries.UnclaimTodoIssueForPoolAgent(ctx, db.UnclaimTodoIssueForPoolAgentParams{ID: claimed.ID, AssigneeID: clone.ID})
+	}
+	_ = s.Queries.ArchivePoolClone(ctx, clone.ID)
 }
 
 // linkAttachments links the given attachment IDs to the newly created

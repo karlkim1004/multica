@@ -102,6 +102,17 @@ UPDATE issue SET
 WHERE id = $1
 RETURNING *;
 
+-- name: UnclaimTodoIssueForPoolAgent :one
+-- Failure compensation for a just-created overload clone: only undo the
+-- exact temporary owner, never a user or another dispatcher assignment.
+UPDATE issue
+SET assignee_type = NULL, assignee_id = NULL, updated_at = now()
+WHERE id = $1
+  AND status = 'todo'
+  AND assignee_type = 'agent'
+  AND assignee_id = $2
+RETURNING *;
+
 -- name: UpdateIssueStatus :one
 -- Workspace_id in the WHERE clause is a SQL-layer tenant guard; see DeleteIssue.
 UPDATE issue SET

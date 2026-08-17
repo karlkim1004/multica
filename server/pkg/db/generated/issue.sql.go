@@ -1197,6 +1197,56 @@ func (q *Queries) SetIssueMetadataKey(ctx context.Context, arg SetIssueMetadataK
 	return i, err
 }
 
+const unclaimTodoIssueForPoolAgent = `-- name: UnclaimTodoIssueForPoolAgent :one
+UPDATE issue
+SET assignee_type = NULL, assignee_id = NULL, updated_at = now()
+WHERE id = $1
+  AND status = 'todo'
+  AND assignee_type = 'agent'
+  AND assignee_id = $2
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage
+`
+
+type UnclaimTodoIssueForPoolAgentParams struct {
+	ID         pgtype.UUID `json:"id"`
+	AssigneeID pgtype.UUID `json:"assignee_id"`
+}
+
+// Failure compensation for a just-created overload clone: only undo the
+// exact temporary owner, never a user or another dispatcher assignment.
+func (q *Queries) UnclaimTodoIssueForPoolAgent(ctx context.Context, arg UnclaimTodoIssueForPoolAgentParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, unclaimTodoIssueForPoolAgent, arg.ID, arg.AssigneeID)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+	)
+	return i, err
+}
+
 const updateIssue = `-- name: UpdateIssue :one
 UPDATE issue SET
     title = COALESCE($2, title),
