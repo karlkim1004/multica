@@ -122,21 +122,16 @@ WHERE id = $1 AND workspace_id = $3
 RETURNING *;
 
 -- name: ClaimUnassignedTodoIssueForAgent :one
--- Atomically binds one unassigned todo item to a selected worker.  The
--- FOR UPDATE SKIP LOCKED clause makes concurrent pool dispatchers choose
--- distinct work without holding a workspace-wide mutex.
+-- Atomically binds the explicitly opt-in issue to a selected worker.  It must
+-- never search the workspace queue: ordinary unassigned todo items are not
+-- pool work and retain their NULL assignee.
 UPDATE issue
-SET assignee_type = 'agent', assignee_id = $2, updated_at = now()
-WHERE id = (
-    SELECT candidate.id FROM issue AS candidate
-    WHERE candidate.workspace_id = $1
-      AND candidate.status = 'todo'
-      AND candidate.assignee_id IS NULL
-      AND candidate.assignee_type IS NULL
-    ORDER BY candidate.priority DESC, candidate.created_at ASC
-    LIMIT 1
-    FOR UPDATE SKIP LOCKED
-)
+SET assignee_type = 'agent', assignee_id = @assignee_id, updated_at = now()
+WHERE id = @issue_id
+  AND workspace_id = @workspace_id
+  AND status = 'todo'
+  AND assignee_id IS NULL
+  AND assignee_type IS NULL
 RETURNING *;
 
 -- name: CreateIssueWithOrigin :one

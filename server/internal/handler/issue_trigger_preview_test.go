@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // seededReadyAgentID returns a workspace agent that has a runtime bound (the
@@ -89,6 +91,36 @@ func TestCreateIssuePoolDispatchClaimsUnassignedTodo(t *testing.T) {
 	}
 	if taskCountFor(t, issue.ID, assigneeID) != 1 {
 		t.Fatalf("expected one queued task for pool claim, issue=%s agent=%s", issue.ID, assigneeID)
+	}
+}
+
+func TestPoolDispatchDoesNotClaimExistingOrdinaryTodo(t *testing.T) {
+	workerID := seededReadyAgentID(t)
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET status = 'idle' WHERE id = $1`, workerID); err != nil {
+		t.Fatal(err)
+	}
+	ordinary := createIssueForTest(t, map[string]any{
+		"title":  "ordinary todo must remain unassigned",
+		"status": "todo",
+	})
+	optIn := createIssueForTest(t, map[string]any{
+		"title":         "only this explicit pool todo may be claimed",
+		"status":        "todo",
+		"pool_dispatch": true,
+	})
+	var ordinaryAssignee pgtype.UUID
+	if err := testPool.QueryRow(context.Background(), `SELECT assignee_id FROM issue WHERE id = $1`, ordinary.ID).Scan(&ordinaryAssignee); err != nil {
+		t.Fatal(err)
+	}
+	if ordinaryAssignee.Valid {
+		t.Fatalf("ordinary non-opt-in todo was claimed by %s", ordinaryAssignee.String())
+	}
+	var optInAssignee string
+	if err := testPool.QueryRow(context.Background(), `SELECT assignee_id FROM issue WHERE id = $1`, optIn.ID).Scan(&optInAssignee); err != nil || optInAssignee == "" {
+		t.Fatalf("opt-in todo was not claimed: %v", err)
+	}
+	if taskCountFor(t, optIn.ID, optInAssignee) != 1 {
+		t.Fatal("opt-in todo did not enqueue exactly one task")
 	}
 }
 

@@ -316,6 +316,7 @@ func (s *IssueService) dispatchUnassignedTodo(ctx context.Context, issue db.Issu
 			continue
 		}
 		claimed, err := s.Queries.ClaimUnassignedTodoIssueForAgent(ctx, db.ClaimUnassignedTodoIssueForAgentParams{
+			IssueID:     issue.ID,
 			WorkspaceID: issue.WorkspaceID,
 			AssigneeID:  worker.ID,
 		})
@@ -363,7 +364,7 @@ func (s *IssueService) dispatchOverloadClone(ctx context.Context, issue db.Issue
 		slog.Warn("pool clone: create failed", "error", err)
 		return
 	}
-	claimed, err := s.Queries.ClaimUnassignedTodoIssueForAgent(ctx, db.ClaimUnassignedTodoIssueForAgentParams{WorkspaceID: issue.WorkspaceID, AssigneeID: clone.ID})
+	claimed, err := s.Queries.ClaimUnassignedTodoIssueForAgent(ctx, db.ClaimUnassignedTodoIssueForAgentParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, AssigneeID: clone.ID})
 	if err == nil {
 		_, err = s.TaskService.EnqueueTaskForIssue(ctx, claimed)
 	}

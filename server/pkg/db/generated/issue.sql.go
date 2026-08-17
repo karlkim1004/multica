@@ -49,30 +49,26 @@ func (q *Queries) ChildIssueProgress(ctx context.Context, workspaceID pgtype.UUI
 
 const claimUnassignedTodoIssueForAgent = `-- name: ClaimUnassignedTodoIssueForAgent :one
 UPDATE issue
-SET assignee_type = 'agent', assignee_id = $2, updated_at = now()
-WHERE id = (
-    SELECT candidate.id FROM issue AS candidate
-    WHERE candidate.workspace_id = $1
-      AND candidate.status = 'todo'
-      AND candidate.assignee_id IS NULL
-      AND candidate.assignee_type IS NULL
-    ORDER BY candidate.priority DESC, candidate.created_at ASC
-    LIMIT 1
-    FOR UPDATE SKIP LOCKED
-)
+SET assignee_type = 'agent', assignee_id = $1, updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND status = 'todo'
+  AND assignee_id IS NULL
+  AND assignee_type IS NULL
 RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage
 `
 
 type ClaimUnassignedTodoIssueForAgentParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	AssigneeID  pgtype.UUID `json:"assignee_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-// Atomically binds one unassigned todo item to a selected worker.  The
-// FOR UPDATE SKIP LOCKED clause makes concurrent pool dispatchers choose
-// distinct work without holding a workspace-wide mutex.
+// Atomically binds the explicitly opt-in issue to a selected worker.  It must
+// never search the workspace queue: ordinary unassigned todo items are not
+// pool work and retain their NULL assignee.
 func (q *Queries) ClaimUnassignedTodoIssueForAgent(ctx context.Context, arg ClaimUnassignedTodoIssueForAgentParams) (Issue, error) {
-	row := q.db.QueryRow(ctx, claimUnassignedTodoIssueForAgent, arg.WorkspaceID, arg.AssigneeID)
+	row := q.db.QueryRow(ctx, claimUnassignedTodoIssueForAgent, arg.AssigneeID, arg.IssueID, arg.WorkspaceID)
 	var i Issue
 	err := row.Scan(
 		&i.ID,
