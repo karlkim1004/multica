@@ -39,16 +39,10 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 	// the daemon-version gate before we ever reach the parent_issue_id check.
 	var runtimeID, agentID string
 	if err := testPool.QueryRow(ctx,
-		`SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
 		testWorkspaceID,
-	).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx,
-		`SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("fetch agent and its runtime: %v", err)
 	}
 	if _, err := testPool.Exec(ctx,
 		`UPDATE agent_runtime SET metadata = jsonb_build_object('cli_version', $1::text) WHERE id = $2`,
