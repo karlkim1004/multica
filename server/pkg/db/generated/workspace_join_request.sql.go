@@ -141,6 +141,28 @@ func (q *Queries) GetWorkspaceJoinRequest(ctx context.Context, id pgtype.UUID) (
 	return i, err
 }
 
+const getWorkspaceJoinRequestForUpdate = `-- name: GetWorkspaceJoinRequestForUpdate :one
+SELECT id, workspace_id, user_id, status, requested_at, reviewed_at, reviewed_by, rejection_reason FROM workspace_join_request
+WHERE id = $1
+FOR UPDATE
+`
+
+func (q *Queries) GetWorkspaceJoinRequestForUpdate(ctx context.Context, id pgtype.UUID) (WorkspaceJoinRequest, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceJoinRequestForUpdate, id)
+	var i WorkspaceJoinRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Status,
+		&i.RequestedAt,
+		&i.ReviewedAt,
+		&i.ReviewedBy,
+		&i.RejectionReason,
+	)
+	return i, err
+}
+
 const listPendingWorkspaceJoinRequests = `-- name: ListPendingWorkspaceJoinRequests :many
 SELECT id, workspace_id, user_id, status, requested_at, reviewed_at, reviewed_by, rejection_reason FROM workspace_join_request
 WHERE workspace_id = $1 AND status = 'pending'

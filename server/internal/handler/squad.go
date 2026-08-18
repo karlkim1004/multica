@@ -158,6 +158,9 @@ func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad
 
 func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
+	if !h.authorizeResource(w, r, workspaceID, ResourceSquad, "read", resourceOwner{}) {
+		return
+	}
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
 		return
@@ -194,8 +197,8 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin")
-	if !ok {
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok || !h.authorizeResource(w, r, workspaceID, ResourceSquad, "create", resourceOwner{}) {
 		return
 	}
 
@@ -283,6 +286,9 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.authorizeResource(w, r, uuidToString(squad.WorkspaceID), ResourceSquad, "read", resourceOwner{CreatorType: ActorMember, CreatorID: uuidToString(squad.CreatorID)}) {
+		return
+	}
 	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
@@ -293,12 +299,11 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
-		return
-	}
-
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, workspaceID, ResourceSquad, "mutate", resourceOwner{CreatorType: ActorMember, CreatorID: uuidToString(squad.CreatorID)}) {
 		return
 	}
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -372,12 +377,11 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
-		return
-	}
-
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, workspaceID, ResourceSquad, "mutate", resourceOwner{CreatorType: ActorMember, CreatorID: uuidToString(squad.CreatorID)}) {
 		return
 	}
 
@@ -634,12 +638,13 @@ func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) 
 
 func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
-		return
-	}
+	// The target squad is loaded below; ownership is checked against it.
 
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, workspaceID, ResourceSquad, "mutate", resourceOwner{CreatorType: ActorMember, CreatorID: uuidToString(squad.CreatorID)}) {
 		return
 	}
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -710,12 +715,11 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
-		return
-	}
-
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, workspaceID, ResourceSquad, "mutate", resourceOwner{CreatorType: ActorMember, CreatorID: uuidToString(squad.CreatorID)}) {
 		return
 	}
 
@@ -761,12 +765,11 @@ func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
-		return
-	}
-
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, workspaceID, ResourceSquad, "mutate", resourceOwner{CreatorType: ActorMember, CreatorID: uuidToString(squad.CreatorID)}) {
 		return
 	}
 

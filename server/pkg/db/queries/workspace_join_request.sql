@@ -7,6 +7,11 @@ RETURNING *;
 SELECT * FROM workspace_join_request
 WHERE id = $1;
 
+-- name: GetWorkspaceJoinRequestForUpdate :one
+SELECT * FROM workspace_join_request
+WHERE id = $1
+FOR UPDATE;
+
 -- name: GetPendingWorkspaceJoinRequest :one
 SELECT * FROM workspace_join_request
 WHERE workspace_id = $1 AND user_id = $2 AND status = 'pending';

@@ -590,6 +590,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
+					r.Post("/join-codes", h.CreateWorkspaceJoinCode)
+					r.Get("/join-requests", h.ListWorkspaceJoinRequests)
+					r.Post("/join-requests/{requestId}/approve", h.ApproveWorkspaceJoinRequest)
+					r.Post("/join-requests/{requestId}/reject", h.RejectWorkspaceJoinRequest)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Delete("/", h.DeleteMember)
@@ -636,6 +640,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 		})
+
+		// Joining is authenticated but intentionally not member-scoped: a
+		// successful request does not create membership until an admin approves.
+		r.Post("/api/workspace-join-requests", h.CreateWorkspaceJoinRequest)
 
 		// Lark binding-token redemption. NOT workspace-scoped because
 		// the redeemer hits this BEFORE they have any workspace

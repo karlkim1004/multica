@@ -518,6 +518,61 @@ func TestDeleteIssueRejectsInvalidUUID(t *testing.T) {
 	}
 }
 
+func createHandlerTestMember(t *testing.T, role string) string {
+	t.Helper()
+	var userID string
+	if err := testPool.QueryRow(context.Background(), `INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id`, t.Name(), t.Name()+"@handler-test.local").Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(context.Background(), `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)`, testWorkspaceID, userID, role); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
+	return userID
+}
+
+func TestDeleteIssueForbidsOtherUsersIssue(t *testing.T) {
+	otherUserID := createHandlerTestMember(t, RoleGeneralUser)
+	w := httptest.NewRecorder()
+	testHandler.CreateIssue(w, newRequest("POST", "/api/issues", map[string]any{"title": "owner issue"}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	_ = json.NewDecoder(w.Body).Decode(&issue)
+	w = httptest.NewRecorder()
+	testHandler.DeleteIssue(w, withURLParam(newRequestAs(otherUserID, "DELETE", "/api/issues/"+issue.ID, nil), "id", issue.ID))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("delete other issue: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM issue WHERE id = $1`, issue.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("forbidden delete changed row: count=%d err=%v", count, err)
+	}
+}
+
+func TestBatchDeleteIssuesIsAtomicWhenOneIssueForbidden(t *testing.T) {
+	otherUserID := createHandlerTestMember(t, RoleGeneralUser)
+	// Seed the caller-owned and owner-owned rows so the batch must preflight
+	// both before deleting either one.
+	var ownID, foreignID string
+	if err := testPool.QueryRow(context.Background(), `INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, priority, position, number) VALUES ($1, 'member', $2, 'own', 'todo', 'none', 1, 99001) RETURNING id`, testWorkspaceID, otherUserID).Scan(&ownID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(context.Background(), `INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, priority, position, number) VALUES ($1, 'member', $2, 'foreign', 'todo', 'none', 2, 99002) RETURNING id`, testWorkspaceID, testUserID).Scan(&foreignID); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	testHandler.BatchDeleteIssues(w, newRequestAs(otherUserID, "POST", "/api/issues/batch-delete", map[string]any{"issue_ids": []string{ownID, foreignID}}))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("mixed batch: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM issue WHERE id IN ($1, $2)`, ownID, foreignID).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("mixed forbidden batch deleted rows: count=%d err=%v", count, err)
+	}
+}
+
 // TestCreateIssueDefaultStatusIsTodo verifies that issues created without an
 // explicit status default to "todo" so the daemon picks them up immediately.
 // Before this fix the default was "backlog", which daemons ignore.
