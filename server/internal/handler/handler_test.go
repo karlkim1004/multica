@@ -573,6 +573,43 @@ func TestBatchDeleteIssuesIsAtomicWhenOneIssueForbidden(t *testing.T) {
 	}
 }
 
+// General users are write-only issue submitters. This exercises the router
+// middleware around the real handlers so a newly added issue-derived route
+// cannot accidentally bypass the per-resource checks.
+func TestGeneralUserWorkspaceRouteRestriction(t *testing.T) {
+	generalUserID := createHandlerTestMember(t, RoleGeneralUser)
+
+	// Seed an owner issue; neither listing nor reading it may reach the handler.
+	w := httptest.NewRecorder()
+	testHandler.CreateIssue(w, newRequest("POST", "/api/issues", map[string]any{"title": "owner-only issue"}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("seed issue: %d %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	_ = json.NewDecoder(w.Body).Decode(&issue)
+
+	list := testHandler.RestrictGeneralUserWorkspaceRoutes(http.HandlerFunc(testHandler.ListIssues))
+	w = httptest.NewRecorder()
+	list.ServeHTTP(w, newRequestAs(generalUserID, "GET", "/api/issues/", nil))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("general list: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	get := testHandler.RestrictGeneralUserWorkspaceRoutes(http.HandlerFunc(testHandler.GetIssue))
+	w = httptest.NewRecorder()
+	get.ServeHTTP(w, withURLParam(newRequestAs(generalUserID, "GET", "/api/issues/"+issue.ID, nil), "id", issue.ID))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("general get: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	create := testHandler.RestrictGeneralUserWorkspaceRoutes(http.HandlerFunc(testHandler.CreateIssue))
+	w = httptest.NewRecorder()
+	create.ServeHTTP(w, newRequestAs(generalUserID, "POST", "/api/issues/", map[string]any{"title": "general may create"}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("general create: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestWorkspaceJoinRequestApprovalIsIdempotent(t *testing.T) {
 	// Owner creates a reusable code; applicant is deliberately not a member.
 	w := httptest.NewRecorder()

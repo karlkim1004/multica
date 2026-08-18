@@ -106,6 +106,37 @@ func (h *Handler) authorizeResource(w http.ResponseWriter, r *http.Request, work
 	return false
 }
 
+// RestrictGeneralUserWorkspaceRoutes closes the route-level gap between the
+// resource handlers. A general_user is deliberately a write-only issue
+// submitter: it may create an issue, but may not read or mutate any existing
+// workspace resource (including issue-derived endpoints such as comments,
+// metadata, labels, subscriptions, reactions, and task actions).
+//
+// This middleware is installed inside the workspace-membership group. Agent
+// task tokens retain their existing daemon-scoped authorization and must not
+// be reclassified as their backing human member here.
+func (h *Handler) RestrictGeneralUserWorkspaceRoutes(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := h.resolveWorkspaceID(r)
+		member, ok := h.workspaceMember(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		actorType, _ := h.resolveActor(r, requestUserID(r), workspaceID)
+		if actorType == ActorAgent || effectiveMemberRole(member.Role) != RoleGeneralUser {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// chi accepts both forms for the collection route.
+		if r.Method == http.MethodPost && (r.URL.Path == "/api/issues" || r.URL.Path == "/api/issues/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+	})
+}
+
 // resourceAllowed is the side-effect-free form used to preflight batch
 // mutations. It lets a handler return a single truthful batch response before
 // any rows are changed.

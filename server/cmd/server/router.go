@@ -705,7 +705,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		// --- Workspace-scoped routes (all require workspace membership) ---
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireWorkspaceMember(queries))
+		r.Use(middleware.RequireWorkspaceMember(queries))
+		r.Use(h.RestrictGeneralUserWorkspaceRoutes)
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
