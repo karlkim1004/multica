@@ -573,6 +573,53 @@ func TestBatchDeleteIssuesIsAtomicWhenOneIssueForbidden(t *testing.T) {
 	}
 }
 
+func TestWorkspaceJoinRequestApprovalIsIdempotent(t *testing.T) {
+	// Owner creates a reusable code; applicant is deliberately not a member.
+	w := httptest.NewRecorder()
+	testHandler.CreateWorkspaceJoinCode(w, withURLParam(newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/join-codes", nil), "id", testWorkspaceID))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create join code: %d %s", w.Code, w.Body.String())
+	}
+	var code struct {
+		JoinCode string `json:"join_code"`
+	}
+	_ = json.NewDecoder(w.Body).Decode(&code)
+	applicant := createHandlerTestMember(t, "general_user")
+	_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, applicant)
+	w = httptest.NewRecorder()
+	testHandler.CreateWorkspaceJoinRequest(w, newRequestAs(applicant, "POST", "/api/workspace-join-requests", map[string]any{"join_code": code.JoinCode}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create join request: %d %s", w.Code, w.Body.String())
+	}
+	var request workspaceJoinRequestResponse
+	_ = json.NewDecoder(w.Body).Decode(&request)
+	var memberships int
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, applicant).Scan(&memberships)
+	if memberships != 0 {
+		t.Fatalf("pending request created membership: %d", memberships)
+	}
+
+	approve := func() workspaceJoinRequestResponse {
+		w = httptest.NewRecorder()
+		req := withURLParams(newRequest("POST", "/", nil), "id", testWorkspaceID, "requestId", request.ID)
+		testHandler.ApproveWorkspaceJoinRequest(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("approve join request: %d %s", w.Code, w.Body.String())
+		}
+		var response workspaceJoinRequestResponse
+		_ = json.NewDecoder(w.Body).Decode(&response)
+		return response
+	}
+	first, second := approve(), approve()
+	if first.Status != "approved" || second.Status != "approved" {
+		t.Fatalf("approval statuses: %q, %q", first.Status, second.Status)
+	}
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, applicant).Scan(&memberships)
+	if memberships != 1 {
+		t.Fatalf("idempotent approval membership count: got %d, want 1", memberships)
+	}
+}
+
 // TestCreateIssueDefaultStatusIsTodo verifies that issues created without an
 // explicit status default to "todo" so the daemon picks them up immediately.
 // Before this fix the default was "backlog", which daemons ignore.
