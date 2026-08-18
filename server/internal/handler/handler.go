@@ -606,6 +606,23 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	return issue, true
 }
 
+// canMutateIssue keeps the super-user ownership rule at the resource boundary.
+// Owner/admin retain their existing workspace-wide mutation authority.
+func (h *Handler) canMutateIssue(w http.ResponseWriter, r *http.Request, issue db.Issue) bool {
+	member, ok := h.workspaceMember(w, r, uuidToString(issue.WorkspaceID))
+	if !ok {
+		return false
+	}
+	if roleAllowed(member.Role, "owner", "admin") {
+		return true
+	}
+	if member.Role == "super_user" && issue.CreatorType == "member" && uuidToString(issue.CreatorID) == uuidToString(member.UserID) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "insufficient permissions")
+	return false
+}
+
 // resolveIssueByIdentifier tries to look up an issue by "PREFIX-NUMBER" format.
 func (h *Handler) resolveIssueByIdentifier(ctx context.Context, id, workspaceID string) (db.Issue, bool) {
 	parts := splitIdentifier(id)

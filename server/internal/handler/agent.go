@@ -993,18 +993,19 @@ func rejectIncompatibleAgentModel(w http.ResponseWriter, provider, model string)
 }
 
 // canManageAgent checks whether the current user can update or archive an agent.
-// Only the agent owner or workspace owner/admin can manage any agent,
-// regardless of whether it is public or private.
+// Workspace owners/admins can manage every agent. A super_user may manage
+// only an agent whose owner_id is that human user; absent/system ownership is
+// never inferred. Ordinary members cannot manage agents.
 func (h *Handler) canManageAgent(w http.ResponseWriter, r *http.Request, agent db.Agent) bool {
 	wsID := uuidToString(agent.WorkspaceID)
-	member, ok := h.requireWorkspaceRole(w, r, wsID, "agent not found", "owner", "admin", "member")
+	member, ok := h.requireWorkspaceMember(w, r, wsID, "agent not found")
 	if !ok {
 		return false
 	}
 	isAdmin := roleAllowed(member.Role, "owner", "admin")
-	isAgentOwner := uuidToString(agent.OwnerID) == requestUserID(r)
-	if !isAdmin && !isAgentOwner {
-		writeError(w, http.StatusForbidden, "only the agent owner can manage this agent")
+	isSuperUserOwner := member.Role == "super_user" && agent.OwnerID.Valid && uuidToString(agent.OwnerID) == uuidToString(member.UserID)
+	if !isAdmin && !isSuperUserOwner {
+		writeError(w, http.StatusForbidden, "only an admin or owning super user can manage this agent")
 		return false
 	}
 	return true

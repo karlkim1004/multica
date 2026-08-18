@@ -154,6 +154,22 @@ func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad
 	return resp, nil
 }
 
+// canManageSquad grants mutation only to workspace owners/admins or a
+// super_user whose human user ID is the squad's explicit creator. creator_id
+// is the only ownership source; absent/system ownership is never guessed.
+func (h *Handler) canManageSquad(w http.ResponseWriter, r *http.Request, squad db.Squad) bool {
+	member, ok := h.requireWorkspaceMember(w, r, uuidToString(squad.WorkspaceID), "squad not found")
+	if !ok {
+		return false
+	}
+	if roleAllowed(member.Role, "owner", "admin") ||
+		(member.Role == "super_user" && squad.CreatorID.Valid && uuidToString(squad.CreatorID) == uuidToString(member.UserID)) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "only an admin or owning super user can manage this squad")
+	return false
+}
+
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
@@ -194,8 +210,12 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin")
+	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
 	if !ok {
+		return
+	}
+	if !roleAllowed(member.Role, "owner", "admin", "super_user") {
+		writeError(w, http.StatusForbidden, "only an admin or super user can create squads")
 		return
 	}
 
@@ -293,12 +313,11 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
-		return
-	}
-
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
+		return
+	}
+	if !h.canManageSquad(w, r, squad) {
 		return
 	}
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -372,12 +391,11 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
-		return
-	}
-
 	squad, _, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
+		return
+	}
+	if !h.canManageSquad(w, r, squad) {
 		return
 	}
 
