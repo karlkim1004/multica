@@ -221,6 +221,15 @@ func buildChatPrompt(task Task) string {
 			}
 		}
 	}
+	// No native session to resume — usually a runtime switch (e.g.
+	// Claude ↔ Codex) between turns. The process starts with zero memory
+	// of this conversation, so replay the stored transcript before the
+	// new message (NEX-964).
+	if task.ChatHistory != "" {
+		b.WriteString("Conversation history from before this turn. Your session's native memory does not include this — likely because the runtime changed since the last message — so it is reconstructed here from the stored transcript:\n\n")
+		b.WriteString(task.ChatHistory)
+		b.WriteString("\n\n")
+	}
 	fmt.Fprintf(&b, "User message:\n%s\n", task.ChatMessage)
 	// List attachments by id + filename so the agent can fetch them via
 	// the CLI. We deliberately do NOT inline the URL: chat attachments
