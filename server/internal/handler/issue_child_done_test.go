@@ -57,6 +57,8 @@ func newChildDoneFixture(t *testing.T, parentStatus string) childDoneFixture {
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, parent.ID)
 	})
 
+	markIssueDoneEvidenceForTest(t, child.ID)
+
 	return childDoneFixture{parent: parent, child: child}
 }
 
@@ -250,6 +252,7 @@ func TestChildDoneSkippedWhenNoParent(t *testing.T) {
 	// the workspace attributable to this orphan transition. We can only
 	// check that the orphan didn't somehow get one itself, but combined
 	// with the no-parent code path returning early, that is sufficient.
+	markIssueDoneEvidenceForTest(t, orphan.ID)
 	updateChildStatus(t, orphan.ID, "done")
 
 	if got := countSystemCommentsOn(t, orphan.ID); got != 0 {
