@@ -40,7 +40,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { memberListOptions, invitationListOptions, workspaceKeys } from "@multica/core/workspace/queries";
+import { memberListOptions, invitationListOptions, joinRequestListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import { useT } from "../../i18n";
 
@@ -48,6 +48,8 @@ const ROLE_ICONS: Record<MemberRole, typeof Crown> = {
   owner: Crown,
   admin: Shield,
   member: User,
+  super_user: Shield,
+  general_user: User,
 };
 
 function useRoleLabels() {
@@ -64,10 +66,12 @@ function useRoleLabels() {
       icon: ROLE_ICONS.admin,
     },
     member: {
-      label: t(($) => $.members.roles.member.label),
-      description: t(($) => $.members.roles.member.description),
+      label: "Super user",
+      description: "Legacy role; equivalent to super user",
       icon: ROLE_ICONS.member,
     },
+    super_user: { label: "Super user", description: "Manage resources you created", icon: ROLE_ICONS.super_user },
+    general_user: { label: "General user", description: "Create issues only", icon: ROLE_ICONS.general_user },
   } as const;
 }
 
@@ -235,9 +239,10 @@ export function MembersTab() {
   const wsId = useWorkspaceId();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
+  const { data: joinRequests = [] } = useQuery(joinRequestListOptions(wsId));
 
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<MemberRole>("member");
+  const [inviteRole, setInviteRole] = useState<MemberRole>("super_user");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [memberActionId, setMemberActionId] = useState<string | null>(null);
   const [invitationActionId, setInvitationActionId] = useState<string | null>(null);
@@ -262,7 +267,7 @@ export function MembersTab() {
         role: inviteRole,
       });
       setInviteEmail("");
-      setInviteRole("member");
+      setInviteRole("super_user");
       qc.invalidateQueries({ queryKey: workspaceKeys.invitations(wsId) });
       toast.success(t(($) => $.members.toast_invitation_sent));
     } catch (e) {
@@ -360,7 +365,8 @@ export function MembersTab() {
                     <SelectValue>{() => roleConfig[inviteRole].label}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="member">{roleConfig.member.label}</SelectItem>
+                    <SelectItem value="super_user">{roleConfig.super_user.label}</SelectItem>
+                    <SelectItem value="general_user">{roleConfig.general_user.label}</SelectItem>
                     <SelectItem value="admin">{roleConfig.admin.label}</SelectItem>
                   </SelectContent>
                 </Select>
@@ -412,6 +418,34 @@ export function MembersTab() {
                   onRevoke={() => handleRevokeInvitation(inv)}
                   busy={invitationActionId === inv.id}
                 />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {canManageWorkspace && joinRequests.length > 0 && (
+        <section className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Join requests ({joinRequests.length})</h2>
+          </div>
+          <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
+            {joinRequests.map((request, i) => (
+              <div key={request.id} className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? "border-t border-border/50" : ""}`}>
+                <div className="min-w-0 flex-1 text-sm text-muted-foreground">{request.user_id}</div>
+                <Button size="sm" onClick={async () => {
+                  await api.approveWorkspaceJoinRequest(workspace.id, request.id);
+                  qc.invalidateQueries({ queryKey: workspaceKeys.joinRequests(wsId) });
+                  qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+                  toast.success("Join request approved");
+                }}>Approve</Button>
+                <Button size="sm" variant="outline" onClick={async () => {
+                  const reason = window.prompt("Rejection reason") ?? "";
+                  await api.rejectWorkspaceJoinRequest(workspace.id, request.id, reason);
+                  qc.invalidateQueries({ queryKey: workspaceKeys.joinRequests(wsId) });
+                  toast.success("Join request rejected");
+                }}>Reject</Button>
               </div>
             ))}
           </div>

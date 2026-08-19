@@ -2,9 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -109,6 +111,15 @@ func (h *Handler) reviewWorkspaceJoinRequest(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	var review struct {
+		Reason string `json:"reason"`
+	}
+	if !approve && r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&review); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid rejection reason")
+			return
+		}
+	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to review join request")
@@ -134,7 +145,7 @@ func (h *Handler) reviewWorkspaceJoinRequest(w http.ResponseWriter, r *http.Requ
 				}
 			}
 		} else {
-			request, err = qtx.RejectWorkspaceJoinRequest(r.Context(), db.RejectWorkspaceJoinRequestParams{ID: request.ID, ReviewedBy: member.UserID})
+			request, err = qtx.RejectWorkspaceJoinRequest(r.Context(), db.RejectWorkspaceJoinRequestParams{ID: request.ID, ReviewedBy: member.UserID, RejectionReason: pgtype.Text{String: review.Reason, Valid: review.Reason != ""}})
 		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to review join request")

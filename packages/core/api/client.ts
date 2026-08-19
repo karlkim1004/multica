@@ -38,6 +38,7 @@ import type {
   Workspace,
   WorkspaceRepo,
   MemberWithUser,
+  WorkspaceJoinRequest,
   User,
   Skill,
   SkillSummary,
@@ -1534,6 +1535,28 @@ export class ApiClient {
   async deleteMember(workspaceId: string, memberId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "DELETE",
+    });
+  }
+
+  async createWorkspaceJoinRequest(joinCode: string): Promise<WorkspaceJoinRequest> {
+    return this.fetch("/api/workspace-join-requests", {
+      method: "POST",
+      body: JSON.stringify({ join_code: joinCode }),
+    });
+  }
+
+  async listWorkspaceJoinRequests(workspaceId: string): Promise<WorkspaceJoinRequest[]> {
+    return this.fetch(`/api/workspaces/${workspaceId}/join-requests`);
+  }
+
+  async approveWorkspaceJoinRequest(workspaceId: string, requestId: string): Promise<WorkspaceJoinRequest> {
+    return this.fetch(`/api/workspaces/${workspaceId}/join-requests/${requestId}/approve`, { method: "POST" });
+  }
+
+  async rejectWorkspaceJoinRequest(workspaceId: string, requestId: string, reason: string): Promise<WorkspaceJoinRequest> {
+    return this.fetch(`/api/workspaces/${workspaceId}/join-requests/${requestId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
     });
   }
 

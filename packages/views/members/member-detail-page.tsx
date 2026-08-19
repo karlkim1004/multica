@@ -111,7 +111,9 @@ function RoleBadge({ role }: { role: MemberRole }) {
         ? t(($) => $.role.owner)
         : role === "admin"
           ? t(($) => $.role.admin)
-          : t(($) => $.role.member)}
+          : role === "general_user"
+            ? t(($) => $.role.general_user)
+            : t(($) => $.role.super_user)}
     </span>
   );
 }

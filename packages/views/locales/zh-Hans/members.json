@@ -2,7 +2,9 @@
   "role": {
     "owner": "所有者",
     "admin": "管理员",
-    "member": "成员"
+    "member": "超级用户",
+    "super_user": "超级用户",
+    "general_user": "普通用户"
   },
   "card": {
     "unavailable": "成员信息不可用",

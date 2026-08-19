@@ -2,7 +2,9 @@
   "role": {
     "owner": "Owner",
     "admin": "Admin",
-    "member": "Member"
+    "member": "Super user",
+    "super_user": "Super user",
+    "general_user": "General user"
   },
   "card": {
     "unavailable": "Member unavailable",
