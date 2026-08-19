@@ -102,9 +102,9 @@ describe("useRealtimeSync — ws instance change", () => {
     rerender({ ws: ws2 });
 
     // Should have called invalidateQueries for all workspace-scoped keys
-    // (15 workspace-scoped + 6 per-issue prefixes + 1 workspaceKeys.list()
-    // = 22 calls)
-    expect(invalidateSpy).toHaveBeenCalledTimes(22);
+    // (15 workspace-scoped + 6 per-issue prefixes + 3 per-session chat
+    // prefixes + 1 workspaceKeys.list() = 25 calls)
+    expect(invalidateSpy).toHaveBeenCalledTimes(25);
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
@@ -163,5 +163,31 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(["issues", "usage"]);
     expect(calls).toContainEqual(["issues", "attachments"]);
     expect(calls).toContainEqual(["issues", "tasks"]);
+  });
+
+  it("invalidates per-session chat caches (no wsId in key) on ws instance change", () => {
+    // chatKeys.messages/pendingTask/taskMessages are keyed by sessionId/
+    // taskId, not wsId, so they sit outside the ["chat", wsId] prefix above.
+    // A WS lifecycle event (chat:message/chat:done/task:failed) missed while
+    // disconnected leaves the active session's messages and pending-task
+    // stale forever (staleTime: Infinity) — the chat screen stays stuck on
+    // "실행 중" until a full reload. Recovering on reconnect closes that gap
+    // (NEX-715).
+    const ws1 = createMockWs();
+    const { rerender } = renderHook(
+      ({ ws }) => useRealtimeSync(ws, stores),
+      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
+    );
+
+    invalidateSpy.mockClear();
+    rerender({ ws: null });
+
+    const ws2 = createMockWs();
+    rerender({ ws: ws2 });
+
+    const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
+    expect(calls).toContainEqual(["chat", "messages"]);
+    expect(calls).toContainEqual(["chat", "pending-task"]);
+    expect(calls).toContainEqual(["task-messages"]);
   });
 });
