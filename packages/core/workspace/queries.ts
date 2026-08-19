@@ -7,6 +7,7 @@ export const workspaceKeys = {
   list: () => ["workspaces", "list"] as const,
   members: (wsId: string) => ["workspaces", wsId, "members"] as const,
   invitations: (wsId: string) => ["workspaces", wsId, "invitations"] as const,
+  joinRequests: (wsId: string) => ["workspaces", wsId, "join-requests"] as const,
   myInvitations: () => ["invitations", "mine"] as const,
   agents: (wsId: string) => ["workspaces", wsId, "agents"] as const,
   squads: (wsId: string) => ["workspaces", wsId, "squads"] as const,
@@ -118,6 +119,14 @@ export function invitationListOptions(wsId: string) {
   return queryOptions({
     queryKey: workspaceKeys.invitations(wsId),
     queryFn: () => api.listWorkspaceInvitations(wsId),
+  });
+}
+
+export function joinRequestListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.joinRequests(wsId),
+    queryFn: () => api.listWorkspaceJoinRequests(wsId),
+    enabled: !!wsId,
   });
 }
 

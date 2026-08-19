@@ -157,11 +157,11 @@ func TestGetAgent_PrivateAgentForbidsPlainMember(t *testing.T) {
 	}
 }
 
-// TestListAgents_FiltersPrivateForPlainMember verifies that the workspace
-// agents listing hides private agents from members who lack access. This is
-// what makes the @-mention autocomplete picker (which feeds off this list)
-// drop unreachable private agents without any client-side logic.
-func TestListAgents_FiltersPrivateForPlainMember(t *testing.T) {
+// TestListAgents_ForbidsSuperUser verifies the RBAC rule that a legacy
+// member (effective super_user) cannot list agents. Agent ownership is only
+// discoverable to its owner via the single-resource endpoint; a workspace-wide
+// list would disclose other members' agents.
+func TestListAgents_ForbidsSuperUser(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -178,14 +178,12 @@ func TestListAgents_FiltersPrivateForPlainMember(t *testing.T) {
 		t.Fatalf("ListAgents as owner did not include private agent %s", agentID)
 	}
 
-	// Plain member does NOT see the agent.
+	// Legacy member is policy-equivalent to super_user and receives a raw 403,
+	// rather than a filtered list that still confirms the resource category.
 	w = httptest.NewRecorder()
 	testHandler.ListAgents(w, newRequestAs(memberID, "GET", "/api/agents", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListAgents as plain member: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if listContainsAgent(t, w.Body.Bytes(), agentID) {
-		t.Fatalf("ListAgents as plain member leaked private agent %s", agentID)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("ListAgents as super_user: expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -347,6 +347,9 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
+		return
+	}
 	labelID, ok := parseUUIDOrBadRequest(w, req.LabelID, "label_id")
 	if !ok {
 		return
@@ -405,6 +408,9 @@ func (h *Handler) DetachLabel(w http.ResponseWriter, r *http.Request) {
 	// explicit 404.
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
 		return
 	}
 	labelUUID, ok := parseUUIDOrBadRequest(w, labelID, "label id")

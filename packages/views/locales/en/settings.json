@@ -362,6 +362,19 @@
     "remove_action": "Remove from workspace",
     "cannot_demote_last_owner_title": "Promote another member to owner first — a workspace must keep at least one owner.",
     "cannot_demote_last_owner": "Cannot demote the last owner",
+    "join_requests_title": "Join requests ({{count}})",
+    "approve_join_request": "Approve",
+    "reject_join_request": "Reject",
+    "reject_reason_prompt": "Rejection reason",
+    "toast_join_request_approved": "Join request approved",
+    "toast_join_request_rejected": "Join request rejected",
+    "join_request_title": "Join a workspace",
+    "join_request_description": "Enter the join code or link given to you by an admin.",
+    "join_code_label": "Join code or link",
+    "join_request_submit": "Request to join",
+    "join_request_submit_failed": "Could not submit join request.",
+    "join_request_pending_title": "Request pending",
+    "join_request_pending_description": "A workspace admin must approve your request before you can access it.",
     "roles": {
       "owner": {
         "label": "Owner",
@@ -374,6 +387,14 @@
       "member": {
         "label": "Member",
         "description": "Create and work on issues"
+      },
+      "super_user": {
+        "label": "Super user",
+        "description": "Manage resources you created"
+      },
+      "general_user": {
+        "label": "General user",
+        "description": "Create issues only"
       }
     }
   }
