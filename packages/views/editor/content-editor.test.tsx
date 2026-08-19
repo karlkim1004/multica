@@ -10,6 +10,7 @@ const mockSetTextSelection = vi.hoisted(() => vi.fn());
 const editorState = vi.hoisted(() => ({
   isFocused: false,
   isDestroyed: false,
+  isComposing: false,
   markdown: "",
   // Nodes the mocked doc reports via `descendants`. The content-sync effect
   // walks these to detect in-flight uploads; default empty = nothing uploading.
@@ -62,13 +63,21 @@ vi.mock("./attachment-download-context", () => ({
 const editorRef = vi.hoisted<{ current: unknown }>(() => ({ current: null }));
 const onCreateFired = vi.hoisted(() => ({ value: false }));
 const latestEditorOptions = vi.hoisted<{
-  current?: { onUpdate?: (args: { editor: unknown }) => void };
+  current?: {
+    onUpdate?: (args: { editor: unknown }) => void;
+    editorProps?: {
+      handleDOMEvents?: { compositionend?: (view: unknown, event: Event) => boolean };
+    };
+  };
 }>(() => ({}));
 
 vi.mock("@tiptap/react", () => ({
   useEditor: (options: {
     onCreate?: (args: { editor: unknown }) => void;
     onUpdate?: (args: { editor: unknown }) => void;
+    editorProps?: {
+      handleDOMEvents?: { compositionend?: (view: unknown, event: Event) => boolean };
+    };
   }) => {
     latestEditorOptions.current = options;
     if (!editorRef.current) {
@@ -78,6 +87,11 @@ vi.mock("@tiptap/react", () => ({
         },
         get isDestroyed() {
           return editorState.isDestroyed;
+        },
+        view: {
+          get composing() {
+            return editorState.isComposing;
+          },
         },
         commands: {
           focus: mockFocus,
@@ -119,6 +133,7 @@ describe("ContentEditor", () => {
     vi.clearAllMocks();
     editorState.isFocused = false;
     editorState.isDestroyed = false;
+    editorState.isComposing = false;
     editorState.markdown = "";
     editorState.uploadingNodes = [];
     editorRef.current = null;
@@ -184,6 +199,49 @@ describe("ContentEditor", () => {
     editorState.uploadingNodes = [];
     rerender(<ContentEditor defaultValue="new content from server" />);
     expect(mockSetContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replace a Korean IME composition when an attachment-driven render changes the draft", () => {
+    editorState.markdown = "![file](/api/attachments/att-1/download)\n\nㅈ";
+    const { rerender } = render(
+      <ContentEditor defaultValue="![file](/api/attachments/att-1/download)" />,
+    );
+    mockSetContent.mockClear();
+
+    // ProseMirror exposes this while the browser's Korean IME owns the
+    // composing text. Replacing its document here commits it as standalone
+    // jamo, so the next keystroke can no longer form "제".
+    editorState.isComposing = true;
+    rerender(
+      <ContentEditor defaultValue="![file](/api/attachments/att-1/download)\n\nㅈ" />,
+    );
+
+    expect(mockSetContent).not.toHaveBeenCalled();
+  });
+
+  it("replays an attachment-driven external sync after Korean IME composition ends", async () => {
+    const original = "![file](/api/attachments/att-1/download)";
+    const deferred = `${original}\n\nserver attachment metadata`;
+    editorState.markdown = original;
+    const { rerender } = render(<ContentEditor defaultValue={original} />);
+
+    editorState.isComposing = true;
+    rerender(<ContentEditor defaultValue={deferred} />);
+    expect(mockSetContent).not.toHaveBeenCalled();
+
+    editorState.isComposing = false;
+    await act(async () => {
+      latestEditorOptions.current?.editorProps?.handleDOMEvents?.compositionend?.(
+        editorRef.current,
+        new Event("compositionend"),
+      );
+      await Promise.resolve();
+    });
+
+    expect(mockSetContent).toHaveBeenCalledWith(
+      deferred,
+      expect.objectContaining({ emitUpdate: false, contentType: "markdown" }),
+    );
   });
 
   it("does not sync when editor is focused and has unsaved local edits", () => {
