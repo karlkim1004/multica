@@ -18,12 +18,14 @@ hash_value="$(printf '%s' "$PWD" | cksum | awk '{print $1}')"
 offset=$((hash_value % 1000))
 
 postgres_db="multica_${slug}_${offset}"
-postgres_port=5432
+compose_project="multica_${slug}_${offset}"
+postgres_port=$((15000 + offset))
 backend_port=$((18080 + offset))
 frontend_port=$((13000 + offset))
 frontend_origin="http://localhost:${frontend_port}"
 
 cat > "$ENV_FILE" <<EOF
+COMPOSE_PROJECT_NAME=${compose_project}
 POSTGRES_DB=${postgres_db}
 POSTGRES_USER=multica
 POSTGRES_PASSWORD=multica
@@ -46,7 +48,7 @@ NEXT_PUBLIC_WS_URL=ws://localhost:${backend_port}/ws
 EOF
 
 echo "Generated $ENV_FILE for worktree '$worktree_name'"
-echo "  Shared Postgres: localhost:${postgres_port}"
+echo "  Disposable Postgres: localhost:${postgres_port} (Compose project: ${compose_project})"
 echo "  Database: ${postgres_db}"
 echo "  Backend:  http://localhost:${backend_port}"
 echo "  Frontend: ${frontend_origin}"

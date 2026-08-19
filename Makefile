@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree verify-reconnect-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -262,6 +262,9 @@ stop-worktree: ## Stop this worktree's backend and frontend processes
 
 check-worktree: ## Run the full verification pipeline for this worktree
 	@ENV_FILE=$(WORKTREE_ENV_FILE) bash scripts/check.sh
+
+verify-reconnect-worktree: ## Start an isolated worktree stack, run reconnect probe and related E2E specs, then stop it
+	@bash scripts/verify-reconnect-worktree.sh $(WORKTREE_ENV_FILE)
 
 # ---------- Individual commands ----------
 ##@ Individual commands
