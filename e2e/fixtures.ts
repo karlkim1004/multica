@@ -139,6 +139,30 @@ export class TestApiClient {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
+  async createChatSession(agentId: string, title: string) {
+    const res = await this.authedFetch("/api/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId, title }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(`Failed to create isolated chat session: ${res.status} ${JSON.stringify(body)}`);
+    }
+    return { ...(body as { id: string; workspace_id: string; agent_id: string }), http_status: res.status };
+  }
+
+  async sendChatMessage(sessionId: string, content: string) {
+    const res = await this.authedFetch(`/api/chat/sessions/${sessionId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(`Failed to send isolated chat message: ${res.status} ${JSON.stringify(body)}`);
+    }
+    return { ...(body as { message_id: string; task_id: string; created_at: string }), http_status: res.status };
+  }
+
   async deleteChatSession(id: string) {
     await this.authedFetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
   }
