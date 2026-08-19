@@ -2510,6 +2510,9 @@ func (h *Handler) GetActiveTaskForIssue(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
+		return
+	}
 
 	tasks, err := h.Queries.ListActiveTasksByIssue(r.Context(), issue.ID)
 	if err != nil {

@@ -133,6 +133,9 @@ func (h *Handler) ListIssueMetadata(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": parseIssueMetadata(issue.Metadata)})
 }
 
@@ -156,6 +159,9 @@ func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
 		return
 	}
 	userID, ok := requireUserID(w, r)

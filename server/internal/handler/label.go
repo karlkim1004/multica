@@ -312,6 +312,9 @@ func (h *Handler) ListLabelsForIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
+		return
+	}
 	labels, err := h.Queries.ListLabelsByIssue(r.Context(), db.ListLabelsByIssueParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -345,6 +348,9 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 	// Both the issue and label must belong to this workspace.
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
 		return
 	}
 	labelID, ok := parseUUIDOrBadRequest(w, req.LabelID, "label_id")
