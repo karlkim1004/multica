@@ -99,12 +99,17 @@ test.describe("chat reconnect regression", () => {
         }
       }
       const sockets: E2EMockWebSocket[] = [];
-      window.WebSocket = class extends E2EMockWebSocket {
-        constructor(...args: unknown[]) {
-          super(...args);
-          sockets.push(this);
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = new Proxy(NativeWebSocket, {
+        construct(Target, args) {
+          const url = new URL(String(args[0]), location.href);
+          // Preserve Next dev's HMR connection; only app realtime uses /ws.
+          if (url.pathname !== "/ws") return Reflect.construct(Target, args);
+          const socket = new E2EMockWebSocket();
+          sockets.push(socket);
+          return socket;
         }
-      } as unknown as typeof WebSocket;
+      }) as unknown as typeof WebSocket;
       window.__closeE2EWebSocket = () => sockets.at(-1)?.close();
       window.__e2eWebSocketCount = () => sockets.length;
     });

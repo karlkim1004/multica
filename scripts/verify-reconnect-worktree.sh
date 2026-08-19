@@ -31,6 +31,7 @@ cleanup() {
   stop_tree "$frontend_pid"
   wait "$backend_pid" 2>/dev/null || true
   wait "$frontend_pid" 2>/dev/null || true
+  docker compose --env-file "$ENV_FILE" down -v > /dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -38,6 +39,11 @@ make setup ENV_FILE="$ENV_FILE"
 
 (cd server && go run ./cmd/server) > .reconnect-probe-backend.log 2>&1 &
 backend_pid=$!
+# Browser traffic stays same-origin for the disposable stack.  Next proxies
+# /api and /ws to REMOTE_API_URL, which avoids relying on a host CORS setting.
+REMOTE_API_URL="http://127.0.0.1:${PORT}" \
+NEXT_PUBLIC_API_URL="" \
+NEXT_PUBLIC_WS_URL="" \
 pnpm -C apps/web exec next dev --turbopack --port "$FRONTEND_PORT" > .reconnect-probe-frontend.log 2>&1 &
 frontend_pid=$!
 
