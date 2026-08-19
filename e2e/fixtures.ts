@@ -11,9 +11,14 @@ import { createHmac } from "node:crypto";
 // `||` (not `??`) so an empty `NEXT_PUBLIC_API_URL=` in .env still falls
 // back to localhost. dotenv sets unset-vs-empty both as "" — treating them
 // the same matches user intent.
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
-const JWT_SECRET = process.env.JWT_SECRET || "multica-dev-secret-change-in-production";
+// E2E_* is deliberately separate from application runtime variables so a
+// fresh checkout can point its disposable test stack at local endpoints
+// without copying an application's .env (or its production credentials).
+const API_BASE =
+  process.env.E2E_API_URL || process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
+const DATABASE_URL =
+  process.env.E2E_DATABASE_URL ?? process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
+const JWT_SECRET = process.env.E2E_JWT_SECRET || process.env.JWT_SECRET || "multica-dev-secret-change-in-production";
 
 interface TestWorkspace {
   id: string;
