@@ -5,7 +5,6 @@ import { TestApiClient } from "./fixtures";
 
 const DATABASE_URL =
   process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
-const REPRESENTATIVE_SESSION_ID = "6346dc9b-9894-408b-a241-c4cefd1ecfd1";
 
 type Seed = { runtimeId: string; agentId: string; sessionId: string; workspaceSlug: string };
 
@@ -52,11 +51,12 @@ async function seedIsolatedChat(api: TestApiClient): Promise<Seed> {
     const agentId = agent.rows[0]?.id;
     if (!agentId) throw new Error("Failed to seed isolated E2E agent");
 
-    // The session is created through the public API; the representative
-    // session is never accepted as an input or used as a fallback.
+    // The session is created through the public API. This probe accepts no
+    // pre-existing session identifier, so it cannot select or fall back to a
+    // representative user's session.
     const session = await api.createChatSession(agentId, "E2E reconnect probe");
     expect(session.http_status).toBe(201);
-    expect(session.id).not.toBe(REPRESENTATIVE_SESSION_ID);
+    expect(session.id).toBeTruthy();
     console.log(JSON.stringify({ workspace: workspace.slug, session: session.id, representative_session_match: false }));
     return { runtimeId, agentId, sessionId: session.id, workspaceSlug: workspace.slug };
   } finally {
