@@ -1625,6 +1625,18 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				if strings.TrimSpace(resp.ThreadName) == "" {
 					resp.ThreadName = resp.ChatMessage
 				}
+				// No native session to resume (cold start, runtime switch,
+				// or a stale/poisoned pointer) — the agent process has zero
+				// memory of this conversation. ChatMessage above only carries
+				// the trailing unanswered message(s), so without this the
+				// entire prior conversation silently vanishes (NEX-964).
+				// Reconstruct it from the stored transcript, excluding the
+				// messages already delivered via ChatMessage.
+				if resp.PriorSessionID == "" {
+					if priorCount := len(msgs) - len(unanswered); priorCount > 0 {
+						resp.ChatHistory = buildChatHistoryText(msgs[:priorCount])
+					}
+				}
 			}
 		}
 	}
@@ -1990,6 +2002,53 @@ func trailingUserMessages(msgs []db.ChatMessage) []db.ChatMessage {
 		}
 	}
 	return msgs[start:]
+}
+
+// chatHistoryCharBudget caps the reconstructed transcript injected into a
+// cold-start chat prompt (see buildChatHistoryText). Sized in characters
+// rather than tokens as a cheap, provider-agnostic proxy — the goal is
+// "materially more context than nothing", not a lossless replay.
+const chatHistoryCharBudget = 12000
+
+// buildChatHistoryText renders prior chat_message rows as a "Role: content"
+// transcript, most recent messages first when trimming to fit
+// chatHistoryCharBudget, then restored to chronological order. Used only
+// when the daemon has no native session to resume (NEX-964): the runtime
+// process otherwise starts with zero memory of the conversation. Empty
+// messages are skipped; when older messages are dropped to fit the budget,
+// a marker line says so instead of silently truncating.
+func buildChatHistoryText(history []db.ChatMessage) string {
+	lines := make([]string, 0, len(history))
+	for _, m := range history {
+		content := strings.TrimSpace(m.Content)
+		if content == "" {
+			continue
+		}
+		label := "User"
+		if m.Role == "assistant" {
+			label = "Assistant"
+		}
+		lines = append(lines, label+": "+content)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+
+	total := 0
+	start := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		total += len(lines[i]) + 1
+		if total > chatHistoryCharBudget {
+			start = i + 1
+			break
+		}
+	}
+
+	text := strings.Join(lines[start:], "\n")
+	if start > 0 {
+		text = "[earlier messages omitted for length]\n" + text
+	}
+	return text
 }
 
 // ListPendingTasksByRuntime returns queued/dispatched tasks for a runtime.
