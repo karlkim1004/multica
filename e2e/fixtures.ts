@@ -67,8 +67,8 @@ export class TestApiClient {
 
   async ensureWorkspace(name = "E2E Workspace", slug = "e2e-workspace") {
     const workspaces = await this.getWorkspaces();
-    // Never fall back to an arbitrary workspace: a missing isolated slug must
-    // fail rather than silently targeting the representative workspace.
+    // Never fall back to an arbitrary workspace: that can silently target a
+    // real/representative workspace when the isolated E2E slug is missing.
     const workspace = workspaces.find((item) => item.slug === slug);
     if (workspace) {
       this.workspaceId = workspace.id;

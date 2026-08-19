@@ -5,8 +5,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -686,6 +689,353 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 	}
 	if remaining != 3 {
 		t.Fatalf("expected 3 queued tasks remaining after batched sweep, got %d", remaining)
+	}
+}
+
+// TestSweepSilentQuotaLimitRetries verifies the NEX-897 fix: a task that
+// resumed after a provider_quota_limit failure (Claude Code session/usage
+// limit) but produced no new issue comment within the silence window is
+// failed with reason 'timeout' and auto-retried again — closing the gap
+// where "run started" alone was treated as a successful fallback and a
+// silently stalled Codex run went unnoticed for 4h27m (NEX-893).
+func TestSweepSilentQuotaLimitRetries(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	ctx := context.Background()
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id FROM agent a
+		JOIN member m ON m.workspace_id = a.workspace_id
+		JOIN "user" u ON u.id = m.user_id
+		WHERE u.email = $1
+		LIMIT 1
+	`, integrationTestEmail).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("failed to find test agent: %v", err)
+	}
+
+	// Each subtest gets its OWN issue: these tasks/comments are scoped to
+	// `issue_id`, and sharing one issue across subtests let an earlier
+	// subtest's agent-authored comment silently satisfy a later subtest's
+	// "no output from this agent" check (both subtests use the same
+	// agentID) — a test-isolation bug that briefly masked the very P1 gaps
+	// these subtests exist to catch. See NEX-897.
+	mkIssue := func(t *testing.T) string {
+		t.Helper()
+		var issueID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id)
+			SELECT $1, 'Silent quota-limit retry test issue', 'todo', 'none', 'member', m.user_id, 'agent', $2
+			FROM member m WHERE m.workspace_id = $1 LIMIT 1
+			RETURNING id
+		`, testWorkspaceID, agentID).Scan(&issueID); err != nil {
+			t.Fatalf("failed to create test issue: %v", err)
+		}
+		t.Cleanup(func() {
+			testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+			testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issueID)
+			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		})
+		return issueID
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `UPDATE agent SET status = 'idle' WHERE id = $1`, agentID)
+	})
+
+	mkParent := func(issueID string) string {
+		var parentID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, failure_reason)
+			VALUES ($1, $2, $3, 'failed', 0, now() - interval '20 minutes', now() - interval '16 minutes', 'agent_error.provider_quota_limit')
+			RETURNING id
+		`, agentID, runtimeID, issueID).Scan(&parentID); err != nil {
+			t.Fatalf("failed to create parent task: %v", err)
+		}
+		return parentID
+	}
+
+	queries := db.New(testPool)
+	taskSvc := &service.TaskService{Queries: queries, Bus: events.New()}
+
+	t.Run("no comment since retry started: fails and auto-retries again", func(t *testing.T) {
+		issueID := mkIssue(t)
+		parentID := mkParent(issueID)
+		var childID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, parent_task_id, attempt, max_attempts)
+			VALUES ($1, $2, $3, 'running', 0, now() - interval '16 minutes', $4, 2, 5)
+			RETURNING id
+		`, agentID, runtimeID, issueID, parentID).Scan(&childID); err != nil {
+			t.Fatalf("failed to create retry task: %v", err)
+		}
+
+		sweepSilentQuotaLimitRetries(ctx, queries, taskSvc)
+
+		var status, failureReason string
+		if err := testPool.QueryRow(ctx, `SELECT status, failure_reason FROM agent_task_queue WHERE id = $1`, childID).Scan(&status, &failureReason); err != nil {
+			t.Fatalf("failed to reload retry task: %v", err)
+		}
+		if status != "failed" {
+			t.Errorf("expected retry task to be failed, got %q", status)
+		}
+		if failureReason != "timeout" {
+			t.Errorf("expected failure_reason 'timeout', got %q", failureReason)
+		}
+
+		var grandchildCount int
+		if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE parent_task_id = $1`, childID).Scan(&grandchildCount); err != nil {
+			t.Fatalf("failed to count grandchild retries: %v", err)
+		}
+		if grandchildCount != 1 {
+			t.Errorf("expected the silent retry itself to be auto-retried exactly once, got %d", grandchildCount)
+		}
+	})
+
+	t.Run("comment posted since retry started: left running", func(t *testing.T) {
+		issueID := mkIssue(t)
+		parentID := mkParent(issueID)
+		var childID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, parent_task_id, attempt, max_attempts)
+			VALUES ($1, $2, $3, 'running', 0, now() - interval '16 minutes', $4, 2, 5)
+			RETURNING id
+		`, agentID, runtimeID, issueID, parentID).Scan(&childID); err != nil {
+			t.Fatalf("failed to create retry task: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content)
+			VALUES ($1, $2, 'agent', $3, 'progress update after retry')
+		`, issueID, testWorkspaceID, agentID); err != nil {
+			t.Fatalf("failed to create comment: %v", err)
+		}
+
+		sweepSilentQuotaLimitRetries(ctx, queries, taskSvc)
+
+		var status string
+		if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, childID).Scan(&status); err != nil {
+			t.Fatalf("failed to reload retry task: %v", err)
+		}
+		if status != "running" {
+			t.Errorf("expected retry task with a new comment to stay 'running', got %q", status)
+		}
+	})
+
+	// Validator P1 #2 (7e1b584e REJECT): a comment from anyone on the issue
+	// used to satisfy the check. A human (or another agent) commenting while
+	// the owning agent's retry is still genuinely silent must NOT block the
+	// sweep — only a comment from the task's own agent counts as output.
+	t.Run("third-party comment does not block sweep", func(t *testing.T) {
+		issueID := mkIssue(t)
+		parentID := mkParent(issueID)
+		var childID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, parent_task_id, attempt, max_attempts)
+			VALUES ($1, $2, $3, 'running', 0, now() - interval '16 minutes', $4, 2, 5)
+			RETURNING id
+		`, agentID, runtimeID, issueID, parentID).Scan(&childID); err != nil {
+			t.Fatalf("failed to create retry task: %v", err)
+		}
+		// A human member comment after the retry started — not from the
+		// owning agent, so it must not count as this run's output.
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content)
+			VALUES ($1, $2, 'member', $3, 'any update?')
+		`, issueID, testWorkspaceID, testUserID); err != nil {
+			t.Fatalf("failed to create third-party comment: %v", err)
+		}
+
+		sweepSilentQuotaLimitRetries(ctx, queries, taskSvc)
+
+		var status string
+		if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, childID).Scan(&status); err != nil {
+			t.Fatalf("failed to reload retry task: %v", err)
+		}
+		if status != "failed" {
+			t.Errorf("expected a third-party comment to NOT block the sweep, got status %q", status)
+		}
+	})
+
+	// Validator P1 #1 (7e1b584e REJECT): a direct-parent-only check only
+	// catches the FIRST silent retry. Once that retry is itself failed with
+	// failure_reason='timeout' (not 'agent_error.provider_quota_limit'), a
+	// second silent generation's immediate parent reason is 'timeout' and
+	// would slip past a naive direct-parent check. The lineage walk must
+	// still catch it by tracing back to the quota-limit origin.
+	t.Run("second silent generation is still caught via lineage", func(t *testing.T) {
+		issueID := mkIssue(t)
+		originID := mkParent(issueID)
+		var gen1ID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, parent_task_id, attempt, max_attempts, failure_reason)
+			VALUES ($1, $2, $3, 'failed', 0, now() - interval '32 minutes', now() - interval '16 minutes', $4, 2, 5, 'timeout')
+			RETURNING id
+		`, agentID, runtimeID, issueID, originID).Scan(&gen1ID); err != nil {
+			t.Fatalf("failed to create first-generation silent retry: %v", err)
+		}
+		var gen2ID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, parent_task_id, attempt, max_attempts)
+			VALUES ($1, $2, $3, 'running', 0, now() - interval '16 minutes', $4, 3, 5)
+			RETURNING id
+		`, agentID, runtimeID, issueID, gen1ID).Scan(&gen2ID); err != nil {
+			t.Fatalf("failed to create second-generation retry: %v", err)
+		}
+
+		sweepSilentQuotaLimitRetries(ctx, queries, taskSvc)
+
+		var status, failureReason string
+		if err := testPool.QueryRow(ctx, `SELECT status, failure_reason FROM agent_task_queue WHERE id = $1`, gen2ID).Scan(&status, &failureReason); err != nil {
+			t.Fatalf("failed to reload second-generation retry: %v", err)
+		}
+		if status != "failed" {
+			t.Errorf("expected the second silent generation to be caught via lineage, got status %q", status)
+		}
+		if failureReason != "timeout" {
+			t.Errorf("expected failure_reason 'timeout', got %q", failureReason)
+		}
+	})
+}
+
+// TestSweepSilentQuotaLimitRetriesCompletionRace proves the fix for the
+// validator-caught P1 (2026-08-14 06:50Z, against b04fcef4): the `lineage`
+// CTE's `status = 'running'` filter only reflects a snapshot taken when the
+// CTE runs. If a concurrent transaction completes the same task between that
+// snapshot and the outer UPDATE actually visiting the row, the row was still
+// in the CTE's materialized candidate list, and without `status = 'running'`
+// repeated directly on the target table in the UPDATE's own WHERE clause,
+// Postgres would not re-check status via EvalPlanQual — flipping an
+// already-completed task back to 'failed' and spuriously auto-retrying it.
+//
+// Reproduced deterministically with real row-level locking rather than a
+// timing-dependent sleep race: a `SELECT ... FOR UPDATE` transaction holds
+// the candidate row's lock, forcing the sweep's UPDATE to block on that same
+// row; while it's blocked, the holder transaction completes the task and
+// commits. The sweep's UPDATE then unblocks and re-evaluates its WHERE
+// clause against the now-'completed' row version — it must skip the row.
+func TestSweepSilentQuotaLimitRetriesCompletionRace(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	ctx := context.Background()
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id FROM agent a
+		JOIN member m ON m.workspace_id = a.workspace_id
+		JOIN "user" u ON u.id = m.user_id
+		WHERE u.email = $1
+		LIMIT 1
+	`, integrationTestEmail).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("failed to find test agent: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id)
+		SELECT $1, 'Completion race test issue', 'todo', 'none', 'member', m.user_id, 'agent', $2
+		FROM member m WHERE m.workspace_id = $1 LIMIT 1
+		RETURNING id
+	`, testWorkspaceID, agentID).Scan(&issueID); err != nil {
+		t.Fatalf("failed to create test issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		testPool.Exec(ctx, `UPDATE agent SET status = 'idle' WHERE id = $1`, agentID)
+	})
+
+	var parentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, failure_reason)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '20 minutes', now() - interval '16 minutes', 'agent_error.provider_quota_limit')
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&parentID); err != nil {
+		t.Fatalf("failed to create parent task: %v", err)
+	}
+
+	var childID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, parent_task_id, attempt, max_attempts)
+		VALUES ($1, $2, $3, 'running', 0, now() - interval '16 minutes', $4, 2, 5)
+		RETURNING id
+	`, agentID, runtimeID, issueID, parentID).Scan(&childID); err != nil {
+		t.Fatalf("failed to create retry task: %v", err)
+	}
+
+	// Hold the row lock, simulating a daemon transaction that is in the
+	// middle of completing this same task when the sweep runs.
+	holder, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("failed to begin holder tx: %v", err)
+	}
+	defer holder.Rollback(ctx)
+	var lockedID string
+	if err := holder.QueryRow(ctx, `SELECT id FROM agent_task_queue WHERE id = $1 FOR UPDATE`, childID).Scan(&lockedID); err != nil {
+		t.Fatalf("failed to take row lock: %v", err)
+	}
+
+	queries := db.New(testPool)
+	taskSvc := &service.TaskService{Queries: queries, Bus: events.New()}
+
+	sweepDone := make(chan struct {
+		rows []db.AgentTaskQueue
+		err  error
+	}, 1)
+	go func() {
+		rows, err := queries.FailSilentQuotaLimitRetries(ctx, quotaLimitRetrySilenceTimeoutSeconds)
+		sweepDone <- struct {
+			rows []db.AgentTaskQueue
+			err  error
+		}{rows, err}
+	}()
+
+	// Give the sweep's UPDATE time to reach and block on the locked row
+	// before we complete it out from under it.
+	time.Sleep(300 * time.Millisecond)
+
+	if _, err := holder.Exec(ctx, `UPDATE agent_task_queue SET status = 'completed', completed_at = now() WHERE id = $1`, childID); err != nil {
+		t.Fatalf("failed to complete the task under the sweep: %v", err)
+	}
+	if err := holder.Commit(ctx); err != nil {
+		t.Fatalf("failed to commit holder tx: %v", err)
+	}
+
+	var result struct {
+		rows []db.AgentTaskQueue
+		err  error
+	}
+	select {
+	case result = <-sweepDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("sweep did not unblock after the holder tx committed")
+	}
+	if result.err != nil {
+		t.Fatalf("FailSilentQuotaLimitRetries returned an error: %v", result.err)
+	}
+	for _, r := range result.rows {
+		if util.UUIDToString(r.ID) == childID {
+			t.Fatal("race: a task that completed concurrently was flipped back to 'failed' by the sweep")
+		}
+	}
+
+	taskSvc.HandleFailedTasks(ctx, result.rows)
+
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, childID).Scan(&status); err != nil {
+		t.Fatalf("failed to reload task: %v", err)
+	}
+	if status != "completed" {
+		t.Errorf("expected the concurrently-completed task to remain 'completed', got %q", status)
+	}
+
+	var retryCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE parent_task_id = $1`, childID).Scan(&retryCount); err != nil {
+		t.Fatalf("failed to count retries: %v", err)
+	}
+	if retryCount != 0 {
+		t.Errorf("expected no spurious retry for a task that completed concurrently, got %d", retryCount)
 	}
 }
 

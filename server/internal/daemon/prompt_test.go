@@ -270,6 +270,46 @@ func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 	}
 }
 
+// TestBuildChatPromptInjectsHistory pins the NEX-964 fix: when the daemon
+// could not resume a native session (e.g. the runtime switched between
+// Claude and Codex between turns), the reconstructed transcript in
+// task.ChatHistory must be injected into the prompt ahead of the new user
+// message, with a note explaining why it's there — otherwise a runtime
+// switch silently wipes the conversation from the agent's point of view.
+func TestBuildChatPromptInjectsHistory(t *testing.T) {
+	task := Task{
+		ChatSessionID: "sess-1",
+		ChatMessage:   "what did I just tell you?",
+		ChatHistory:   "User: my favorite color is blue\nAssistant: got it, blue.",
+	}
+	out := BuildPrompt(task, "codex")
+	for _, want := range []string{
+		"Conversation history from before this turn",
+		"the runtime changed since the last message",
+		"User: my favorite color is blue",
+		"Assistant: got it, blue.",
+		"User message:\nwhat did I just tell you?",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+// TestBuildChatPromptOmitsHistoryBlockWhenEmpty ensures a warm resume (or a
+// cold start with no prior turns) doesn't grow the prompt with an empty
+// history section.
+func TestBuildChatPromptOmitsHistoryBlockWhenEmpty(t *testing.T) {
+	task := Task{
+		ChatSessionID: "sess-1",
+		ChatMessage:   "hello",
+	}
+	out := BuildPrompt(task, "claude")
+	if strings.Contains(out, "Conversation history from before this turn") {
+		t.Errorf("chat prompt should not include a history block when ChatHistory is empty\n--- output ---\n%s", out)
+	}
+}
+
 func TestBuildChatPromptSlashSkills(t *testing.T) {
 	t.Run("injects selected skills block", func(t *testing.T) {
 		task := Task{

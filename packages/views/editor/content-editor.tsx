@@ -222,6 +222,11 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     >(undefined);
     const mentionContextItemsRef = useRef<MentionItem[]>(mentionContextItems ?? []);
     const lastEmittedRef = useRef<string | null>(null);
+    // An external draft update received during IME composition cannot be
+    // applied immediately without breaking the browser-owned composition.
+    // Remember it and re-run the sync effect once composition has ended.
+    const hasDeferredCompositionSyncRef = useRef(false);
+    const [compositionReplay, setCompositionReplay] = useState(0);
 
     // In-session record of attachments freshly uploaded through this editor.
     // Surfaces (like the quick-create modal) that don't have a server-supplied
@@ -369,6 +374,15 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       },
       editorProps: {
         handleDOMEvents: {
+          compositionend() {
+            if (!hasDeferredCompositionSyncRef.current) return false;
+            hasDeferredCompositionSyncRef.current = false;
+            // ProseMirror clears view.composing as part of its own DOM-event
+            // handling. Queue our render after that work, so the replay does
+            // not race the tail of the composition transaction.
+            queueMicrotask(() => setCompositionReplay((n) => n + 1));
+            return false;
+          },
           click(_view, event) {
             const target = event.target as HTMLElement;
             // Skip links inside NodeView wrappers — they handle their own clicks
@@ -414,6 +428,18 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     // showing stale content until the issue is closed and reopened.
     useEffect(() => {
       if (!editor || editor.isDestroyed) return;
+
+      // During an IME composition the browser, not ProseMirror, owns the
+      // transient text in the contenteditable DOM. `setContent` here tears
+      // down that composition and commits its partial jamo as plain text.
+      // A chat attachment updates the draft/attachments state while the user
+      // is typing, which can re-run this sync effect; never let that render
+      // interrupt Korean (or any other) IME input.
+      if (editor.view.composing) {
+        hasDeferredCompositionSyncRef.current = true;
+        return;
+      }
+      hasDeferredCompositionSyncRef.current = false;
 
       // Guard 0: never clobber an in-flight upload. An external `defaultValue`
       // change can arrive mid-upload — e.g. chat lazy-creates a session on the
@@ -481,7 +507,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       });
 
       lastEmittedRef.current = normalizeEditorMarkdown(editor);
-    }, [defaultValue, editor]);
+    }, [compositionReplay, defaultValue, editor]);
 
     useImperativeHandle(ref, () => ({
       // Intentionally NOT routed through `normalizeMarkdown` — this refactor
