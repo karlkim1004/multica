@@ -1405,6 +1405,15 @@ func (h *Handler) lookupIssueByIdentifier(ctx context.Context, workspaceID pgtyp
 }
 
 func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, workspaceID string) {
+	if status, msg := h.checkDoneEvidenceGate(ctx, issue, false); status != 0 {
+		slog.Warn("github: advance issue to done blocked by evidence gate",
+			"issue_id", uuidToString(issue.ID),
+			"status", status,
+			"reason", msg,
+		)
+		return
+	}
+
 	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
 		ID:          issue.ID,
 		Status:      "done",
