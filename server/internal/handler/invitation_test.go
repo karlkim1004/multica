@@ -112,3 +112,40 @@ func TestCreateInvitation_AllowsAfterExpiry(t *testing.T) {
 		t.Fatalf("expected exactly 1 pending invitation after re-invite, got %d", pendingCount)
 	}
 }
+
+// Invitation accept is intentionally outside the workspace-member route
+// group: an invitee is not a member until this transaction commits. Keep the
+// complete existing invitation flow covered while RBAC changes evolve.
+func TestAcceptInvitationCreatesMembership(t *testing.T) {
+	clearInvitationsForTestWorkspace(t)
+	ctx := context.Background()
+	email := "accept-invitation-" + t.Name() + "@handler-test.local"
+
+	var inviteeID string
+	if err := testPool.QueryRow(ctx, `INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id`, t.Name(), email).Scan(&inviteeID); err != nil {
+		t.Fatalf("create invitee: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, inviteeID) })
+
+	w := httptest.NewRecorder()
+	create := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/members", CreateMemberRequest{Email: email, Role: "member"})
+	testHandler.CreateInvitation(w, withURLParam(create, "id", testWorkspaceID))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create invitation: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var invitation InvitationResponse
+	if err := json.NewDecoder(w.Body).Decode(&invitation); err != nil {
+		t.Fatalf("decode invitation: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	accept := newRequestAs(inviteeID, "POST", "/api/invitations/"+invitation.ID+"/accept", nil)
+	testHandler.AcceptInvitation(w, withURLParam(accept, "id", invitation.ID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("accept invitation: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var members int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM member WHERE workspace_id = $1 AND user_id = $2`, parseUUID(testWorkspaceID), parseUUID(inviteeID)).Scan(&members); err != nil || members != 1 {
+		t.Fatalf("accepted invitation membership: count=%d err=%v", members, err)
+	}
+}
