@@ -12,12 +12,16 @@ on:
       - "apps/web/**"
       - "packages/ui/**"
       - "packages/core/**"
+      - "e2e/**"
+      - ".github/workflows/nexai-ui-smoke.yml"
   push:
     branches: [main]
     paths:
       - "apps/web/**"
       - "packages/ui/**"
       - "packages/core/**"
+      - "e2e/**"
+      - ".github/workflows/nexai-ui-smoke.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -92,6 +96,19 @@ jobs:
             echo "✗ KST timezone format: MISSING in build" >&2
             exit 1
           fi
+
+      - name: Verify chat realtime regression gate is present
+        # NEX-908: the runnable Playwright gate uses an isolated workspace and
+        # asserts that chat:done renders without a page refresh. Keep the gate
+        # wired into this UI workflow so it cannot silently disappear.
+        run: |
+          set -euo pipefail
+          TEST="e2e/chat-realtime.spec.ts"
+          test -f "$TEST"
+          grep -q 'chat:done' "$TEST"
+          grep -q 'without a manual refresh' "$TEST"
+          grep -q 'multica:chat:activeSessionId' "$TEST"
+          echo "✓ chat realtime regression gate present: $TEST"
 
       - name: Check for direct docker run patterns in bot scripts
         # 봇 스크립트에서 raw docker run 패턴 금지 검증 (정적 분석)

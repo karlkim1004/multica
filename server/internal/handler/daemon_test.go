@@ -2925,6 +2925,7 @@ type claimRuntimeGuardTask struct {
 	PriorSessionID           string   `json:"prior_session_id"`
 	PriorWorkDir             string   `json:"prior_work_dir"`
 	ChatMessage              string   `json:"chat_message"`
+	ChatHistory              string   `json:"chat_history"`
 	ThreadName               string   `json:"thread_name"`
 	QuickCreateAttachmentIDs []string `json:"quick_create_attachment_ids"`
 	ProjectID                string   `json:"project_id"`
@@ -3408,6 +3409,123 @@ func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
 	}
 	if task.PriorWorkDir != "/tmp/same-chat-workdir" {
 		t.Fatalf("chat runtime match: expected PriorWorkDir='/tmp/same-chat-workdir', got %q", task.PriorWorkDir)
+	}
+}
+
+// TestClaimTask_ChatRuntimeSwitchInjectsHistory reproduces the NEX-964
+// report end to end through the real claim endpoint: a user tells the
+// agent a fact while it runs on one runtime (e.g. Claude), the agent's
+// runtime then changes (e.g. an automatic Claude→Codex failover, or a
+// manual `multica agent update --model` switch) before the user asks about
+// that fact again. The runtime-mismatch guard in ClaimTaskByRuntime
+// correctly refuses to hand back the old provider's native session_id
+// (that pointer is meaningless to the new CLI) — but before this fix nothing
+// filled the resulting gap, so the new runtime's process started with zero
+// memory of the conversation. This test locks in the fix: ChatHistory must
+// carry the fact forward when PriorSessionID comes back empty, and must
+// stay empty when the runtime matches and native resume already works.
+func TestClaimTask_ChatRuntimeSwitchInjectsHistory(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID, runtimeA, daemonA := createRuntimeGuardAgent(t, ctx)
+	runtimeB := createRuntimeGuardRuntime(t, ctx, "codex")
+
+	var sessionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (
+			workspace_id, agent_id, creator_id, title,
+			session_id, work_dir, runtime_id
+		)
+		VALUES ($1, $2, $3, 'runtime switch memory chat', 'claude-native-session', '/tmp/claude-workdir', $4)
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID, runtimeA).Scan(&sessionID); err != nil {
+		t.Fatalf("setup: create chat session: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+
+	// (a) The user states fact A and the agent (still on runtime A) replies,
+	// while the same runtime is still current — this pair must NOT be
+	// re-delivered via ChatMessage on the next claim, only via ChatHistory.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, created_at) VALUES
+			($1, 'user', 'my favorite color is blue, remember that', now()),
+			($1, 'assistant', 'got it — your favorite color is blue.', now() + interval '1 second')
+	`, sessionID); err != nil {
+		t.Fatalf("setup: insert fact exchange: %v", err)
+	}
+
+	// (b) Runtime switch: the agent now runs on runtime B (e.g. Codex after
+	// a Claude→Codex failover or a model change). The chat_session pointer
+	// still names the old native session/runtime.
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET runtime_id = $1 WHERE id = $2`, runtimeB, agentID); err != nil {
+		t.Fatalf("setup: switch agent runtime: %v", err)
+	}
+
+	// (c) The user asks about fact A again; this message lands as a fresh
+	// chat task claimed on runtime B.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, created_at)
+		VALUES ($1, 'user', 'what is my favorite color?', now() + interval '2 second')
+	`, sessionID); err != nil {
+		t.Fatalf("setup: insert follow-up question: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
+		VALUES ($1, $2, $3, 'queued', 0)
+	`, agentID, runtimeB, sessionID); err != nil {
+		t.Fatalf("setup: create runtime-B chat task: %v", err)
+	}
+
+	task := claimTaskForRuntimeGuard(t, runtimeB, daemonA)
+	if task.PriorSessionID != "" {
+		t.Fatalf("runtime switch: expected empty PriorSessionID (old runtime's session_id is unusable), got %q", task.PriorSessionID)
+	}
+	if task.ChatMessage != "what is my favorite color?" {
+		t.Fatalf("expected only the new question in ChatMessage, got %q", task.ChatMessage)
+	}
+	if !strings.Contains(task.ChatHistory, "my favorite color is blue") {
+		t.Fatalf("ChatHistory must carry fact A across the runtime switch; got %q", task.ChatHistory)
+	}
+	if !strings.Contains(task.ChatHistory, "got it — your favorite color is blue.") {
+		t.Fatalf("ChatHistory must include the agent's prior reply too; got %q", task.ChatHistory)
+	}
+
+	// Reset for the control case: complete the in-flight task and re-arm the
+	// session to resume cleanly on the SAME runtime the pointer names.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue SET status = 'completed', completed_at = now()
+		WHERE chat_session_id = $1 AND status IN ('dispatched', 'running')
+	`, sessionID); err != nil {
+		t.Fatalf("setup: complete runtime-B task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE chat_session SET session_id = 'codex-native-session', work_dir = '/tmp/codex-workdir', runtime_id = $1
+		WHERE id = $2
+	`, runtimeB, sessionID); err != nil {
+		t.Fatalf("setup: point chat_session at the current runtime: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, created_at)
+		VALUES ($1, 'user', 'and my favorite animal?', now() + interval '3 second')
+	`, sessionID); err != nil {
+		t.Fatalf("setup: insert second follow-up: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
+		VALUES ($1, $2, $3, 'queued', 0)
+	`, agentID, runtimeB, sessionID); err != nil {
+		t.Fatalf("setup: create resumed runtime-B task: %v", err)
+	}
+
+	task = claimTaskForRuntimeGuard(t, runtimeB, daemonA)
+	if task.PriorSessionID != "codex-native-session" {
+		t.Fatalf("matching runtime: expected native resume, got PriorSessionID=%q", task.PriorSessionID)
+	}
+	if task.ChatHistory != "" {
+		t.Fatalf("matching runtime: native resume already carries context, ChatHistory must stay empty; got %q", task.ChatHistory)
 	}
 }
 
