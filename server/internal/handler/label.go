@@ -312,9 +312,6 @@ func (h *Handler) ListLabelsForIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
-		return
-	}
 	labels, err := h.Queries.ListLabelsByIssue(r.Context(), db.ListLabelsByIssueParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -411,6 +408,9 @@ func (h *Handler) DetachLabel(w http.ResponseWriter, r *http.Request) {
 	// explicit 404.
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
 		return
 	}
 	labelUUID, ok := parseUUIDOrBadRequest(w, labelID, "label id")
