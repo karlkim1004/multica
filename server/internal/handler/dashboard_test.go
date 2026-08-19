@@ -432,6 +432,7 @@ func TestRollupTaskUsageHourlyIdempotentAndWatermark(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	lockRollupSingleton(t)
 	ctx := context.Background()
 
 	var runtimeID, agentID string
@@ -1053,6 +1054,7 @@ func TestPruneTaskUsageHourlyDirty(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	lockRollupSingleton(t)
 	ctx := context.Background()
 
 	// task_usage_hourly_dirty carries no FKs (it is a queue), so synthetic
@@ -1132,6 +1134,9 @@ func TestRollupTaskUsageHourlyCapsWindowAtOneDay(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	// Acquire before registering watermark cleanup so the cleanup completes
+	// while this test still exclusively owns the singleton.
+	lockRollupSingleton(t)
 	ctx := context.Background()
 
 	// Other tests drive rollup_task_usage_hourly_window directly and never

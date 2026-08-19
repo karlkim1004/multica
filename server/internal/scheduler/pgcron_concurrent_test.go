@@ -38,6 +38,7 @@ import (
 func TestPgCronConcurrentNoDoubleWrite(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
+	lockRollupSingleton(t, pool)
 
 	// Seed an isolated workspace/runtime/agent/task and a handful of
 	// task_usage rows landing in the same UTC hour bucket. The bucket
