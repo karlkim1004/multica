@@ -66,12 +66,12 @@ function useRoleLabels() {
       icon: ROLE_ICONS.admin,
     },
     member: {
-      label: "Super user",
-      description: "Legacy role; equivalent to super user",
+      label: t(($) => $.members.roles.super_user.label),
+      description: t(($) => $.members.roles.super_user.description),
       icon: ROLE_ICONS.member,
     },
-    super_user: { label: "Super user", description: "Manage resources you created", icon: ROLE_ICONS.super_user },
-    general_user: { label: "General user", description: "Create issues only", icon: ROLE_ICONS.general_user },
+    super_user: { label: t(($) => $.members.roles.super_user.label), description: t(($) => $.members.roles.super_user.description), icon: ROLE_ICONS.super_user },
+    general_user: { label: t(($) => $.members.roles.general_user.label), description: t(($) => $.members.roles.general_user.description), icon: ROLE_ICONS.general_user },
   } as const;
 }
 
@@ -428,7 +428,7 @@ export function MembersTab() {
         <section className="space-y-4">
           <div className="flex items-center gap-2">
             <Clock className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">Join requests ({joinRequests.length})</h2>
+            <h2 className="text-sm font-semibold">{t(($) => $.members.join_requests_title, { count: joinRequests.length })}</h2>
           </div>
           <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
             {joinRequests.map((request, i) => (
@@ -438,14 +438,14 @@ export function MembersTab() {
                   await api.approveWorkspaceJoinRequest(workspace.id, request.id);
                   qc.invalidateQueries({ queryKey: workspaceKeys.joinRequests(wsId) });
                   qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
-                  toast.success("Join request approved");
-                }}>Approve</Button>
+                  toast.success(t(($) => $.members.toast_join_request_approved));
+                }}>{t(($) => $.members.approve_join_request)}</Button>
                 <Button size="sm" variant="outline" onClick={async () => {
-                  const reason = window.prompt("Rejection reason") ?? "";
+                  const reason = window.prompt(t(($) => $.members.reject_reason_prompt)) ?? "";
                   await api.rejectWorkspaceJoinRequest(workspace.id, request.id, reason);
                   qc.invalidateQueries({ queryKey: workspaceKeys.joinRequests(wsId) });
-                  toast.success("Join request rejected");
-                }}>Reject</Button>
+                  toast.success(t(($) => $.members.toast_join_request_rejected));
+                }}>{t(($) => $.members.reject_join_request)}</Button>
               </div>
             ))}
           </div>
