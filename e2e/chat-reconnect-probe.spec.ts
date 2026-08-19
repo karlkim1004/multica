@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
 
 const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
+  process.env.E2E_DATABASE_URL ?? process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
 
 type Seed = { runtimeId: string; agentId: string; sessionId: string; workspaceSlug: string };
 
@@ -68,7 +68,7 @@ test.describe("chat reconnect regression", () => {
   test("refetches the active isolated transcript after a websocket reconnect without refresh", async ({ page }) => {
     const api = new TestApiClient();
     const seed = await seedIsolatedChat(api);
-    const taskId = randomUUID();
+    let taskId: string;
     const reply = `reconnect-reply-${randomUUID()}`;
     const initialMessage = "Reconnect probe initial message";
 
@@ -121,6 +121,14 @@ test.describe("chat reconnect regression", () => {
     const db = new pg.Client(DATABASE_URL);
     await db.connect();
     try {
+      const task = await db.query<{ id: string }>(
+        `INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, started_at)
+         VALUES ($1, $2, $3, 'running', 0, now())
+         RETURNING id`,
+        [seed.agentId, seed.runtimeId, seed.sessionId],
+      );
+      taskId = task.rows[0]?.id ?? "";
+      expect(taskId).toBeTruthy();
       await db.query(
         `INSERT INTO chat_message (id, chat_session_id, role, content, task_id)
          VALUES ($1, $2, 'user', $3, $4)`,
@@ -145,6 +153,12 @@ test.describe("chat reconnect regression", () => {
     const disconnectedDb = new pg.Client(DATABASE_URL);
     await disconnectedDb.connect();
     try {
+      const completed = await disconnectedDb.query(
+        `UPDATE agent_task_queue SET status = 'completed', completed_at = now()
+         WHERE id = $1 AND status = 'running'`,
+        [taskId],
+      );
+      expect(completed.rowCount).toBe(1);
       await disconnectedDb.query(
         `INSERT INTO chat_message (id, chat_session_id, role, content, task_id, elapsed_ms)
          VALUES ($1, $2, 'assistant', $3, $4, $5)`,
@@ -159,7 +173,7 @@ test.describe("chat reconnect regression", () => {
     // messagesPage cache was refetched from the isolated session.
     await expect.poll(() => page.evaluate(() => window.__e2eWebSocketCount?.() ?? 0), { timeout: 10000 }).toBeGreaterThan(1);
     await expect(page.getByText(reply)).toBeVisible({ timeout: 10000 });
-    console.log(JSON.stringify({ session: seed.sessionId, recovered_without_refresh: true }));
+    console.log(JSON.stringify({ session: seed.sessionId, task: taskId, lifecycle_completed: true, recovered_without_refresh: true }));
 
     await api.deleteChatSession(seed.sessionId);
     const cleanupDb = new pg.Client(DATABASE_URL);
