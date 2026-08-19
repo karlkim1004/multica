@@ -266,6 +266,7 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 	})
 
 	// Plain member moves child to done.
+	markIssueDoneEvidenceForTest(t, child.ID)
 	w = httptest.NewRecorder()
 	r = newRequestAs(memberID, "PATCH", "/api/issues/"+child.ID, map[string]any{
 		"status": "done",

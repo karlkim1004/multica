@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -153,6 +154,38 @@ func TestBatchUpdateStageOnly(t *testing.T) {
 	json.NewDecoder(gw.Body).Decode(&got)
 	if got.Stage == nil || *got.Stage != 2 {
 		t.Errorf("expected stage=2 to persist, got %v", got.Stage)
+	}
+}
+
+func TestBatchUpdateDoneRejectsMissingEvidence(t *testing.T) {
+	a := createTestIssue(t, "BU-evidence-gate A", "in_progress", "low")
+	b := createTestIssue(t, "BU-evidence-gate B", "in_progress", "low")
+	t.Cleanup(func() { deleteTestIssue(t, a) })
+	t.Cleanup(func() { deleteTestIssue(t, b) })
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
+		"issue_ids": []string{a, b},
+		"updates":   map[string]any{"status": "done"},
+	})
+	testHandler.BatchUpdateIssues(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "변경 diff/PR") {
+		t.Fatalf("blocking reason should mention missing change evidence, got %s", w.Body.String())
+	}
+
+	for _, id := range []string{a, b} {
+		gw := httptest.NewRecorder()
+		gr := newRequest("GET", "/api/issues/"+id, nil)
+		gr = withURLParam(gr, "id", id)
+		testHandler.GetIssue(gw, gr)
+		var got IssueResponse
+		json.NewDecoder(gw.Body).Decode(&got)
+		if got.Status != "in_progress" {
+			t.Errorf("issue %s: expected status to remain in_progress, got %q", id, got.Status)
+		}
 	}
 }
 
