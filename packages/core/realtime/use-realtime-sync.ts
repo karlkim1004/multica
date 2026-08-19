@@ -333,6 +333,14 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   qc.invalidateQueries({ queryKey: issueKeys.usageAll() });
   qc.invalidateQueries({ queryKey: issueKeys.attachmentsAll() });
   qc.invalidateQueries({ queryKey: issueKeys.tasksAll() });
+  // Per-session chat caches are keyed by sessionId/taskId, not wsId, so
+  // chatKeys.all(wsId) above never reaches them. Lifecycle events
+  // (chat:message / chat:done / task:failed) missed while disconnected left
+  // the active session's messages and pending-task stuck at "실행 중" until a
+  // full reload (NEX-715).
+  qc.invalidateQueries({ queryKey: chatKeys.messagesAll() });
+  qc.invalidateQueries({ queryKey: chatKeys.pendingTaskAll() });
+  qc.invalidateQueries({ queryKey: chatKeys.taskMessagesAll() });
   qc.invalidateQueries({ queryKey: workspaceKeys.list() });
 }
 
