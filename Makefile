@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree verify-reconnect-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree verify-reconnect-worktree db-up db-down db-reset selfhost selfhost-build selfhost-release selfhost-stop
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -154,6 +154,9 @@ selfhost-build: ## Build backend/web from the current checkout and start the sel
 		echo "Services are still starting. Check logs:"; \
 		echo "  docker compose -f docker-compose.selfhost.yml logs"; \
 	fi
+
+selfhost-release: ## Fail-closed self-host release: migrate, recreate services, then require backend readiness
+	@bash scripts/selfhost-release-gate.sh
 
 selfhost-stop: ## Stop the self-hosted Docker Compose stack
 	@echo "==> Stopping Multica services..."
