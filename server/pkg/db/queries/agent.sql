@@ -345,13 +345,30 @@ RETURNING *;
 -- a wait state while another task owned the local_directory path lock; once
 -- the lock was acquired the daemon flips here). wait_reason is cleared on
 -- the transition so a future read can't conflate "currently waiting" with
--- "previously waited".
+-- "previously waited". running_lease_expires_at seeds the execution-phase
+-- lease (NEX-1032); the daemon renews it via ExtendAgentTaskRunningLease
+-- every heartbeat until the task reaches a terminal state.
 UPDATE agent_task_queue
 SET status = 'running',
     started_at = now(),
     wait_reason = NULL,
-    prepare_lease_expires_at = NULL
+    prepare_lease_expires_at = NULL,
+    running_lease_expires_at = now() + make_interval(secs => @running_lease_secs::double precision)
 WHERE id = $1 AND status IN ('dispatched', 'waiting_local_directory')
+RETURNING *;
+
+-- name: ExtendAgentTaskRunningLease :one
+-- Renews the execution-phase lease (NEX-1032) so the sweeper's FailStaleTasks
+-- doesn't reap a genuinely-progressing task. Called by the daemon on a fixed
+-- interval (default 30s) for as long as the per-task watcher goroutine is
+-- alive. If that goroutine hangs — the specific failure mode this migration
+-- fixes — the lease simply stops renewing and expires on its own; no separate
+-- "is this task actually still alive" signal is needed.
+UPDATE agent_task_queue
+SET running_lease_expires_at = now() + make_interval(secs => @lease_secs::double precision)
+WHERE id = $1
+  AND runtime_id = $2
+  AND status = 'running'
 RETURNING *;
 
 -- name: MarkAgentTaskWaitingLocalDirectory :one
@@ -373,7 +390,7 @@ RETURNING *;
 
 -- name: CompleteAgentTask :one
 UPDATE agent_task_queue
-SET status = 'completed', completed_at = now(), result = $2, session_id = $3, work_dir = $4, prepare_lease_expires_at = NULL
+SET status = 'completed', completed_at = now(), result = $2, session_id = $3, work_dir = $4, prepare_lease_expires_at = NULL, running_lease_expires_at = NULL
 WHERE id = $1 AND status = 'running'
 RETURNING *;
 
@@ -453,7 +470,8 @@ SET status = 'failed',
     failure_reason = COALESCE(sqlc.narg('failure_reason'), 'agent_error'),
     session_id = COALESCE(sqlc.narg('session_id'), session_id),
     work_dir = COALESCE(sqlc.narg('work_dir'), work_dir),
-    prepare_lease_expires_at = NULL
+    prepare_lease_expires_at = NULL,
+    running_lease_expires_at = NULL
 WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
 RETURNING *;
 
@@ -480,32 +498,66 @@ SET status = 'failed',
     error = 'daemon restarted while task was in flight',
     failure_reason = 'runtime_recovery',
     wait_reason = NULL,
-    prepare_lease_expires_at = NULL
+    prepare_lease_expires_at = NULL,
+    running_lease_expires_at = NULL
 WHERE runtime_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
 RETURNING *;
 
 -- name: FailStaleTasks :many
--- Fails tasks stuck in dispatched/running beyond the given thresholds.
--- Handles cases where the daemon is alive but the task is orphaned
--- (e.g. agent process hung, daemon failed to report completion).
--- Dispatched tasks with an active prepare lease are excluded because the
--- daemon is still proving liveness while resolving/cache/preparing startup
--- inputs before StartTask.
--- waiting_local_directory rows are intentionally excluded: the daemon owns
--- the wait (with its own ctx-driven timeout) and a legitimate queue ahead
--- of this task can exceed the dispatch / running timeouts without being
--- "stuck". If the daemon dies, RecoverOrphanedTasksForRuntime reclaims
--- those rows at restart.
+-- Fails tasks stuck in dispatched/waiting_local_directory/running beyond the
+-- given thresholds. Handles cases where the daemon is alive but the task is
+-- orphaned (e.g. agent process hung, daemon failed to report completion).
+--
+-- Five branches (NEX-1032 added the lease-expiry ones; the two
+-- absolute-age branches predate it and stay as a backstop):
+--   1. dispatched, absolute age, no active prepare lease — the original
+--      "StartTask API call failed silently" case.
+--   2. dispatched, absolute age, REGARDLESS of prepare lease state — caps
+--      total prepare duration even if the daemon renews the lease forever
+--      (max_prepare_duration_secs is a large multiple of the lease TTL, so
+--      this only fires when renewal genuinely never stops, e.g. a runaway
+--      retry loop in the daemon's prepare step).
+--   3. waiting_local_directory, lease actually expired — the daemon extends
+--      this same prepare lease while parked on the path-lock wait (see
+--      MarkAgentTaskWaitingLocalDirectory / startTaskPrepareLeaseExtender),
+--      so a legitimately long queue-behind-another-task wait keeps renewing
+--      and is never touched here; only a lease that stopped renewing
+--      (daemon's wait goroutine died, process still up) gets reaped. Pairs
+--      with RecoverOrphanedTasksForRuntime, which still handles the "whole
+--      daemon process died" case at restart.
+--   4. running, absolute age — coarse started_at-only backstop, unaware of
+--      task activity; kept for tasks that predate running_lease_expires_at
+--      or whose daemon died before ever heartbeating once.
+--   5. running, lease actually expired — the precise NEX-1032 fix: a hung
+--      per-task watcher goroutine inside an otherwise-healthy, still-
+--      heartbeating daemon process stops renewing running_lease_expires_at
+--      and gets reaped within one lease TTL + one sweep tick, instead of
+--      waiting out the full running_timeout_secs backstop.
 UPDATE agent_task_queue
 SET status = 'failed', completed_at = now(), error = 'task timed out',
     failure_reason = 'timeout',
-    prepare_lease_expires_at = NULL
+    prepare_lease_expires_at = NULL,
+    running_lease_expires_at = NULL
 WHERE (
     status = 'dispatched'
     AND dispatched_at < now() - make_interval(secs => @dispatch_timeout_secs::double precision)
     AND (prepare_lease_expires_at IS NULL OR prepare_lease_expires_at < now())
   )
+   OR (
+    status = 'dispatched'
+    AND dispatched_at < now() - make_interval(secs => @max_prepare_duration_secs::double precision)
+  )
+   OR (
+    status = 'waiting_local_directory'
+    AND prepare_lease_expires_at IS NOT NULL
+    AND prepare_lease_expires_at < now()
+  )
    OR (status = 'running' AND started_at < now() - make_interval(secs => @running_timeout_secs::double precision))
+   OR (
+    status = 'running'
+    AND running_lease_expires_at IS NOT NULL
+    AND running_lease_expires_at < now()
+  )
 RETURNING *;
 
 -- name: FailSilentQuotaLimitRetries :many
