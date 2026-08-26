@@ -378,6 +378,43 @@ describe("ApiClient schema fallback", () => {
       expect(resp.reused_skill_ids).toEqual([]);
     });
   });
+
+  describe("getWorkspaceScoreboard", () => {
+    it("falls back to an all-zero, non-failed shape when the body is malformed", async () => {
+      // Every field has a default, so a payload with only unexpected keys
+      // would *succeed* parsing (see the listIssues comment above) — use a
+      // wrong-type value instead to trigger the fallback.
+      stubFetchJson({ ready_count: "not-a-number" });
+      const client = new ApiClient("https://api.example.test");
+      const scoreboard = await client.getWorkspaceScoreboard();
+      expect(scoreboard).toEqual({
+        ready_count: 0,
+        ready_max_wait_hours: 0,
+        working_count: 0,
+        verify_count: 0,
+        blocked_count: 0,
+        busy_agents: 0,
+        idle_agents: 0,
+        dispatch_failed: false,
+      });
+    });
+
+    it("coerces a missing dispatch_failed to false rather than dropping the payload", async () => {
+      stubFetchJson({
+        ready_count: 2,
+        working_count: 3,
+        verify_count: 1,
+        blocked_count: 0,
+        busy_agents: 3,
+        idle_agents: 1,
+      });
+      const client = new ApiClient("https://api.example.test");
+      const scoreboard = await client.getWorkspaceScoreboard();
+      expect(scoreboard.ready_count).toBe(2);
+      expect(scoreboard.busy_agents).toBe(3);
+      expect(scoreboard.dispatch_failed).toBe(false);
+    });
+  });
 });
 
 // Direct tests for the helper, decoupled from any specific endpoint —

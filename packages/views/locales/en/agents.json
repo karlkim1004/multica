@@ -9,7 +9,13 @@
     "of_total": "{{visible}} of {{total}}",
     "list_load_failed": "Couldn't load agents",
     "list_load_failed_default": "Something went wrong fetching the agent list.",
-    "try_again": "Try again"
+    "try_again": "Try again",
+    "scoreboard_ready": "READY {{count}}",
+    "scoreboard_working": "WORKING {{count}}",
+    "scoreboard_verify": "VERIFY {{count}}",
+    "scoreboard_blocked": "BLOCKED {{count}}",
+    "scoreboard_busy_idle": "busy {{busy}}/{{total}}",
+    "scoreboard_dispatch_failed": "Dispatch failed — ready work waiting while an agent is idle"
   },
   "scope": {
     "mine": "Mine",

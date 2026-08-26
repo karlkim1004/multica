@@ -7,6 +7,7 @@ export type {
   AgentTask,
   AgentActivityBucket,
   AgentRunCount,
+  WorkspaceScoreboard,
   TaskFailureReason,
   AgentRuntime,
   RuntimeDevice,

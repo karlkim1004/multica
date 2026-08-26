@@ -9,7 +9,13 @@
     "of_total": "{{visible}} / {{total}}",
     "list_load_failed": "无法加载智能体列表",
     "list_load_failed_default": "获取智能体列表时出错。",
-    "try_again": "重试"
+    "try_again": "重试",
+    "scoreboard_ready": "READY {{count}}",
+    "scoreboard_working": "WORKING {{count}}",
+    "scoreboard_verify": "VERIFY {{count}}",
+    "scoreboard_blocked": "BLOCKED {{count}}",
+    "scoreboard_busy_idle": "忙碌 {{busy}}/{{total}}",
+    "scoreboard_dispatch_failed": "调度失败 — 有待办任务但存在空闲智能体"
   },
   "scope": {
     "mine": "我的",

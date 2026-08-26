@@ -9,7 +9,13 @@
     "of_total": "{{total}} 件中 {{visible}} 件",
     "list_load_failed": "エージェントを読み込めませんでした",
     "list_load_failed_default": "エージェント一覧の取得中に問題が発生しました。",
-    "try_again": "再試行"
+    "try_again": "再試行",
+    "scoreboard_ready": "READY {{count}}",
+    "scoreboard_working": "WORKING {{count}}",
+    "scoreboard_verify": "VERIFY {{count}}",
+    "scoreboard_blocked": "BLOCKED {{count}}",
+    "scoreboard_busy_idle": "稼働 {{busy}}/{{total}}",
+    "scoreboard_dispatch_failed": "配車失敗 — 待機中のタスクがあるのに空きエージェントがいます"
   },
   "scope": {
     "mine": "自分のもの",

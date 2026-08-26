@@ -9,7 +9,13 @@
     "of_total": "{{total}}개 중 {{visible}}개",
     "list_load_failed": "에이전트 목록을 불러오지 못했습니다",
     "list_load_failed_default": "에이전트 목록을 가져오는 중 문제가 발생했습니다.",
-    "try_again": "다시 시도"
+    "try_again": "다시 시도",
+    "scoreboard_ready": "READY {{count}}",
+    "scoreboard_working": "WORKING {{count}}",
+    "scoreboard_verify": "VERIFY {{count}}",
+    "scoreboard_blocked": "BLOCKED {{count}}",
+    "scoreboard_busy_idle": "가동 {{busy}}/{{total}}",
+    "scoreboard_dispatch_failed": "배차 실패 — 대기 중인 작업이 있는데 유휴 에이전트가 있습니다"
   },
   "scope": {
     "mine": "내 것",

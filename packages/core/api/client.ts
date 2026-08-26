@@ -23,6 +23,7 @@ import type {
   AgentTask,
   AgentActivityBucket,
   AgentRunCount,
+  WorkspaceScoreboard,
   AgentRuntime,
   RuntimeProfile,
   CreateRuntimeProfileRequest,
@@ -150,6 +151,8 @@ import {
   DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
+  WorkspaceScoreboardSchema,
+  EMPTY_WORKSPACE_SCOREBOARD,
   EMPTY_AGENT_TEMPLATE_DETAIL,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_APP_CONFIG,
@@ -1397,6 +1400,18 @@ export class ApiClient {
   // Per-agent 30-day total run count for the Agents-list RUNS column.
   async getWorkspaceAgentRunCounts(): Promise<AgentRunCount[]> {
     return this.fetch(`/api/agent-run-counts`);
+  }
+
+  // Dispatch scoreboard (NEX-1040): READY/WORKING/VERIFY/BLOCKED issue
+  // counts plus busy/idle agent counts, for the Agents-list header badge.
+  async getWorkspaceScoreboard(): Promise<WorkspaceScoreboard> {
+    const raw = await this.fetch<unknown>(`/api/workspace/scoreboard`);
+    return parseWithFallback<WorkspaceScoreboard>(
+      raw,
+      WorkspaceScoreboardSchema,
+      EMPTY_WORKSPACE_SCOREBOARD,
+      { endpoint: "GET /api/workspace/scoreboard" },
+    );
   }
 
   async getActiveTasksForIssue(issueId: string): Promise<{ tasks: AgentTask[] }> {

@@ -19,6 +19,7 @@ import type {
   AgentRuntime,
   CreateAgentRequest,
   MemberWithUser,
+  WorkspaceScoreboard,
 } from "@multica/core/types";
 import {
   type AgentActivity,
@@ -44,6 +45,7 @@ import {
   agentListOptions,
   memberListOptions,
   workspaceKeys,
+  workspaceScoreboardOptions,
 } from "@multica/core/workspace/queries";
 import { runtimeListOptions } from "@multica/core/runtimes";
 import { Button } from "@multica/ui/components/ui/button";
@@ -72,6 +74,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
+import { cn } from "@multica/ui/lib/utils";
 import { useNavigation, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PageHeader } from "../../layout/page-header";
@@ -177,11 +180,72 @@ export interface AgentsPageProps {
 // Page header
 // ---------------------------------------------------------------------------
 
+// NEX-1040 dispatch scoreboard badge — READY/WORKING/VERIFY/BLOCKED issue
+// counts plus busy/idle agent counts, one line, ops-telemetry style (fixed
+// English codes across locales, same as the ops scoreboard script this
+// replaces). Turns red only in the "dispatch failed" state (ready work
+// exists while an agent sits idle) so the header stays quiet otherwise.
+function ScoreboardBadge({
+  scoreboard,
+}: {
+  scoreboard: WorkspaceScoreboard | undefined;
+}) {
+  const { t } = useT("agents");
+  if (!scoreboard) return null;
+  const {
+    ready_count,
+    working_count,
+    verify_count,
+    blocked_count,
+    busy_agents,
+    idle_agents,
+    dispatch_failed,
+  } = scoreboard;
+
+  const label = [
+    t(($) => $.page.scoreboard_ready, { count: ready_count }),
+    t(($) => $.page.scoreboard_working, { count: working_count }),
+    t(($) => $.page.scoreboard_verify, { count: verify_count }),
+    t(($) => $.page.scoreboard_blocked, { count: blocked_count }),
+    t(($) => $.page.scoreboard_busy_idle, {
+      busy: busy_agents,
+      total: busy_agents + idle_agents,
+    }),
+  ].join(" · ");
+  const failedHint = t(($) => $.page.scoreboard_dispatch_failed);
+
+  const badge = (
+    <span
+      role="status"
+      aria-label={dispatch_failed ? `${label} — ${failedHint}` : label}
+      className={cn(
+        "ml-2 hidden items-center rounded-full border px-2 py-0.5 font-mono text-[11px] tabular-nums md:inline-flex",
+        dispatch_failed
+          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          : "border-border/60 text-muted-foreground/70",
+      )}
+    >
+      {label}
+    </span>
+  );
+
+  if (!dispatch_failed) return badge;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={badge} />
+      <TooltipContent>{failedHint}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function PageHeaderBar({
   totalCount,
+  scoreboard,
   onCreate,
 }: {
   totalCount: number;
+  scoreboard: WorkspaceScoreboard | undefined;
   onCreate: () => void;
 }) {
   const { t } = useT("agents");
@@ -195,6 +259,7 @@ function PageHeaderBar({
             {totalCount}
           </span>
         )}
+        <ScoreboardBadge scoreboard={scoreboard} />
         <p className="ml-2 hidden text-xs text-muted-foreground md:block">
           {t(($) => $.page.tagline)}{" "}
           <a
@@ -236,7 +301,7 @@ function ListError({
   const { t } = useT("agents");
   return (
     <div className="flex flex-1 min-h-0 flex-col">
-      <PageHeaderBar totalCount={0} onCreate={onCreate} />
+      <PageHeaderBar totalCount={0} scoreboard={undefined} onCreate={onCreate} />
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
         <AlertCircle className="h-8 w-8 text-destructive" />
         <div>
@@ -809,6 +874,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   );
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: runCountsRaw = [] } = useQuery(agentRunCounts30dOptions(wsId));
+  const { data: scoreboard } = useQuery(workspaceScoreboardOptions(wsId));
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
   const { byAgent: activityMap } = useWorkspaceActivityMap(wsId);
 
@@ -1059,6 +1125,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     <div className="relative flex flex-1 min-h-0 flex-col">
       <PageHeaderBar
         totalCount={totalCount}
+        scoreboard={scoreboard}
         onCreate={() => setShowCreate(true)}
       />
 
