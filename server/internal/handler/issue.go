@@ -3162,3 +3162,60 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 	slog.Info("batch delete issues", append(logger.RequestAttrs(r), "count", deleted)...)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 }
+
+// WorkspaceScoreboard is the dispatch-status widget on the Agents list:
+// how many issues are ready to run, in flight, awaiting review, or
+// blocked, plus how many agents are actually busy vs. sitting idle.
+// dispatch_failed is the actionable signal — ready work exists but an
+// idle agent isn't picking it up.
+type WorkspaceScoreboard struct {
+	ReadyCount        int32   `json:"ready_count"`
+	ReadyMaxWaitHours float64 `json:"ready_max_wait_hours"`
+	WorkingCount      int32   `json:"working_count"`
+	VerifyCount       int32   `json:"verify_count"`
+	BlockedCount      int32   `json:"blocked_count"`
+	BusyAgents        int32   `json:"busy_agents"`
+	IdleAgents        int32   `json:"idle_agents"`
+	DispatchFailed    bool    `json:"dispatch_failed"`
+}
+
+// GetWorkspaceScoreboard backs the Agents-list dispatch scoreboard badge.
+func (h *Handler) GetWorkspaceScoreboard(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	wsUUID := parseUUID(workspaceID)
+
+	issueRow, err := h.Queries.GetWorkspaceScoreboard(r.Context(), wsUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get workspace scoreboard")
+		return
+	}
+
+	agents, err := h.Queries.ListAgents(r.Context(), wsUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get workspace scoreboard")
+		return
+	}
+	var busyAgents, idleAgents int32
+	for _, a := range agents {
+		switch a.Status {
+		case "working":
+			busyAgents++
+		case "idle":
+			idleAgents++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, WorkspaceScoreboard{
+		ReadyCount:        issueRow.ReadyCount,
+		ReadyMaxWaitHours: issueRow.ReadyMaxWaitHours,
+		WorkingCount:      issueRow.WorkingCount,
+		VerifyCount:       issueRow.VerifyCount,
+		BlockedCount:      issueRow.BlockedCount,
+		BusyAgents:        busyAgents,
+		IdleAgents:        idleAgents,
+		DispatchFailed:    issueRow.ReadyCount > 0 && idleAgents > 0,
+	})
+}

@@ -636,6 +636,63 @@ func (q *Queries) GetIssueInWorkspace(ctx context.Context, arg GetIssueInWorkspa
 	return i, err
 }
 
+const getWorkspaceScoreboard = `-- name: GetWorkspaceScoreboard :one
+WITH bucketed AS (
+    SELECT
+        i.updated_at,
+        CASE
+            WHEN i.status = 'todo' THEN 'ready'
+            WHEN i.status = 'in_progress'
+                 AND i.assignee_type = 'agent'
+                 AND a.status = 'idle'
+                 AND i.updated_at < now() - INTERVAL '2 hours'
+            THEN 'ready'
+            WHEN i.status = 'in_progress' THEN 'working'
+            WHEN i.status = 'in_review' THEN 'verify'
+            WHEN i.status = 'blocked' THEN 'blocked'
+        END AS bucket
+    FROM issue i
+    LEFT JOIN agent a ON a.id = i.assignee_id AND i.assignee_type = 'agent'
+    WHERE i.workspace_id = $1
+      AND i.status IN ('todo', 'in_progress', 'in_review', 'blocked')
+)
+SELECT
+    COUNT(*) FILTER (WHERE bucket = 'ready')::int AS ready_count,
+    COALESCE(MAX(EXTRACT(EPOCH FROM (now() - updated_at)) / 3600.0)
+        FILTER (WHERE bucket = 'ready'), 0)::float8 AS ready_max_wait_hours,
+    COUNT(*) FILTER (WHERE bucket = 'working')::int AS working_count,
+    COUNT(*) FILTER (WHERE bucket = 'verify')::int AS verify_count,
+    COUNT(*) FILTER (WHERE bucket = 'blocked')::int AS blocked_count
+FROM bucketed
+`
+
+type GetWorkspaceScoreboardRow struct {
+	ReadyCount        int32   `json:"ready_count"`
+	ReadyMaxWaitHours float64 `json:"ready_max_wait_hours"`
+	WorkingCount      int32   `json:"working_count"`
+	VerifyCount       int32   `json:"verify_count"`
+	BlockedCount      int32   `json:"blocked_count"`
+}
+
+// Backs the dispatch scoreboard widget (READY/WORKING/VERIFY/BLOCKED).
+// Mirrors scripts/scoreboard.py: an in_progress issue reclassifies from
+// WORKING to READY when its assignee is an agent sitting idle and the
+// issue hasn't been touched in over 2 hours ("turn exhausted, abandoned"
+// rather than "in flight"). ready_max_wait_hours is the longest such wait,
+// so the widget can distinguish a fresh backlog from a stalled one.
+func (q *Queries) GetWorkspaceScoreboard(ctx context.Context, workspaceID pgtype.UUID) (GetWorkspaceScoreboardRow, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceScoreboard, workspaceID)
+	var i GetWorkspaceScoreboardRow
+	err := row.Scan(
+		&i.ReadyCount,
+		&i.ReadyMaxWaitHours,
+		&i.WorkingCount,
+		&i.VerifyCount,
+		&i.BlockedCount,
+	)
+	return i, err
+}
+
 const listChildIssues = `-- name: ListChildIssues :many
 SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage FROM issue
 WHERE parent_issue_id = $1

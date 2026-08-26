@@ -966,6 +966,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Workspace-wide 30-day run counts per agent for the Agents-list RUNS column.
 			r.Get("/api/agent-run-counts", h.GetWorkspaceAgentRunCounts)
 
+			// Dispatch scoreboard badge on the Agents-list page: READY/WORKING/
+			// VERIFY/BLOCKED issue counts plus busy/idle agent counts.
+			r.Get("/api/workspace/scoreboard", h.GetWorkspaceScoreboard)
+
 			r.Route("/api/chat/sessions", func(r chi.Router) {
 				r.Post("/", h.CreateChatSession)
 				r.Get("/", h.ListChatSessions)
