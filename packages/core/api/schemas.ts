@@ -21,6 +21,7 @@ import type {
   TimelineEntry,
   User,
   WebhookDelivery,
+  WorkspaceScoreboard,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 
@@ -395,6 +396,31 @@ const DashboardRunTimeDailySchema = z.object({
 }).loose();
 
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
+
+// Workspace dispatch scoreboard (NEX-1040) — every field feeds a header
+// badge number or the red "dispatch failed" state, so missing numbers
+// coerce to 0 / false rather than dropping the whole payload.
+export const WorkspaceScoreboardSchema = z.object({
+  ready_count: z.number().default(0),
+  ready_max_wait_hours: z.number().default(0),
+  working_count: z.number().default(0),
+  verify_count: z.number().default(0),
+  blocked_count: z.number().default(0),
+  busy_agents: z.number().default(0),
+  idle_agents: z.number().default(0),
+  dispatch_failed: z.boolean().default(false),
+}).loose();
+
+export const EMPTY_WORKSPACE_SCOREBOARD: WorkspaceScoreboard = {
+  ready_count: 0,
+  ready_max_wait_hours: 0,
+  working_count: 0,
+  verify_count: 0,
+  blocked_count: 0,
+  busy_agents: 0,
+  idle_agents: 0,
+  dispatch_failed: false,
+};
 
 // ---------------------------------------------------------------------------
 // Runtime usage schemas — the runtime-detail page's four usage endpoints

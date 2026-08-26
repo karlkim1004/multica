@@ -319,6 +319,7 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     qc.invalidateQueries({ queryKey: agentRunCountsKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: chatKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: labelKeys.all(wsId) });
+    qc.invalidateQueries({ queryKey: workspaceKeys.scoreboard(wsId) });
   }
   // Per-issue caches are keyed without wsId, so the issueKeys.all(wsId)
   // prefix above does not reach them. They rely entirely on WS events for
@@ -416,6 +417,9 @@ export function useRealtimeSync(
           // per-squad members-status cache without refetching the static squad
           // list summary.
           invalidateSquadMemberStatusQueries(qc, wsId);
+          // busy/idle counts in the scoreboard flip with every agent status
+          // change.
+          qc.invalidateQueries({ queryKey: workspaceKeys.scoreboard(wsId) });
         }
       },
       member: () => {
@@ -523,6 +527,10 @@ export function useRealtimeSync(
         // Squad members-status reads the same task lifecycle to flip
         // working ↔ idle for each agent member.
         invalidateSquadMemberStatusQueries(qc, wsId);
+        // busy/idle counts in the scoreboard flip with every task dispatch
+        // / completion, same signal as the squad members-status refresh
+        // above.
+        qc.invalidateQueries({ queryKey: workspaceKeys.scoreboard(wsId) });
         // Comment trigger previews answer "who would a send wake right
         // now" — the pending-task dedup guard makes that answer
         // queue-dependent, so any task lifecycle change must refresh an
@@ -603,6 +611,8 @@ export function useRealtimeSync(
         });
         if (issue.status) {
           onInboxIssueStatusChanged(qc, wsId, issue.id, issue.status);
+          // READY/WORKING/VERIFY/BLOCKED counts derive from issue status.
+          qc.invalidateQueries({ queryKey: workspaceKeys.scoreboard(wsId) });
         }
       }
     });
@@ -611,7 +621,10 @@ export function useRealtimeSync(
       const { issue } = p as IssueCreatedPayload;
       if (!issue) return;
       const wsId = getCurrentWsId();
-      if (wsId) onIssueCreated(qc, wsId, issue);
+      if (wsId) {
+        onIssueCreated(qc, wsId, issue);
+        qc.invalidateQueries({ queryKey: workspaceKeys.scoreboard(wsId) });
+      }
     });
 
     const unsubIssueDeleted = ws.on("issue:deleted", (p) => {
@@ -621,6 +634,7 @@ export function useRealtimeSync(
       if (wsId) {
         onIssueDeleted(qc, wsId, issue_id);
         onInboxIssueDeleted(qc, wsId, issue_id);
+        qc.invalidateQueries({ queryKey: workspaceKeys.scoreboard(wsId) });
       }
     });
 

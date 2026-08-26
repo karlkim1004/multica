@@ -146,6 +146,23 @@ export interface AgentRunCount {
   run_count: number;
 }
 
+// Workspace-wide dispatch scoreboard (NEX-1040): READY/WORKING/VERIFY/
+// BLOCKED issue counts plus busy/idle agent counts, mirroring the ops
+// scoreboard script's Sidekiq/Celery-style rule (queue latency +
+// busy/total ratio, not queue depth). `dispatch_failed` is true when ready
+// work exists while at least one agent sits idle — the same condition the
+// script pages on.
+export interface WorkspaceScoreboard {
+  ready_count: number;
+  ready_max_wait_hours: number;
+  working_count: number;
+  verify_count: number;
+  blocked_count: number;
+  busy_agents: number;
+  idle_agents: number;
+  dispatch_failed: boolean;
+}
+
 export interface AgentTask {
   id: string;
   agent_id: string;

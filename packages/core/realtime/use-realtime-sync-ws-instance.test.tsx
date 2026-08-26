@@ -102,9 +102,10 @@ describe("useRealtimeSync — ws instance change", () => {
     rerender({ ws: ws2 });
 
     // Should have called invalidateQueries for all workspace-scoped keys
-    // (15 workspace-scoped + 6 per-issue prefixes + 4 per-session chat
-    // prefixes + 1 workspaceKeys.list() = 26 calls)
-    expect(invalidateSpy).toHaveBeenCalledTimes(26);
+    // (16 workspace-scoped [incl. NEX-1040 scoreboard] + 6 per-issue
+    // prefixes + 4 per-session chat prefixes + 1 workspaceKeys.list() = 27
+    // calls)
+    expect(invalidateSpy).toHaveBeenCalledTimes(27);
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {

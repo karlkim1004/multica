@@ -317,3 +317,38 @@ UPDATE issue
 SET first_executed_at = now()
 WHERE id = $1 AND first_executed_at IS NULL
 RETURNING id, workspace_id, creator_type, creator_id, first_executed_at;
+
+-- name: GetWorkspaceScoreboard :one
+-- Backs the dispatch scoreboard widget (READY/WORKING/VERIFY/BLOCKED).
+-- Mirrors scripts/scoreboard.py: an in_progress issue reclassifies from
+-- WORKING to READY when its assignee is an agent sitting idle and the
+-- issue hasn't been touched in over 2 hours ("turn exhausted, abandoned"
+-- rather than "in flight"). ready_max_wait_hours is the longest such wait,
+-- so the widget can distinguish a fresh backlog from a stalled one.
+WITH bucketed AS (
+    SELECT
+        i.updated_at,
+        CASE
+            WHEN i.status = 'todo' THEN 'ready'
+            WHEN i.status = 'in_progress'
+                 AND i.assignee_type = 'agent'
+                 AND a.status = 'idle'
+                 AND i.updated_at < now() - INTERVAL '2 hours'
+            THEN 'ready'
+            WHEN i.status = 'in_progress' THEN 'working'
+            WHEN i.status = 'in_review' THEN 'verify'
+            WHEN i.status = 'blocked' THEN 'blocked'
+        END AS bucket
+    FROM issue i
+    LEFT JOIN agent a ON a.id = i.assignee_id AND i.assignee_type = 'agent'
+    WHERE i.workspace_id = $1
+      AND i.status IN ('todo', 'in_progress', 'in_review', 'blocked')
+)
+SELECT
+    COUNT(*) FILTER (WHERE bucket = 'ready')::int AS ready_count,
+    COALESCE(MAX(EXTRACT(EPOCH FROM (now() - updated_at)) / 3600.0)
+        FILTER (WHERE bucket = 'ready'), 0)::float8 AS ready_max_wait_hours,
+    COUNT(*) FILTER (WHERE bucket = 'working')::int AS working_count,
+    COUNT(*) FILTER (WHERE bucket = 'verify')::int AS verify_count,
+    COUNT(*) FILTER (WHERE bucket = 'blocked')::int AS blocked_count
+FROM bucketed;

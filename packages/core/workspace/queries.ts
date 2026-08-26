@@ -17,6 +17,7 @@ export const workspaceKeys = {
     ["workspaces", wsId, "squads", squadId, "members-status"] as const,
   skills: (wsId: string) => ["workspaces", wsId, "skills"] as const,
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
+  scoreboard: (wsId: string) => ["workspaces", wsId, "scoreboard"] as const,
 };
 
 export function workspaceListOptions() {
@@ -46,6 +47,20 @@ export function agentListOptions(wsId: string) {
     queryKey: workspaceKeys.agents(wsId),
     queryFn: () =>
       api.listAgents({ workspace_id: wsId, include_archived: true }),
+  });
+}
+
+// Dispatch scoreboard (NEX-1040) — READY/WORKING/VERIFY/BLOCKED issue
+// counts and busy/idle agent counts, for the Agents-list header badge.
+// Same freshness pattern as agentTaskSnapshotOptions: WS task/agent events
+// invalidate it immediately, the 30s staleTime is a tab-focus safety net.
+export function workspaceScoreboardOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.scoreboard(wsId),
+    queryFn: () => api.getWorkspaceScoreboard(),
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
   });
 }
 
