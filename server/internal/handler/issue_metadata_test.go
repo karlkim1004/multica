@@ -302,11 +302,15 @@ func TestUpdateIssueToBlockedSucceedsWithWaitingMetadata(t *testing.T) {
 	}
 }
 
-// in_review is intentionally NOT gated: every agent's standard runtime
-// workflow closes a completed run with `issue status <id> in_review`, so
-// requiring these keys there would 400 that closing call fleet-wide before
-// any runtime template pre-sets them. This test pins that scoping decision.
-func TestUpdateIssueToInReviewDoesNotRequireWaitingMetadata(t *testing.T) {
+// in_review is intentionally NOT hard-gated like blocked: every agent's
+// standard runtime workflow closes a completed run with `issue status <id>
+// in_review`, so rejecting that call fleet-wide before any runtime template
+// pre-sets these keys would break every closing call in the workspace.
+// Instead it is warn-only (NEX-1043 condition 2's "거부하거나 경고를 남긴다"
+// alternative): the transition still succeeds, but a durable
+// waiting_metadata_warning note is written to metadata so the gap is
+// queryable afterward instead of silently lost.
+func TestUpdateIssueToInReviewWarnsInsteadOfBlockingWithoutWaitingMetadata(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "in_review without waiting metadata")
 
 	w := httptest.NewRecorder()
@@ -315,6 +319,107 @@ func TestUpdateIssueToInReviewDoesNotRequireWaitingMetadata(t *testing.T) {
 	testHandler.UpdateIssue(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for in_review without waiting metadata, got %d: %s", w.Code, w.Body.String())
+	}
+	var got IssueResponse
+	json.NewDecoder(w.Body).Decode(&got)
+	if got.Status != "in_review" {
+		t.Fatalf("expected status in_review, got %q", got.Status)
+	}
+	warning, _ := got.Metadata[waitingMetadataWarningKey].(string)
+	for _, k := range []string{"waiting_on", "unblock_condition", "waiting_since"} {
+		if !strings.Contains(warning, k) {
+			t.Errorf("expected persisted warning to name missing key %q, got: %q", k, warning)
+		}
+	}
+}
+
+// Setting all three keys before transitioning to in_review leaves no
+// warning — the whole point is that a properly-owned wait produces zero
+// noise.
+func TestUpdateIssueToInReviewNoWarningWithWaitingMetadata(t *testing.T) {
+	issueID := createMetadataTestIssue(t, "in_review with waiting metadata")
+
+	for _, kv := range []struct{ key, value string }{
+		{"waiting_on", `"agent:00000000-0000-0000-0000-000000000001"`},
+		{"unblock_condition", `"validator confirms the fix"`},
+		{"waiting_since", `"2026-08-27T00:00:00Z"`},
+	} {
+		w := httptest.NewRecorder()
+		req := newRequest("PUT", "/api/issues/"+issueID+"/metadata/"+kv.key, json.RawMessage(`{"value":`+kv.value+`}`))
+		req = withURLParams(req, "id", issueID, "key", kv.key)
+		testHandler.SetIssueMetadataKey(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("set %s: expected 200, got %d: %s", kv.key, w.Code, w.Body.String())
+		}
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+issueID, map[string]any{"status": "in_review"})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got IssueResponse
+	json.NewDecoder(w.Body).Decode(&got)
+	if _, present := got.Metadata[waitingMetadataWarningKey]; present {
+		t.Errorf("expected no waiting_metadata_warning when all three keys are set, got: %v", got.Metadata[waitingMetadataWarningKey])
+	}
+}
+
+// A prior warn-only miss must not stick around forever: once the three keys
+// are all set and the issue transitions into a warn-gated status again, the
+// stale warning is cleared.
+func TestUpdateIssueToInReviewClearsStaleWarningOnceKeysAreSet(t *testing.T) {
+	issueID := createMetadataTestIssue(t, "in_review stale warning clears")
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+issueID, map[string]any{"status": "in_review"})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var firstPass IssueResponse
+	json.NewDecoder(w.Body).Decode(&firstPass)
+	if _, present := firstPass.Metadata[waitingMetadataWarningKey]; !present {
+		t.Fatalf("expected a warning to be recorded on the first pass")
+	}
+
+	// Move back to todo, set the keys, then transition to in_review again.
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issueID, map[string]any{"status": "todo"})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 moving back to todo, got %d: %s", w.Code, w.Body.String())
+	}
+
+	for _, kv := range []struct{ key, value string }{
+		{"waiting_on", `"agent:00000000-0000-0000-0000-000000000001"`},
+		{"unblock_condition", `"validator confirms the fix"`},
+		{"waiting_since", `"2026-08-27T00:00:00Z"`},
+	} {
+		w := httptest.NewRecorder()
+		req := newRequest("PUT", "/api/issues/"+issueID+"/metadata/"+kv.key, json.RawMessage(`{"value":`+kv.value+`}`))
+		req = withURLParams(req, "id", issueID, "key", kv.key)
+		testHandler.SetIssueMetadataKey(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("set %s: expected 200, got %d: %s", kv.key, w.Code, w.Body.String())
+		}
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issueID, map[string]any{"status": "in_review"})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var secondPass IssueResponse
+	json.NewDecoder(w.Body).Decode(&secondPass)
+	if _, present := secondPass.Metadata[waitingMetadataWarningKey]; present {
+		t.Errorf("expected stale warning to be cleared once all three keys are set, got: %v", secondPass.Metadata[waitingMetadataWarningKey])
 	}
 }
 

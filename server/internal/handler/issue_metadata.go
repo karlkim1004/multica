@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -50,6 +52,24 @@ var requiredWaitingMetadataKeys = []string{"waiting_on", "unblock_condition", "w
 // keys before closing a run.
 var transitionsRequiringWaitingMetadata = map[string]bool{"blocked": true}
 
+// transitionsWarnOnlyMissingWaitingMetadata are transitions where NEX-1043
+// leaves a durable warning instead of rejecting the request outright.
+// in_review is warn-only, not hard-gated like blocked: every agent's
+// standard runtime workflow closes a completed run with `issue status <id>
+// in_review`, so hard-gating it would 400 that closing call fleet-wide
+// before any runtime template pre-sets these keys. The warning is written
+// to issue metadata (see waitingMetadataWarningKey) rather than only
+// returned in the HTTP response, so it survives the fire-and-forget CLI
+// call that triggered it and stays queryable via `issue metadata list` /
+// `issue list --metadata`.
+var transitionsWarnOnlyMissingWaitingMetadata = map[string]bool{"in_review": true}
+
+// waitingMetadataWarningKey holds a human-readable note recording that a
+// warn-only transition happened without the three NEX-1043 ownership keys
+// set. UpdateIssue clears it automatically the next time the issue makes a
+// warn-gated transition with all three keys present.
+const waitingMetadataWarningKey = "waiting_metadata_warning"
+
 // missingWaitingMetadataKeys returns which of requiredWaitingMetadataKeys are
 // absent from an issue's existing metadata, given the status it is
 // transitioning to. Returns nil when the target status isn't gated or all
@@ -58,6 +78,20 @@ func missingWaitingMetadataKeys(targetStatus string, existing map[string]any) []
 	if !transitionsRequiringWaitingMetadata[targetStatus] {
 		return nil
 	}
+	return missingKeysOf(existing)
+}
+
+// missingWaitingMetadataKeysWarnOnly mirrors missingWaitingMetadataKeys but
+// checks transitionsWarnOnlyMissingWaitingMetadata instead of the hard-gated
+// set.
+func missingWaitingMetadataKeysWarnOnly(targetStatus string, existing map[string]any) []string {
+	if !transitionsWarnOnlyMissingWaitingMetadata[targetStatus] {
+		return nil
+	}
+	return missingKeysOf(existing)
+}
+
+func missingKeysOf(existing map[string]any) []string {
 	var missing []string
 	for _, k := range requiredWaitingMetadataKeys {
 		if _, ok := existing[k]; !ok {
@@ -65,6 +99,14 @@ func missingWaitingMetadataKeys(targetStatus string, existing map[string]any) []
 		}
 	}
 	return missing
+}
+
+// waitingMetadataWarningNote formats the durable warning value written to
+// waitingMetadataWarningKey when a warn-only transition proceeds with
+// missing ownership keys.
+func waitingMetadataWarningNote(targetStatus string, missing []string, at time.Time) string {
+	return fmt.Sprintf("%s transition on %s missing metadata key(s): %s — set via `issue metadata set` (waiting_on, unblock_condition, waiting_since)",
+		targetStatus, at.UTC().Format(time.RFC3339), strings.Join(missing, ", "))
 }
 
 var issueMetadataKeyRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$`)
