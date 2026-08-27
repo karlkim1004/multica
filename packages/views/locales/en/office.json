@@ -1,0 +1,12 @@
+{
+  "page": {
+    "title": "Office",
+    "tasks_heading": "Waiting tasks",
+    "tasks_empty": "No tasks waiting",
+    "agents_heading": "Agents",
+    "waited_hours": "waiting {{hours}}h",
+    "resting": "resting",
+    "idle_with_task": "idle, has task",
+    "stale_days": "{{days}}d stalled"
+  }
+}

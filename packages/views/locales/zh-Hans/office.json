@@ -1,0 +1,12 @@
+{
+  "page": {
+    "title": "办公室",
+    "tasks_heading": "待处理任务",
+    "tasks_empty": "没有待处理任务",
+    "agents_heading": "智能体",
+    "waited_hours": "等待 {{hours}} 小时",
+    "resting": "休息中",
+    "idle_with_task": "有任务 · 空闲",
+    "stale_days": "搁置 {{days}} 天"
+  }
+}

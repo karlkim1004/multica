@@ -1,0 +1,12 @@
+{
+  "page": {
+    "title": "오피스",
+    "tasks_heading": "대기 업무",
+    "tasks_empty": "대기 중인 업무 없음",
+    "agents_heading": "에이전트",
+    "waited_hours": "{{hours}}시간 대기",
+    "resting": "쉬는 중",
+    "idle_with_task": "업무 있음 · 유휴",
+    "stale_days": "{{days}}일 방치"
+  }
+}
