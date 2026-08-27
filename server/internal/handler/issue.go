@@ -2379,6 +2379,13 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		if !validateIssueEnum(w, "status", *req.Status, validIssueStatuses) {
 			return
 		}
+		if missing := missingWaitingMetadataKeys(*req.Status, parseIssueMetadata(prevIssue.Metadata)); len(missing) > 0 {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf(
+				"cannot transition to %q: missing required metadata key(s) %s (set via `issue metadata set`, e.g. waiting_on=ceo|agent:<id>|external|event, unblock_condition=<one observable sentence>, waiting_since=<RFC3339>)",
+				*req.Status, strings.Join(missing, ", "),
+			))
+			return
+		}
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
 	}
 	if req.Priority != nil {
@@ -2919,6 +2926,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			params.Description = pgtype.Text{String: *req.Updates.Description, Valid: true}
 		}
 		if req.Updates.Status != nil {
+			if missing := missingWaitingMetadataKeys(*req.Updates.Status, parseIssueMetadata(prevIssue.Metadata)); len(missing) > 0 {
+				continue
+			}
 			params.Status = pgtype.Text{String: *req.Updates.Status, Valid: true}
 		}
 		if req.Updates.Priority != nil {

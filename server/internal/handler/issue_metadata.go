@@ -31,6 +31,42 @@ const (
 	maxIssueMetadataKeys = 50
 )
 
+// requiredWaitingMetadataKeys are the ownership fields NEX-1043 introduces so
+// "who currently holds the ball" and "what clears it" are machine-readable
+// instead of living only in comment prose. waiting_on: "ceo" | "agent:<id>" |
+// "external" | "event". unblock_condition: one observable sentence.
+// waiting_since: RFC3339.
+var requiredWaitingMetadataKeys = []string{"waiting_on", "unblock_condition", "waiting_since"}
+
+// transitionsRequiringWaitingMetadata is intentionally blocked-only, not
+// blocked+in_review. Every agent's standard runtime workflow ends every
+// completed run with `issue status <id> in_review` (see the platform-wide
+// assignment brief), so gating in_review here would 400 that closing call
+// fleet-wide the moment this ships, for every workspace, before any agent
+// template is updated to pre-set these keys. blocked is far rarer and
+// already carried an informal waiting_on/blocked_reason convention (see
+// missing-blocked-reason-means-bad-criteria), so it is the safe first step.
+// Extending to in_review is a follow-up once the runtime brief sets these
+// keys before closing a run.
+var transitionsRequiringWaitingMetadata = map[string]bool{"blocked": true}
+
+// missingWaitingMetadataKeys returns which of requiredWaitingMetadataKeys are
+// absent from an issue's existing metadata, given the status it is
+// transitioning to. Returns nil when the target status isn't gated or all
+// keys are already present.
+func missingWaitingMetadataKeys(targetStatus string, existing map[string]any) []string {
+	if !transitionsRequiringWaitingMetadata[targetStatus] {
+		return nil
+	}
+	var missing []string
+	for _, k := range requiredWaitingMetadataKeys {
+		if _, ok := existing[k]; !ok {
+			missing = append(missing, k)
+		}
+	}
+	return missing
+}
+
 var issueMetadataKeyRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$`)
 
 // SetIssueMetadataKeyRequest carries the JSON value to write under the key

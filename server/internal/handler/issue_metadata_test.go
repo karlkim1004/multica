@@ -245,6 +245,130 @@ func TestNewIssueDefaultsToEmptyMetadata(t *testing.T) {
 	}
 }
 
+// NEX-1043: transitioning to blocked without waiting_on/unblock_condition/
+// waiting_since already set must be rejected with a 400 naming the missing
+// keys, so "who currently holds the ball" can never be silently absent.
+func TestUpdateIssueToBlockedRequiresWaitingMetadata(t *testing.T) {
+	issueID := createMetadataTestIssue(t, "blocked without waiting metadata")
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+issueID, map[string]any{"status": "blocked"})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for blocked without waiting metadata, got %d: %s", w.Code, w.Body.String())
+	}
+	for _, k := range []string{"waiting_on", "unblock_condition", "waiting_since"} {
+		if !strings.Contains(w.Body.String(), k) {
+			t.Errorf("expected error body to name missing key %q, got: %s", k, w.Body.String())
+		}
+	}
+
+	// Status must not have moved.
+	gw := httptest.NewRecorder()
+	gr := newRequest("GET", "/api/issues/"+issueID, nil)
+	gr = withURLParam(gr, "id", issueID)
+	testHandler.GetIssue(gw, gr)
+	var got IssueResponse
+	json.NewDecoder(gw.Body).Decode(&got)
+	if got.Status != "todo" {
+		t.Errorf("expected status to stay todo after rejected transition, got %q", got.Status)
+	}
+}
+
+func TestUpdateIssueToBlockedSucceedsWithWaitingMetadata(t *testing.T) {
+	issueID := createMetadataTestIssue(t, "blocked with waiting metadata")
+
+	for _, kv := range []struct{ key, value string }{
+		{"waiting_on", `"ceo"`},
+		{"unblock_condition", `"CEO approves the migration window"`},
+		{"waiting_since", `"2026-08-27T00:00:00Z"`},
+	} {
+		w := httptest.NewRecorder()
+		req := newRequest("PUT", "/api/issues/"+issueID+"/metadata/"+kv.key, json.RawMessage(`{"value":`+kv.value+`}`))
+		req = withURLParams(req, "id", issueID, "key", kv.key)
+		testHandler.SetIssueMetadataKey(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("set %s: expected 200, got %d: %s", kv.key, w.Code, w.Body.String())
+		}
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+issueID, map[string]any{"status": "blocked"})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 once waiting metadata is set, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// in_review is intentionally NOT gated: every agent's standard runtime
+// workflow closes a completed run with `issue status <id> in_review`, so
+// requiring these keys there would 400 that closing call fleet-wide before
+// any runtime template pre-sets them. This test pins that scoping decision.
+func TestUpdateIssueToInReviewDoesNotRequireWaitingMetadata(t *testing.T) {
+	issueID := createMetadataTestIssue(t, "in_review without waiting metadata")
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+issueID, map[string]any{"status": "in_review"})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for in_review without waiting metadata, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// BatchUpdateIssues silently skips (rather than erroring) any issue that
+// fails a per-row precondition elsewhere in this handler (bad UUID, cycle,
+// etc.) — the waiting-metadata gate on blocked follows the same contract.
+func TestBatchUpdateIssuesToBlockedSkipsWithoutWaitingMetadata(t *testing.T) {
+	withKeys := createMetadataTestIssue(t, "batch blocked with keys")
+	withoutKeys := createMetadataTestIssue(t, "batch blocked without keys")
+
+	for _, kv := range []struct{ key, value string }{
+		{"waiting_on", `"ceo"`},
+		{"unblock_condition", `"CEO approves"`},
+		{"waiting_since", `"2026-08-27T00:00:00Z"`},
+	} {
+		w := httptest.NewRecorder()
+		req := newRequest("PUT", "/api/issues/"+withKeys+"/metadata/"+kv.key, json.RawMessage(`{"value":`+kv.value+`}`))
+		req = withURLParams(req, "id", withKeys, "key", kv.key)
+		testHandler.SetIssueMetadataKey(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("set %s: expected 200, got %d: %s", kv.key, w.Code, w.Body.String())
+		}
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
+		"issue_ids": []string{withKeys, withoutKeys},
+		"updates":   map[string]any{"status": "blocked"},
+	})
+	testHandler.BatchUpdateIssues(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Updated int `json:"updated"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Updated != 1 {
+		t.Fatalf("expected exactly 1 updated (the one with waiting metadata), got %d", resp.Updated)
+	}
+
+	for id, wantStatus := range map[string]string{withKeys: "blocked", withoutKeys: "todo"} {
+		gw := httptest.NewRecorder()
+		gr := newRequest("GET", "/api/issues/"+id, nil)
+		gr = withURLParam(gr, "id", id)
+		testHandler.GetIssue(gw, gr)
+		var got IssueResponse
+		json.NewDecoder(gw.Body).Decode(&got)
+		if got.Status != wantStatus {
+			t.Errorf("issue %s: expected status %q, got %q", id, wantStatus, got.Status)
+		}
+	}
+}
+
 func createMetadataTestIssue(t *testing.T, title string) string {
 	t.Helper()
 	w := httptest.NewRecorder()
