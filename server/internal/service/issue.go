@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -33,9 +36,84 @@ type IssueService struct {
 	// cmd/server/router.go after construction; nil in tests / self-hosted
 	// without the metrics listener — obsmetrics.RecordEvent treats a nil
 	// Metrics as "PostHog only", so leaving it unset is safe.
-	Metrics     *obsmetrics.BusinessMetrics
-	TaskService *TaskService
-	WorkerPool  *WorkerPoolService
+	Metrics       *obsmetrics.BusinessMetrics
+	TaskService   *TaskService
+	WorkerPool    *WorkerPoolService
+	poolSweepMu   sync.Mutex
+	nextPoolSweep time.Time
+}
+
+const (
+	defaultPoolStaleAfter = 6 * time.Hour
+	poolSweepInterval     = time.Minute
+)
+
+func poolStaleAfter() time.Duration {
+	if raw := os.Getenv("MULTICA_POOL_STALE_AFTER"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+		slog.Warn("pool dispatch: invalid stale threshold; using default", "value", raw, "default", defaultPoolStaleAfter)
+	}
+	return defaultPoolStaleAfter
+}
+
+// SweepStaleAssigned re-wakes a directly assigned idle agent only after its
+// todo/review issue has been untouched for the configured threshold. It never
+// considers blocked work: waiting_on remains a routing signal, not permission
+// to repeat a known blocker. The expiring issue lease serializes competing
+// heartbeat requests and makes a crashed dispatcher recoverable.
+func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtype.UUID) {
+	if s.TaskService == nil || s.WorkerPool == nil {
+		return
+	}
+	s.poolSweepMu.Lock()
+	if time.Now().Before(s.nextPoolSweep) {
+		s.poolSweepMu.Unlock()
+		return
+	}
+	s.nextPoolSweep = time.Now().Add(poolSweepInterval)
+	s.poolSweepMu.Unlock()
+
+	cutoff := time.Now().Add(-poolStaleAfter())
+	for _, status := range []string{"todo", "in_review"} {
+		issues, err := s.Queries.ListIssues(ctx, db.ListIssuesParams{
+			WorkspaceID: workspaceID, Limit: 100, Status: pgtype.Text{String: status, Valid: true},
+		})
+		if err != nil {
+			slog.Warn("pool dispatch: stale sweep list failed", "workspace_id", util.UUIDToString(workspaceID), "status", status, "error", err)
+			return
+		}
+		for _, candidate := range issues {
+			if candidate.AssigneeType.String != "agent" || !candidate.AssigneeID.Valid || !candidate.UpdatedAt.Valid || candidate.UpdatedAt.Time.After(cutoff) {
+				continue
+			}
+			agent, err := s.Queries.GetAgent(ctx, candidate.AssigneeID)
+			if err != nil || agent.Status != "idle" || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+				continue
+			}
+			active, err := s.Queries.HasActiveTaskForIssue(ctx, candidate.ID)
+			if err != nil || active {
+				continue
+			}
+			if err := s.WorkerPool.AcquireIssueLock(ctx, workspaceID, candidate.ID, agent.ID); err != nil {
+				continue
+			}
+			// Re-read after leasing so an assignment/status update that raced the
+			// scan cannot be revived by this sweep.
+			issue, getErr := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: candidate.ID, WorkspaceID: workspaceID})
+			if getErr == nil && issue.Status == status && issue.AssigneeType.String == "agent" && issue.AssigneeID == agent.ID && issue.UpdatedAt.Valid && !issue.UpdatedAt.Time.After(cutoff) {
+				active, activeErr := s.Queries.HasActiveTaskForIssue(ctx, issue.ID)
+				if activeErr == nil && !active {
+					if _, enqueueErr := s.TaskService.EnqueueTaskForIssue(ctx, issue); enqueueErr == nil {
+						slog.Info("pool dispatch: stale assigned issue requeued", "issue_id", util.UUIDToString(issue.ID), "worker_id", util.UUIDToString(agent.ID), "runtime_id", util.UUIDToString(agent.RuntimeID), "status", status, "stale_after", poolStaleAfter().String())
+					}
+				}
+			}
+			_ = s.WorkerPool.ReleaseIssueLock(ctx, workspaceID, candidate.ID, agent.ID)
+			return // one issue per workspace/tick limits blast radius.
+		}
+	}
 }
 
 func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.Client, ts *TaskService) *IssueService {
