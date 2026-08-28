@@ -1,12 +1,15 @@
 {
   "page": {
     "title": "办公室",
+    "max_wait": "最长等待 {{wait}}",
+    "rule_a": "无负责人 {{count}} 项",
+    "rule_b": "空闲有任务 {{count}} 个",
     "tasks_heading": "待处理任务",
     "tasks_empty": "没有待处理任务",
     "agents_heading": "智能体",
+    "unassigned": "未分配",
     "waited_hours": "等待 {{hours}} 小时",
     "resting": "休息中",
-    "idle_with_task": "有任务 · 空闲",
-    "stale_days": "搁置 {{days}} 天"
+    "load": "{{count}} · {{wait}}"
   }
 }

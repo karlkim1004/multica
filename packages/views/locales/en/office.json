@@ -1,12 +1,15 @@
 {
   "page": {
     "title": "Office",
+    "max_wait": "longest wait {{wait}}",
+    "rule_a": "unassigned {{count}}",
+    "rule_b": "idle with work {{count}}",
     "tasks_heading": "Waiting tasks",
     "tasks_empty": "No tasks waiting",
     "agents_heading": "Agents",
+    "unassigned": "unassigned",
     "waited_hours": "waiting {{hours}}h",
     "resting": "resting",
-    "idle_with_task": "idle, has task",
-    "stale_days": "{{days}}d stalled"
+    "load": "{{count}} · {{wait}}"
   }
 }

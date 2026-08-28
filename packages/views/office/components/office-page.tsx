@@ -16,13 +16,12 @@ import { cn } from "@multica/ui/lib/utils";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { AppLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
+import { StatusIcon } from "../../issues/components/status-icon";
 import { useT } from "../../i18n";
 
 // NEX-1040/NEX-1045 "virtual office" screen — static render + polling, no
 // realtime stream (explicit ban from the NEX-1045 spike decision: this is a
 // "who's idle while work waits" control surface, not a live animation).
-// Not wired into the nav menu yet — NEX-1045 defers that until the screen
-// itself is reviewed.
 const POLL_MS = 30_000;
 const OPEN_STATUSES = ["todo", "in_progress", "in_review", "blocked"] as const;
 // Matches scoreboard.py's STALE_H concept but at the 7-day "abandoned"
@@ -32,6 +31,11 @@ const TASK_LIST_LIMIT = 30;
 
 function hoursSince(iso: string): number {
   return (Date.now() - new Date(iso).getTime()) / 3_600_000;
+}
+
+function formatWaitHours(hours: number): string {
+  if (hours < 24) return `${Math.round(hours)}h`;
+  return `${Math.floor(hours / 24)}d`;
 }
 
 interface OpenLoad {
@@ -62,7 +66,10 @@ export function OfficePage() {
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
 
   // Server sort_by has no updated_at option, so "longest waiting" is a
-  // client-side sort over the already-fetched board buckets.
+  // client-side sort over the already-fetched board buckets. Sorted
+  // oldest-first, so openIssues[0]'s wait IS the workspace-wide max —
+  // the metric the NEX-1040 validator FAIL flagged as missing from the
+  // old scoreboard badge (ready_max_wait_hours).
   const openIssues = useMemo(
     () =>
       issues
@@ -76,6 +83,11 @@ export function OfficePage() {
         ),
     [issues],
   );
+
+  const maxWaitHours = openIssues.length
+    ? hoursSince(openIssues[0]!.updated_at)
+    : 0;
+  const unassignedCount = openIssues.filter((issue) => !issue.assignee_id).length;
 
   const openByAgent = useMemo(() => {
     const map = new Map<string, OpenLoad>();
@@ -109,13 +121,32 @@ export function OfficePage() {
     [agents, openByAgent, presenceMap],
   );
 
+  // Rule B (NEX-1045 "채찍질 규칙"): idle while holding open work — the
+  // orchestrator's recall target. Not scoped to id/persona (that would
+  // hardcode one workspace's org chart into a shared product screen); this
+  // is the count the escalation summary answers, independent of who acts on it.
+  const idleWithTaskCount = board.filter(
+    (entry) => entry.openCount > 0 && entry.presence?.workload !== "working",
+  ).length;
+
   return (
     <div className="flex flex-1 min-h-0 flex-col">
-      <PageHeader className="px-5">
+      <PageHeader className="justify-between px-5">
         <h1 className="text-sm font-medium">{t(($) => $.page.title)}</h1>
+        {openIssues.length > 0 && (
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">
+            {t(($) => $.page.max_wait, { wait: formatWaitHours(maxWaitHours) })}
+          </span>
+        )}
       </PageHeader>
+      {/* Escalation summary (NEX-1045 "오케스트레이터 존", counts only — see
+          PR notes on why no single persona is pinned here). */}
+      <div className="flex items-center gap-4 border-b border-border/60 px-5 py-2 text-xs text-muted-foreground">
+        <span>{t(($) => $.page.rule_a, { count: unassignedCount })}</span>
+        <span>{t(($) => $.page.rule_b, { count: idleWithTaskCount })}</span>
+      </div>
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <div className="w-72 shrink-0 overflow-y-auto border-r border-border/60 p-3">
+        <div className="w-80 shrink-0 overflow-y-auto border-r border-border/60 p-3">
           <h2 className="mb-2 px-1 text-xs font-medium text-muted-foreground">
             {t(($) => $.page.tasks_heading)}
           </h2>
@@ -129,16 +160,32 @@ export function OfficePage() {
                 <li key={issue.id}>
                   <AppLink
                     href={paths.issueDetail(issue.id)}
-                    className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-accent"
+                    className="flex items-start gap-2 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-accent"
                   >
-                    <span className="truncate font-mono text-[10px] text-muted-foreground">
-                      {issue.identifier}
-                    </span>
-                    <span className="truncate">{issue.title}</span>
-                    <span className="text-[10px] text-muted-foreground">
-                      {t(($) => $.page.waited_hours, {
-                        hours: Math.round(hoursSince(issue.updated_at)),
-                      })}
+                    <StatusIcon status={issue.status} className="mt-0.5 h-3.5 w-3.5" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                        {issue.identifier}
+                      </span>
+                      <span className="block truncate">{issue.title}</span>
+                      <span className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
+                        {issue.assignee_type && issue.assignee_id ? (
+                          <>
+                            <ActorAvatar
+                              actorType={issue.assignee_type}
+                              actorId={issue.assignee_id}
+                              size={14}
+                            />
+                          </>
+                        ) : (
+                          <span>{t(($) => $.page.unassigned)}</span>
+                        )}
+                        <span>
+                          {t(($) => $.page.waited_hours, {
+                            hours: Math.round(hoursSince(issue.updated_at)),
+                          })}
+                        </span>
+                      </span>
                     </span>
                   </AppLink>
                 </li>
@@ -151,9 +198,9 @@ export function OfficePage() {
             {t(($) => $.page.agents_heading)}
           </h2>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-4">
-            {board.map(({ agent, presence, openCount, maxWaitHours }) => {
+            {board.map(({ agent, presence, openCount, maxWaitHours: agentMaxWait }) => {
               const working = presence?.workload === "working";
-              const stale = openCount > 0 && maxWaitHours >= STALE_HOURS;
+              const stale = openCount > 0 && agentMaxWait >= STALE_HOURS;
               // Design rule from NEX-1045: an idle agent with open work is a
               // warning, never rendered as restful — only a true zero-open
               // agent gets the quiet "resting" treatment.
@@ -165,16 +212,13 @@ export function OfficePage() {
                   : warn
                     ? "ring-warning"
                     : "ring-border/50";
-              const statusLabel =
+              const loadLabel =
                 openCount === 0
                   ? t(($) => $.page.resting)
-                  : stale
-                    ? t(($) => $.page.stale_days, {
-                        days: Math.floor(maxWaitHours / 24),
-                      })
-                    : working
-                      ? null
-                      : t(($) => $.page.idle_with_task);
+                  : t(($) => $.page.load, {
+                      count: openCount,
+                      wait: formatWaitHours(agentMaxWait),
+                    });
               return (
                 <div
                   key={agent.id}
@@ -201,11 +245,9 @@ export function OfficePage() {
                   <span className="max-w-[96px] truncate text-[11px]">
                     {agent.name}
                   </span>
-                  {statusLabel && (
-                    <span className="text-[10px] text-muted-foreground">
-                      {statusLabel}
-                    </span>
-                  )}
+                  <span className="text-[10px] text-muted-foreground">
+                    {loadLabel}
+                  </span>
                 </div>
               );
             })}
