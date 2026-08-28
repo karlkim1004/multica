@@ -87,7 +87,7 @@ func poolIssueMayDispatch(metadata []byte) bool {
 }
 
 // SweepStaleAssigned re-wakes a directly assigned idle agent only after its
-// todo/review issue has been untouched for the configured threshold. It never
+// todo issue has been untouched for the configured threshold. It never
 // considers blocked work: waiting_on remains a routing signal, not permission
 // to repeat a known blocker. The expiring issue lease serializes competing
 // heartbeat requests and makes a crashed dispatcher recoverable.
@@ -105,7 +105,9 @@ func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtyp
 
 	cutoff := time.Now().Add(-poolStaleAfter())
 	dispatched := 0
-	for _, status := range []string{"todo", "in_review"} {
+	// Review ownership is not yet encoded in the data model; only todo is safe
+	// to resume automatically. blocked and in_review remain explicit routing.
+	for _, status := range []string{"todo"} {
 		issues, err := s.Queries.ListIssues(ctx, db.ListIssuesParams{
 			WorkspaceID: workspaceID, Limit: 100, Status: pgtype.Text{String: status, Valid: true},
 		})
