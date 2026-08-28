@@ -13,10 +13,10 @@ import (
 
 const defaultWorkerPoolDispatchInterval = 5 * time.Minute
 
-// runWorkerPoolDispatcher is the token-free queue watcher. It deliberately
-// runs outside daemon/LLM sessions: it only reads candidate rows and invokes
-// the normal task enqueue path when a lease-protected issue is eligible.
-func runWorkerPoolDispatcher(ctx context.Context, pool *pgxpool.Pool, issues *service.IssueService) {
+// workerPoolDispatchInterval configures how often the existing runtime
+// sweeper invokes the token-free queue scan. It does not create another
+// goroutine or ticker.
+func workerPoolDispatchInterval() time.Duration {
 	interval := defaultWorkerPoolDispatchInterval
 	if raw := os.Getenv("MULTICA_POOL_DISPATCH_INTERVAL"); raw != "" {
 		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
@@ -25,16 +25,7 @@ func runWorkerPoolDispatcher(ctx context.Context, pool *pgxpool.Pool, issues *se
 			slog.Warn("pool dispatcher: invalid interval; using default", "value", raw, "default", interval)
 		}
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		dispatchWorkerPoolOnce(ctx, pool, issues)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+	return interval
 }
 
 func dispatchWorkerPoolOnce(ctx context.Context, pool *pgxpool.Pool, issues *service.IssueService) {
