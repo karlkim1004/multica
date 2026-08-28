@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,16 @@ func poolStaleAfter() time.Duration {
 	return defaultPoolStaleAfter
 }
 
+func poolDispatchMax() int {
+	if raw := os.Getenv("MULTICA_POOL_DISPATCH_MAX"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+		slog.Warn("pool dispatch: invalid batch limit; using default", "value", raw, "default", 3)
+	}
+	return 3
+}
+
 // poolIssueMayDispatch keeps a persisted wait owner authoritative even when a
 // legacy issue still happens to be labelled todo. Only an agent-owned wait is
 // eligible for recovery; ceo/external/event waits require an outside action.
@@ -93,6 +104,7 @@ func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtyp
 	s.poolSweepMu.Unlock()
 
 	cutoff := time.Now().Add(-poolStaleAfter())
+	dispatched := 0
 	for _, status := range []string{"todo", "in_review"} {
 		issues, err := s.Queries.ListIssues(ctx, db.ListIssuesParams{
 			WorkspaceID: workspaceID, Limit: 100, Status: pgtype.Text{String: status, Valid: true},
@@ -123,12 +135,15 @@ func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtyp
 				active, activeErr := s.Queries.HasActiveTaskForIssue(ctx, issue.ID)
 				if activeErr == nil && !active {
 					if _, enqueueErr := s.TaskService.EnqueueTaskForIssue(ctx, issue); enqueueErr == nil {
+						dispatched++
 						slog.Info("pool dispatch: stale assigned issue requeued", "issue_id", util.UUIDToString(issue.ID), "worker_id", util.UUIDToString(agent.ID), "runtime_id", util.UUIDToString(agent.RuntimeID), "status", status, "stale_after", poolStaleAfter().String())
 					}
 				}
 			}
 			_ = s.WorkerPool.ReleaseIssueLock(ctx, workspaceID, candidate.ID, agent.ID)
-			return // one issue per workspace/tick limits blast radius.
+			if dispatched >= poolDispatchMax() {
+				return
+			}
 		}
 	}
 }
