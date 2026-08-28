@@ -8,7 +8,7 @@ import {
   useWorkspacePresenceMap,
   type AgentPresenceDetail,
 } from "@multica/core/agents";
-import { issueListOptions } from "@multica/core/issues";
+import { officeOpenIssuesOptions } from "@multica/core/office";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
@@ -23,7 +23,6 @@ import { useT } from "../../i18n";
 // realtime stream (explicit ban from the NEX-1045 spike decision: this is a
 // "who's idle while work waits" control surface, not a live animation).
 const POLL_MS = 30_000;
-const OPEN_STATUSES = ["todo", "in_progress", "in_review", "blocked"] as const;
 // Matches scoreboard.py's STALE_H concept but at the 7-day "abandoned"
 // threshold the virtual-office design calls out, not the 2h scoreboard one.
 const STALE_HOURS = 24 * 7;
@@ -59,23 +58,24 @@ export function OfficePage() {
     ...agentListOptions(wsId),
     refetchInterval: POLL_MS,
   });
+  // NEX-1040 validator FAIL: the shared board query caps each status bucket
+  // at 50, which silently dropped issues (and the true global max-wait)
+  // past the 50th. officeOpenIssuesOptions pages through every open issue
+  // instead — see packages/core/office/queries.ts.
   const { data: issues = [] } = useQuery({
-    ...issueListOptions(wsId),
+    ...officeOpenIssuesOptions(wsId),
     refetchInterval: POLL_MS,
   });
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
 
   // Server sort_by has no updated_at option, so "longest waiting" is a
-  // client-side sort over the already-fetched board buckets. Sorted
-  // oldest-first, so openIssues[0]'s wait IS the workspace-wide max —
-  // the metric the NEX-1040 validator FAIL flagged as missing from the
-  // old scoreboard badge (ready_max_wait_hours).
+  // client-side sort over the fully-paged issue list. Sorted oldest-first,
+  // so openIssues[0]'s wait IS the workspace-wide max — the metric the
+  // validator FAIL flagged as missing from the old scoreboard badge
+  // (ready_max_wait_hours).
   const openIssues = useMemo(
     () =>
       issues
-        .filter((issue) =>
-          (OPEN_STATUSES as readonly string[]).includes(issue.status),
-        )
         .slice()
         .sort(
           (a, b) =>

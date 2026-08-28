@@ -15,6 +15,7 @@ import { MemberDetailPage } from "./pages/member-detail-page";
 import { RuntimeDetailPage } from "./pages/runtime-detail-page";
 import { AttachmentPreviewRoute } from "./pages/attachment-preview-page";
 import { IssuesPage } from "@multica/views/issues/components";
+import { OfficePage } from "@multica/views/office";
 import { ProjectsPage } from "@multica/views/projects/components";
 import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
@@ -117,6 +118,11 @@ export const appRoutes: RouteObject[] = [
         element: <WorkspaceRouteLayout />,
         children: [
           { index: true, element: <Navigate to="issues" replace /> },
+          {
+            path: "office",
+            element: <OfficePage />,
+            handle: { title: "Office" },
+          },
           {
             path: "issues",
             element: <IssuesPage />,
