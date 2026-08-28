@@ -101,6 +101,7 @@ type AgentTaskQueue struct {
 	InitiatorUserID       pgtype.UUID        `json:"initiator_user_id"`
 	HandoffNote           pgtype.Text        `json:"handoff_note"`
 	PrepareLeaseExpiresAt pgtype.Timestamptz `json:"prepare_lease_expires_at"`
+	RunningLeaseExpiresAt pgtype.Timestamptz `json:"running_lease_expires_at"`
 }
 
 type Attachment struct {
@@ -762,6 +763,16 @@ type User struct {
 	ProfileDescription      string             `json:"profile_description"`
 	// User-preferred IANA timezone for report rendering (Viewing tz). NULL means "use the browser-detected tz at render time". Affects dashboards, charts, and any "today" label shown to this user. Does not affect data materialisation — all rollups remain in UTC.
 	Timezone pgtype.Text `json:"timezone"`
+}
+
+type VerificationCode struct {
+	ID        pgtype.UUID        `json:"id"`
+	Email     string             `json:"email"`
+	Code      string             `json:"code"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	Used      bool               `json:"used"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Attempts  int32              `json:"attempts"`
 }
 
 type WebhookDelivery struct {

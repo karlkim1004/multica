@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,6 +91,33 @@ const (
 	claimResponseRecoveryWindow = 90 * time.Second
 	prepareLeaseDuration        = 45 * time.Second
 )
+
+// runningLeaseDuration is the execution-phase task lease TTL (NEX-1032): how
+// long a 'running' task may go without a heartbeat before FailStaleTasks may
+// reap it, even though its runtime keeps heartbeating normally. This closes
+// the gap where a single hung per-task watcher goroutine survives
+// indefinitely inside an otherwise-healthy daemon process — runtime-level
+// liveness (agent_runtime.last_seen_at) cannot see that, only a lease
+// renewed by the specific in-flight task can. Default follows the
+// platform's lease/heartbeat standard; override via
+// MULTICA_TASK_RUNNING_LEASE_TTL_SECONDS. Must stay comfortably above the
+// daemon's heartbeat interval (default 30s, see daemon config
+// MULTICA_TASK_RUNNING_HEARTBEAT_INTERVAL) so normal network/scheduling
+// jitter between heartbeats never trips it.
+var runningLeaseDuration = envSecondsDuration("MULTICA_TASK_RUNNING_LEASE_TTL_SECONDS", 120*time.Second)
+
+func envSecondsDuration(name string, def time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	secs, err := strconv.ParseFloat(raw, 64)
+	if err != nil || secs <= 0 {
+		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def.String(), "error", err)
+		return def
+	}
+	return time.Duration(secs * float64(time.Second))
+}
 
 // buildCommentTriggerSummary fetches the comment content and truncates
 // it for storage on the task row. Returns an invalid pgtype.Text when
@@ -1214,7 +1242,10 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 // StartTask transitions a dispatched task to running.
 // Issue status is NOT changed here — the agent manages it via the CLI.
 func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
-	task, err := s.Queries.StartAgentTask(ctx, taskID)
+	task, err := s.Queries.StartAgentTask(ctx, db.StartAgentTaskParams{
+		ID:               taskID,
+		RunningLeaseSecs: runningLeaseDuration.Seconds(),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("start task: %w", err)
 	}
@@ -1241,6 +1272,22 @@ func (s *TaskService) ExtendTaskPrepareLease(ctx context.Context, taskID, runtim
 	})
 	if err != nil {
 		return nil, fmt.Errorf("extend task prepare lease: %w", err)
+	}
+	return &task, nil
+}
+
+// ExtendTaskRunningLease renews the execution-phase lease (NEX-1032) so
+// FailStaleTasks doesn't reap a task whose per-task watcher goroutine is
+// still alive and heartbeating, even while its runtime keeps heartbeating
+// independently of any specific task.
+func (s *TaskService) ExtendTaskRunningLease(ctx context.Context, taskID, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
+	task, err := s.Queries.ExtendAgentTaskRunningLease(ctx, db.ExtendAgentTaskRunningLeaseParams{
+		ID:        taskID,
+		RuntimeID: runtimeID,
+		LeaseSecs: runningLeaseDuration.Seconds(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("extend task running lease: %w", err)
 	}
 	return &task, nil
 }
