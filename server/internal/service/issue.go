@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +60,21 @@ func poolStaleAfter() time.Duration {
 	return defaultPoolStaleAfter
 }
 
+// poolIssueMayDispatch keeps a persisted wait owner authoritative even when a
+// legacy issue still happens to be labelled todo. Only an agent-owned wait is
+// eligible for recovery; ceo/external/event waits require an outside action.
+func poolIssueMayDispatch(metadata []byte) bool {
+	if len(metadata) == 0 {
+		return true
+	}
+	var values map[string]any
+	if err := json.Unmarshal(metadata, &values); err != nil {
+		return false
+	}
+	waitingOn, ok := values["waiting_on"].(string)
+	return !ok || strings.HasPrefix(waitingOn, "agent:")
+}
+
 // SweepStaleAssigned re-wakes a directly assigned idle agent only after its
 // todo/review issue has been untouched for the configured threshold. It never
 // considers blocked work: waiting_on remains a routing signal, not permission
@@ -85,7 +102,7 @@ func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtyp
 			return
 		}
 		for _, candidate := range issues {
-			if candidate.AssigneeType.String != "agent" || !candidate.AssigneeID.Valid || !candidate.UpdatedAt.Valid || candidate.UpdatedAt.Time.After(cutoff) {
+			if candidate.AssigneeType.String != "agent" || !candidate.AssigneeID.Valid || !candidate.UpdatedAt.Valid || candidate.UpdatedAt.Time.After(cutoff) || !poolIssueMayDispatch(candidate.Metadata) {
 				continue
 			}
 			agent, err := s.Queries.GetAgent(ctx, candidate.AssigneeID)
@@ -102,7 +119,7 @@ func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtyp
 			// Re-read after leasing so an assignment/status update that raced the
 			// scan cannot be revived by this sweep.
 			issue, getErr := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: candidate.ID, WorkspaceID: workspaceID})
-			if getErr == nil && issue.Status == status && issue.AssigneeType.String == "agent" && issue.AssigneeID == agent.ID && issue.UpdatedAt.Valid && !issue.UpdatedAt.Time.After(cutoff) {
+			if getErr == nil && issue.Status == status && issue.AssigneeType.String == "agent" && issue.AssigneeID == agent.ID && issue.UpdatedAt.Valid && !issue.UpdatedAt.Time.After(cutoff) && poolIssueMayDispatch(issue.Metadata) {
 				active, activeErr := s.Queries.HasActiveTaskForIssue(ctx, issue.ID)
 				if activeErr == nil && !active {
 					if _, enqueueErr := s.TaskService.EnqueueTaskForIssue(ctx, issue); enqueueErr == nil {
