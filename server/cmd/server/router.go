@@ -563,12 +563,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
-			r.Get("/", h.ListWorkspaces)
+			r.With(h.RestrictGeneralUserWorkspaceList).Get("/", h.ListWorkspaces)
 			r.Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
 				// Member-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
+					r.Use(h.RestrictGeneralUserWorkspaceRoutes)
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
 					r.Post("/leave", h.LeaveWorkspace)
@@ -705,8 +706,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		// --- Workspace-scoped routes (all require workspace membership) ---
 		r.Group(func(r chi.Router) {
-		r.Use(middleware.RequireWorkspaceMember(queries))
-		r.Use(h.RestrictGeneralUserWorkspaceRoutes)
+			r.Use(middleware.RequireWorkspaceMember(queries))
+			r.Use(h.RestrictGeneralUserWorkspaceRoutes)
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)

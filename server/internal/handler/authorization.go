@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -134,6 +135,62 @@ func (h *Handler) RestrictGeneralUserWorkspaceRoutes(next http.Handler) http.Han
 			return
 		}
 		writeError(w, http.StatusForbidden, "insufficient permissions")
+	})
+}
+
+// RestrictGeneralUserWorkspaceList applies the same write-only contract to
+// the workspace directory, which has no single workspace context for the
+// member middleware to inject. A caller whose memberships are all
+// general_user may not enumerate workspaces; callers with an elevated
+// membership retain their existing directory access for that workspace.
+func (h *Handler) RestrictGeneralUserWorkspaceList(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return
+		}
+		userUUID, err := util.ParseUUID(userID)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "user not authenticated")
+			return
+		}
+
+		actorType, _ := h.resolveActor(r, userID, h.resolveWorkspaceID(r))
+		if actorType == ActorAgent {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		workspaces, err := h.Queries.ListWorkspaces(r.Context(), userUUID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list workspaces")
+			return
+		}
+		if len(workspaces) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		allGeneralUsers := true
+		for _, workspace := range workspaces {
+			member, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+				UserID:      userUUID,
+				WorkspaceID: workspace.ID,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to resolve workspace membership")
+				return
+			}
+			if effectiveMemberRole(member.Role) != RoleGeneralUser {
+				allGeneralUsers = false
+				break
+			}
+		}
+		if allGeneralUsers {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
