@@ -474,6 +474,97 @@ func TestBatchUpdateIssuesToBlockedSkipsWithoutWaitingMetadata(t *testing.T) {
 	}
 }
 
+// Setting the three keys once and later deleting one while still blocked
+// must not be able to silently regress the issue back to non-conforming
+// without ever touching status — that gap is exactly how NEX-1043's
+// completion condition 3 (100% conforming across the live queue) kept
+// drifting: issues backfilled while blocked had a key deleted later by an
+// unrelated metadata cleanup and were never re-caught because no status
+// transition happened to re-run the gate.
+func TestDeleteWaitingMetadataKeyRejectedWhileBlocked(t *testing.T) {
+	issueID := createMetadataTestIssue(t, "delete waiting_on while blocked")
+	setWaitingMetadata(t, issueID, "ceo", "CEO approves the migration window", "2026-08-27T00:00:00Z")
+	transitionIssueStatus(t, issueID, "blocked")
+
+	w := httptest.NewRecorder()
+	req := newRequest("DELETE", "/api/issues/"+issueID+"/metadata/waiting_on", nil)
+	req = withURLParams(req, "id", issueID, "key", "waiting_on")
+	testHandler.DeleteIssueMetadataKey(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 deleting waiting_on while blocked, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Key must still be present — the rejected delete must not have partially applied.
+	gw := httptest.NewRecorder()
+	gr := newRequest("GET", "/api/issues/"+issueID+"/metadata", nil)
+	gr = withURLParam(gr, "id", issueID)
+	testHandler.ListIssueMetadata(gw, gr)
+	var got struct {
+		Metadata map[string]any `json:"metadata"`
+	}
+	json.NewDecoder(gw.Body).Decode(&got)
+	if got.Metadata["waiting_on"] != "ceo" {
+		t.Errorf("expected waiting_on to survive the rejected delete, got %+v", got.Metadata)
+	}
+}
+
+// in_review mirrors the transition gate's warn-only policy: the delete is
+// allowed to proceed (closing a run must never 400), but it leaves the same
+// durable waiting_metadata_warning note the transition gate would have
+// written had the keys been missing at transition time.
+func TestDeleteWaitingMetadataKeyWarnsWhileInReview(t *testing.T) {
+	issueID := createMetadataTestIssue(t, "delete waiting_on while in_review")
+	setWaitingMetadata(t, issueID, "agent:00000000-0000-0000-0000-000000000001", "validator confirms the fix", "2026-08-27T00:00:00Z")
+	transitionIssueStatus(t, issueID, "in_review")
+
+	w := httptest.NewRecorder()
+	req := newRequest("DELETE", "/api/issues/"+issueID+"/metadata/waiting_on", nil)
+	req = withURLParams(req, "id", issueID, "key", "waiting_on")
+	testHandler.DeleteIssueMetadataKey(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 deleting waiting_on while in_review (warn-only), got %d: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Metadata map[string]any `json:"metadata"`
+	}
+	json.NewDecoder(w.Body).Decode(&got)
+	if _, present := got.Metadata["waiting_on"]; present {
+		t.Errorf("expected waiting_on to actually be deleted, got %+v", got.Metadata)
+	}
+	warning, _ := got.Metadata[waitingMetadataWarningKey].(string)
+	if !strings.Contains(warning, "waiting_on") {
+		t.Errorf("expected persisted warning to name the now-missing waiting_on key, got: %q", warning)
+	}
+}
+
+func setWaitingMetadata(t *testing.T, issueID, waitingOn, unblockCondition, waitingSince string) {
+	t.Helper()
+	for _, kv := range []struct{ key, value string }{
+		{"waiting_on", `"` + waitingOn + `"`},
+		{"unblock_condition", `"` + unblockCondition + `"`},
+		{"waiting_since", `"` + waitingSince + `"`},
+	} {
+		w := httptest.NewRecorder()
+		req := newRequest("PUT", "/api/issues/"+issueID+"/metadata/"+kv.key, json.RawMessage(`{"value":`+kv.value+`}`))
+		req = withURLParams(req, "id", issueID, "key", kv.key)
+		testHandler.SetIssueMetadataKey(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("set %s: expected 200, got %d: %s", kv.key, w.Code, w.Body.String())
+		}
+	}
+}
+
+func transitionIssueStatus(t *testing.T, issueID, status string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+issueID, map[string]any{"status": status})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("transition to %s: expected 200, got %d: %s", status, w.Code, w.Body.String())
+	}
+}
+
 func createMetadataTestIssue(t *testing.T, title string) string {
 	t.Helper()
 	w := httptest.NewRecorder()

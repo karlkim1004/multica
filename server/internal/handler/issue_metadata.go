@@ -293,6 +293,25 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// NEX-1043: deleting one of the ownership keys is otherwise
+	// indistinguishable from a transition that never set it — an issue
+	// backfilled while blocked/in_review can be silently stripped back to
+	// non-conforming by a later, unrelated metadata cleanup without ever
+	// touching status. Apply the same rule DeleteIssueMetadataKey's sibling
+	// (the status-transition gate in issue.go) already applies at the
+	// transition itself: hard-reject the delete for statuses that require
+	// these keys, warn (durably, via waitingMetadataWarningKey) for statuses
+	// that only warn.
+	if isRequiredWaitingMetadataKey(key) {
+		if transitionsRequiringWaitingMetadata[issue.Status] {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf(
+				"cannot delete %q while status is %q: NEX-1043 requires waiting_on/unblock_condition/waiting_since to stay set for this status (replace the value instead, e.g. via `issue metadata set`)",
+				key, issue.Status,
+			))
+			return
+		}
+	}
+
 	updated, err := h.Queries.DeleteIssueMetadataKey(r.Context(), db.DeleteIssueMetadataKeyParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -308,6 +327,19 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if isRequiredWaitingMetadataKey(key) && transitionsWarnOnlyMissingWaitingMetadata[issue.Status] {
+		if missing := missingKeysOf(parseIssueMetadata(updated.Metadata)); len(missing) > 0 {
+			noteJSON, _ := json.Marshal(waitingMetadataWarningNote(issue.Status, missing, time.Now()))
+			if warned, werr := h.Queries.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
+				ID: updated.ID, WorkspaceID: updated.WorkspaceID, Key: waitingMetadataWarningKey, Value: noteJSON,
+			}); werr != nil {
+				slog.Warn("failed to record waiting-metadata warning on delete", append(logger.RequestAttrs(r), "error", werr, "issue_id", issueID, "key", key)...)
+			} else {
+				updated = warned
+			}
+		}
+	}
+
 	workspaceID := uuidToString(updated.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	metadata := parseIssueMetadata(updated.Metadata)
@@ -316,4 +348,15 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 		"metadata": metadata,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": metadata})
+}
+
+// isRequiredWaitingMetadataKey reports whether key is one of the three
+// NEX-1043 ownership fields (waiting_on, unblock_condition, waiting_since).
+func isRequiredWaitingMetadataKey(key string) bool {
+	for _, k := range requiredWaitingMetadataKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
