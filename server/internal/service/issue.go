@@ -43,7 +43,7 @@ type IssueService struct {
 	TaskService   *TaskService
 	WorkerPool    *WorkerPoolService
 	poolSweepMu   sync.Mutex
-	nextPoolSweep time.Time
+	nextPoolSweep map[pgtype.UUID]time.Time
 }
 
 const (
@@ -86,6 +86,22 @@ func poolIssueMayDispatch(metadata []byte) bool {
 	return !ok || strings.HasPrefix(waitingOn, "agent:")
 }
 
+// claimPoolSweepSlot limits recovery scans per workspace. The dispatcher
+// visits every workspace in one pass, so a single global cooldown would let
+// the first row suppress every subsequent workspace.
+func (s *IssueService) claimPoolSweepSlot(workspaceID pgtype.UUID, now time.Time) bool {
+	s.poolSweepMu.Lock()
+	defer s.poolSweepMu.Unlock()
+	if s.nextPoolSweep == nil {
+		s.nextPoolSweep = make(map[pgtype.UUID]time.Time)
+	}
+	if now.Before(s.nextPoolSweep[workspaceID]) {
+		return false
+	}
+	s.nextPoolSweep[workspaceID] = now.Add(poolSweepInterval)
+	return true
+}
+
 // SweepStaleAssigned re-wakes a directly assigned idle agent only after its
 // todo issue has been untouched for the configured threshold. It never
 // considers blocked work: waiting_on remains a routing signal, not permission
@@ -95,13 +111,9 @@ func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtyp
 	if s.TaskService == nil || s.WorkerPool == nil {
 		return
 	}
-	s.poolSweepMu.Lock()
-	if time.Now().Before(s.nextPoolSweep) {
-		s.poolSweepMu.Unlock()
+	if !s.claimPoolSweepSlot(workspaceID, time.Now()) {
 		return
 	}
-	s.nextPoolSweep = time.Now().Add(poolSweepInterval)
-	s.poolSweepMu.Unlock()
 
 	cutoff := time.Now().Add(-poolStaleAfter())
 	dispatched := 0
