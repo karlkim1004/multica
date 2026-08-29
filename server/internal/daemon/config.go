@@ -28,6 +28,14 @@ const (
 	// hard ceiling for cost/resource control can set MULTICA_AGENT_TIMEOUT.
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
+	// DefaultTaskRunningHeartbeatInterval (NEX-1032) is how often the daemon
+	// renews a running task's server-side execution lease (see
+	// runningLeaseDuration in server/internal/service/task.go, default 120s)
+	// for as long as its per-task watcher goroutine is alive. Kept well
+	// below the lease TTL so normal jitter never trips a false reap; kept
+	// well above zero-cost so a slot with many concurrent tasks doesn't
+	// flood the server with heartbeat requests.
+	DefaultTaskRunningHeartbeatInterval = 30 * time.Second
 	// DefaultAgentIdleWatchdog is the per-task safety net that force-stops a
 	// run when the backend has emitted no message for this long AND its
 	// message queue is empty. Backends like Claude Code can hang indefinitely
@@ -99,6 +107,7 @@ type Config struct {
 	CodexSemanticInactivityTimeout time.Duration
 	AgentIdleWatchdog              time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
 	AgentToolWatchdog              time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = disabled); backstop for hung tools now that there is no wall-clock cap
+	TaskRunningHeartbeatInterval   time.Duration // how often to renew a running task's server-side execution lease (NEX-1032, default 30s)
 	ClaudeArgs                     []string
 	CodexArgs                      []string
 	CodebuddyArgs                  []string
@@ -378,6 +387,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
+	taskRunningHeartbeatInterval, err := durationFromEnv("MULTICA_TASK_RUNNING_HEARTBEAT_INTERVAL", DefaultTaskRunningHeartbeatInterval)
+	if err != nil {
+		return Config{}, err
+	}
+
 	maxConcurrentTasks, err := intFromEnv("MULTICA_DAEMON_MAX_CONCURRENT_TASKS", DefaultMaxConcurrentTasks)
 	if err != nil {
 		return Config{}, err
@@ -527,6 +541,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		CodexSemanticInactivityTimeout: codexSemanticInactivityTimeout,
 		AgentIdleWatchdog:              agentIdleWatchdog,
 		AgentToolWatchdog:              agentToolWatchdog,
+		TaskRunningHeartbeatInterval:   taskRunningHeartbeatInterval,
 		ClaudeArgs:                     claudeArgs,
 		CodexArgs:                      codexArgs,
 		CodebuddyArgs:                  codebuddyArgs,

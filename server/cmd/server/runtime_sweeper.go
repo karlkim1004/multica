@@ -37,6 +37,15 @@ const (
 	// The dispatched→running transition should be near-instant, so 5 minutes
 	// means something went wrong (e.g. StartTask API call failed silently).
 	dispatchTimeoutSeconds = 300.0
+	// maxPrepareDurationSeconds (NEX-1032) is an absolute ceiling on the
+	// dispatched/prepare phase, independent of how many times the daemon
+	// renews prepare_lease_expires_at. dispatchTimeoutSeconds alone cannot
+	// catch a prepare step that renews its lease forever without ever
+	// calling StartTask (e.g. a retry loop stuck resolving skill bundles);
+	// this branch fires regardless of lease state once dispatched_at is
+	// this old. 10 minutes is generously above prepareLeaseDuration (45s,
+	// service/task.go) and any realistic single prepare step.
+	maxPrepareDurationSeconds = 600.0
 	// runningTimeoutSeconds fails tasks stuck in 'running' beyond this. It is a
 	// coarse server-side backstop keyed on started_at (it does NOT look at task
 	// activity) — mainly for runs whose daemon died without reporting. The
@@ -262,8 +271,9 @@ func gcRuntimes(ctx context.Context, queries *db.Queries, bus *events.Bus) {
 // - A server restart left tasks in a non-terminal state
 func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService, bus *events.Bus) {
 	failedTasks, err := queries.FailStaleTasks(ctx, db.FailStaleTasksParams{
-		DispatchTimeoutSecs: dispatchTimeoutSeconds,
-		RunningTimeoutSecs:  runningTimeoutSeconds,
+		DispatchTimeoutSecs:    dispatchTimeoutSeconds,
+		MaxPrepareDurationSecs: maxPrepareDurationSeconds,
+		RunningTimeoutSecs:     runningTimeoutSeconds,
 	})
 	if err != nil {
 		slog.Warn("task sweeper: failed to clean up stale tasks", "error", err)

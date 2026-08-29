@@ -180,6 +180,14 @@ func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID s
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/prepare-lease", runtimeID, taskID), map[string]any{}, nil)
 }
 
+// ExtendTaskRunningLease renews the execution-phase task lease (NEX-1032).
+// Called on a fixed interval for as long as the daemon's per-task watcher
+// goroutine is alive; a hung goroutine simply stops calling this and the
+// server-side lease expires on its own.
+func (c *Client) ExtendTaskRunningLease(ctx context.Context, runtimeID, taskID string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/running-lease", runtimeID, taskID), map[string]any{}, nil)
+}
+
 func (c *Client) StartTask(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
 }
