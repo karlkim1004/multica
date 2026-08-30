@@ -741,6 +741,38 @@ func TestUpdateAgent_RedactsMcpConfigForAgentActor(t *testing.T) {
 	}
 }
 
+// TestUpdateAgent_AgentCannotRegisterValidator ensures a task-scoped agent
+// cannot turn itself into an auto-close authority through the host user's
+// owner membership.
+func TestUpdateAgent_AgentCannotRegisterValidator(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "validator-escalation-attempt", nil)
+	taskID := insertHandlerTestTask(t, agentID)
+	req := newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{
+		"is_validator": true,
+	})
+	req = withURLParam(req, "id", agentID)
+	req.Header.Set("X-Actor-Source", "task_token")
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	w := httptest.NewRecorder()
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("agent validator registration: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var isValidator bool
+	if err := testPool.QueryRow(context.Background(), "SELECT is_validator FROM agent WHERE id = $1", agentID).Scan(&isValidator); err != nil {
+		t.Fatalf("read agent validator flag: %v", err)
+	}
+	if isValidator {
+		t.Fatal("task-scoped agent self-registered as validator")
+	}
+}
+
 // TestUpdateAgent_KeepsMcpConfigForMemberActor is the matching positive
 // test — a normal member request (owner/admin) still receives the full
 // mcp_config in the mutation response, so the redaction does not

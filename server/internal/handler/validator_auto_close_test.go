@@ -1,6 +1,10 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -47,5 +51,54 @@ func TestValidationAutoCloseReasonsDefaultDenyAndGates(t *testing.T) {
 				t.Fatalf("%s gate missing: %v", tc.want, got)
 			}
 		})
+	}
+}
+
+func TestUpdateIssue_AgentCannotChangeAutoClosePolicy(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	caller := createHandlerTestAgent(t, "auto-close-policy-escalation", nil)
+	taskID := insertHandlerTestTask(t, caller)
+
+	create := httptest.NewRecorder()
+	createReq := newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":  "auto-close policy authorization test",
+		"status": "in_review",
+	})
+	testHandler.CreateIssue(create, createReq)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", create.Code, create.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(create.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, "DELETE FROM agent_task_queue WHERE issue_id = $1", issue.ID)
+		testPool.Exec(ctx, "DELETE FROM issue WHERE id = $1", issue.ID)
+	})
+
+	update := httptest.NewRecorder()
+	updateReq := newRequest(http.MethodPut, "/api/issues/"+issue.ID, map[string]any{
+		"auto_close_allowed": true,
+	})
+	updateReq = withURLParam(updateReq, "id", issue.ID)
+	updateReq.Header.Set("X-Actor-Source", "task_token")
+	updateReq.Header.Set("X-Agent-ID", caller)
+	updateReq.Header.Set("X-Task-ID", taskID)
+	testHandler.UpdateIssue(update, updateReq)
+	if update.Code != http.StatusForbidden {
+		t.Fatalf("agent auto-close policy update: expected 403, got %d: %s", update.Code, update.Body.String())
+	}
+
+	var enabled bool
+	if err := testPool.QueryRow(ctx, "SELECT auto_close_allowed FROM issue WHERE id = $1", issue.ID).Scan(&enabled); err != nil {
+		t.Fatalf("read auto-close policy: %v", err)
+	}
+	if enabled {
+		t.Fatal("task-scoped agent enabled auto-close policy")
 	}
 }

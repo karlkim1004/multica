@@ -2378,6 +2378,38 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	var rawFields map[string]json.RawMessage
 	json.Unmarshal(bodyBytes, &rawFields)
 
+	// Auto-close configuration grants authority to a later agent comment. A
+	// task token carries its host user's identity for ordinary issue work, so
+	// checking that membership alone would let an agent process self-authorize
+	// a finalizer. These fields are deliberately controlled by a human owner
+	// or admin only.
+	validationPolicyFields := []string{
+		"auto_close_allowed",
+		"implementation_agent_id",
+		"current_ref",
+		"external_validation_required",
+		"auto_close_criteria_version",
+	}
+	for _, field := range validationPolicyFields {
+		if _, present := rawFields[field]; !present {
+			continue
+		}
+		actorType, _ := h.resolveActor(r, userID, workspaceID)
+		if actorType == "agent" {
+			writeError(w, http.StatusForbidden, "agents cannot change validator auto-close policy")
+			return
+		}
+		member, ok := h.workspaceMember(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		if !roleAllowed(member.Role, "owner", "admin") {
+			writeError(w, http.StatusForbidden, "only workspace owners or admins can change validator auto-close policy")
+			return
+		}
+		break
+	}
+
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
 		ID:                       prevIssue.ID,
@@ -2393,16 +2425,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		AutoCloseCriteriaVersion: prevIssue.AutoCloseCriteriaVersion,
 	}
 	if req.AutoCloseAllowed != nil {
-		if *req.AutoCloseAllowed {
-			member, ok := h.workspaceMember(w, r, workspaceID)
-			if !ok {
-				return
-			}
-			if !roleAllowed(member.Role, "owner", "admin") {
-				writeError(w, http.StatusForbidden, "only workspace owners or admins can enable auto_close_allowed")
-				return
-			}
-		}
 		params.AutoCloseAllowed = pgtype.Bool{Bool: *req.AutoCloseAllowed, Valid: true}
 	}
 	if req.ExternalValidationRequired != nil {

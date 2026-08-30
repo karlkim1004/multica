@@ -1122,6 +1122,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
 	}
 	if req.IsValidator != nil {
+		actorType, _ := h.resolveActor(r, requestUserID(r), uuidToString(existing.WorkspaceID))
+		if actorType == "agent" {
+			writeError(w, http.StatusForbidden, "agents cannot register validators")
+			return
+		}
 		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
 		if !ok {
 			return
