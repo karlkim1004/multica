@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Crown } from "lucide-react";
+import { AlertTriangle, Armchair, Crown, Monitor, Moon } from "lucide-react";
 import type { Agent, Issue, Squad } from "@multica/core/types";
 import {
   useWorkspacePresenceMap,
@@ -12,6 +12,8 @@ import {
   officeOpenIssuesOptions,
   officeRecentDoneOptions,
   getEffectiveOwnerAgentId,
+  getOwnerHeldIssues,
+  getTicketShortLabel,
   getWaitingEscalationTier,
   getReassignedFromAgentId,
   TEAM_LEADER_AGENT_ID,
@@ -34,9 +36,15 @@ import { useT } from "../../i18n";
 // NEX-1040/NEX-1045 "virtual office" screen — static render + polling, no
 // realtime stream (explicit ban from the NEX-1045 spike decision: this is a
 // "who's idle while work waits" control surface, not a live animation).
+// NEX-1072 mock7 (2026-08-30 CEO-approved final spec): a room/desk layout
+// replaces the earlier org-chart card layout, but stays CSS-only — no
+// pixel-art sprites, no game engine (DeskRPG/Phaser was explicitly rejected
+// as too heavy). Avatars are the same real ActorAvatar images used
+// everywhere else; "desk" and "room" are just semantic containers around
+// them.
 const POLL_MS = 30_000;
 const TASK_LIST_LIMIT = 30;
-const HELD_TASKS_SHOWN = 4;
+const HELD_TASKS_SHOWN = 3;
 
 function hoursSince(iso: string): number {
   return (Date.now() - new Date(iso).getTime()) / 3_600_000;
@@ -45,6 +53,15 @@ function hoursSince(iso: string): number {
 function formatWaitHours(hours: number): string {
   if (hours < 24) return `${Math.round(hours)}h`;
   return `${Math.floor(hours / 24)}d`;
+}
+
+// NEX-1072 mock5/mock7: desk ticket chips carry a left-border wait-bucket
+// color independent of escalation severity — this is "how stale is this one
+// ticket", not "is this agent idle while holding it".
+function waitBucketClass(hours: number): string {
+  if (hours >= 12) return "border-l-destructive";
+  if (hours >= 4) return "border-l-warning";
+  return "border-l-success";
 }
 
 // NEX-1072 escalation severity, worst-first. Every level above OK traces to
@@ -229,7 +246,18 @@ export function OfficePage() {
     return set;
   }, [departments]);
 
-  const unassigned = useMemo(
+  // NEX-1072 mock5/mock7 ("라운지를 따로 뒀습니다"): agents holding zero
+  // tickets are a physically separate group from agents holding a ticket
+  // while idle (those stay at their desk, whip-marked — see DeskCard).
+  // Department/squad leaders always keep a desk in their room, even at zero
+  // load, so a room never silently disappears when its lead is unassigned
+  // work.
+  const leaderIds = useMemo(
+    () => new Set(departments.map((dept) => dept.squad.leader_id)),
+    [departments],
+  );
+
+  const withoutDepartment = useMemo(
     () =>
       board
         .filter(
@@ -238,6 +266,24 @@ export function OfficePage() {
         )
         .sort((a, b) => b.doneCount7d - a.doneCount7d),
     [board, assignedAgentIds],
+  );
+
+  const orphanedWithWork = useMemo(
+    () => withoutDepartment.filter((entry) => entry.held.length > 0),
+    [withoutDepartment],
+  );
+
+  const lounge = useMemo(
+    () =>
+      board
+        .filter(
+          (entry) =>
+            entry.agent.id !== TEAM_LEADER_AGENT_ID &&
+            !leaderIds.has(entry.agent.id) &&
+            entry.held.length === 0,
+        )
+        .sort((a, b) => b.doneCount7d - a.doneCount7d),
+    [board, leaderIds],
   );
 
   const departmentSeverities = useMemo(
@@ -255,15 +301,26 @@ export function OfficePage() {
   );
 
   const teamLeaderEntry = boardById.get(TEAM_LEADER_AGENT_ID) ?? null;
+  // Escalation chain: an agent with no department has no department leader
+  // between them and 아이유, so their own severity feeds 아이유 directly —
+  // same real-signal-only rule as departmentSeverities, just one layer
+  // shorter.
   const teamLeaderSeverity = useMemo(() => {
     let max: Severity = teamLeaderEntry?.severity ?? SEVERITY_OK;
     for (const s of departmentSeverities.values()) {
       if (s > max) max = s;
     }
+    for (const entry of orphanedWithWork) {
+      if (entry.severity > max) max = entry.severity;
+    }
     return max;
-  }, [departmentSeverities, teamLeaderEntry]);
+  }, [departmentSeverities, teamLeaderEntry, orphanedWithWork]);
 
   const owner = members.find((m) => m.role === "owner") ?? null;
+  const ownerHeld = useMemo(
+    () => (owner ? getOwnerHeldIssues(openIssues, owner.user_id) : []),
+    [openIssues, owner],
+  );
   // Rule C ("아이유가 놀면 대표님에게 표시"): fires only when the team lead
   // herself is idle — if she's actively working the chain, there's nothing
   // yet for the owner to act on.
@@ -328,17 +385,25 @@ export function OfficePage() {
             {t(($) => $.page.agents_heading)}
           </h2>
           <div className="space-y-4">
-            <OrgTopRow owner={owner} teamLeaderEntry={teamLeaderEntry} ownerAlert={ownerAlert} />
-            {departments.map((dept) => (
-              <DepartmentCard
-                key={dept.squad.id}
-                squad={dept.squad}
-                memberIds={dept.memberIds}
-                boardById={boardById}
-                severity={departmentSeverities.get(dept.squad.id) ?? SEVERITY_OK}
-              />
-            ))}
-            {unassigned.length > 0 && <UnassignedSection entries={unassigned} />}
+            <PresidentRoom
+              owner={owner}
+              ownerHeld={ownerHeld}
+              teamLeaderEntry={teamLeaderEntry}
+              ownerAlert={ownerAlert}
+            />
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {departments.map((dept) => (
+                <DepartmentRoom
+                  key={dept.squad.id}
+                  squad={dept.squad}
+                  memberIds={dept.memberIds}
+                  boardById={boardById}
+                  severity={departmentSeverities.get(dept.squad.id) ?? SEVERITY_OK}
+                />
+              ))}
+            </div>
+            {orphanedWithWork.length > 0 && <OrphanSection entries={orphanedWithWork} />}
+            {lounge.length > 0 && <LoungeSection entries={lounge} />}
           </div>
         </div>
       </div>
@@ -348,7 +413,7 @@ export function OfficePage() {
 
 // Reroutes through waiting_on before falling back to assignee — see
 // getEffectiveOwnerAgentId. Keeps the sidebar's "who's on this" chip
-// consistent with the org chart's grouping instead of showing a stale
+// consistent with the office board's grouping instead of showing a stale
 // original assignee for an issue the sweeper already moved on.
 function IssueOwnerChip({ issue }: { issue: Issue }) {
   const { t } = useT("office");
@@ -362,53 +427,75 @@ function IssueOwnerChip({ issue }: { issue: Issue }) {
   return <span>{t(($) => $.page.unassigned)}</span>;
 }
 
-// Top-level org-chart row: 대표님(owner) and 아이유(TeamLeader) on the same
-// line, per the 2026-08-30 canonical goal ("아이유 위에 내 옆에").
-function OrgTopRow({
+// Top room in the office: 대표님(owner) and 아이유(TeamLeader) share it, per
+// the 2026-08-30 canonical goal ("아이유 위에 내 옆에") and mock6's finding
+// that the owner is the workspace's single heaviest ticket-holder — the
+// president's room gets desks too, not just a name badge.
+function PresidentRoom({
   owner,
+  ownerHeld,
   teamLeaderEntry,
   ownerAlert,
 }: {
   owner: { user_id: string; name: string } | null;
+  ownerHeld: Issue[];
   teamLeaderEntry: AgentBoardEntry | null;
   ownerAlert: boolean;
 }) {
   const { t } = useT("office");
   if (!owner && !teamLeaderEntry) return null;
   return (
-    <section className="flex flex-wrap items-stretch gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-      {owner && (
-        <div
-          className={cn(
-            "flex items-center gap-3 rounded-lg border p-3",
-            ownerAlert ? "border-destructive/60 bg-destructive/5" : "border-transparent",
-          )}
-        >
-          <ActorAvatar actorType="member" actorId={owner.user_id} size={40} />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="truncate text-sm font-medium">{owner.name}</span>
-              {ownerAlert && (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive">
-                  <AlertTriangle className="size-3" />
-                  {t(($) => $.org.owner_alert_chip)}
-                </span>
-              )}
+    <section className="rounded-lg border border-border/60 bg-muted/20 p-3">
+      <h3 className="mb-2 px-1 text-xs font-medium text-muted-foreground">
+        {t(($) => $.org.president_room_heading)}
+      </h3>
+      <div className="flex flex-wrap items-stretch gap-3">
+        {owner && (
+          <div
+            className={cn(
+              "min-w-72 flex-1 rounded-lg border p-3",
+              ownerAlert ? "border-destructive/60 bg-destructive/5" : "border-border/60",
+            )}
+          >
+            <div className="flex items-start gap-3">
+              <ActorAvatar actorType="member" actorId={owner.user_id} size={40} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="truncate text-sm font-medium">{owner.name}</span>
+                  {ownerAlert && (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive">
+                      <AlertTriangle className="size-3" />
+                      {t(($) => $.org.owner_alert_chip)}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-muted-foreground">{t(($) => $.org.ceo_label)}</div>
+                {ownerHeld.length > 0 && (
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {t(($) => $.page.load, {
+                      count: ownerHeld.length,
+                      wait: formatWaitHours(
+                        ownerHeld.reduce((max, issue) => Math.max(max, hoursSince(issue.updated_at)), 0),
+                      ),
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="text-[11px] text-muted-foreground">{t(($) => $.org.ceo_label)}</div>
+            <TicketTray issues={ownerHeld} />
           </div>
-        </div>
-      )}
-      {teamLeaderEntry && (
-        <div className="min-w-72 flex-1">
-          <AgentOrgRow entry={teamLeaderEntry} roleLabel={t(($) => $.org.team_leader_label)} />
-        </div>
-      )}
+        )}
+        {teamLeaderEntry && (
+          <div className="min-w-72 flex-1">
+            <DeskCard entry={teamLeaderEntry} roleLabel={t(($) => $.org.team_leader_label)} />
+          </div>
+        )}
+      </div>
     </section>
   );
 }
 
-function DepartmentCard({
+function DepartmentRoom({
   squad,
   memberIds,
   boardById,
@@ -421,10 +508,14 @@ function DepartmentCard({
 }) {
   const { t } = useT("office");
   const leaderEntry = boardById.get(squad.leader_id) ?? null;
+  // NEX-1072 mock5/mock7: only agents currently holding a ticket keep a desk
+  // in the department room — zero-load non-leader members move to the
+  // Lounge so an idle-with-work bot (whip target) is never visually mixed
+  // in with a bot that simply has nothing assigned.
   const memberEntries = memberIds
     .filter((id) => id !== squad.leader_id)
     .map((id) => boardById.get(id))
-    .filter((entry): entry is AgentBoardEntry => !!entry)
+    .filter((entry): entry is AgentBoardEntry => !!entry && entry.held.length > 0)
     .sort((a, b) => b.doneCount7d - a.doneCount7d);
 
   return (
@@ -442,10 +533,10 @@ function DepartmentCard({
           {t(($) => $.org.member_count, { count: memberIds.length })}
         </span>
       </div>
-      <div className="space-y-2">
-        {leaderEntry && <AgentOrgRow entry={leaderEntry} isDepartmentLeader />}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {leaderEntry && <DeskCard entry={leaderEntry} isDepartmentLeader />}
         {memberEntries.map((entry) => (
-          <AgentOrgRow key={entry.agent.id} entry={entry} />
+          <DeskCard key={entry.agent.id} entry={entry} />
         ))}
         {!leaderEntry && memberEntries.length === 0 && (
           <p className="px-1 text-xs text-muted-foreground">{t(($) => $.org.no_members)}</p>
@@ -455,7 +546,9 @@ function DepartmentCard({
   );
 }
 
-function UnassignedSection({ entries }: { entries: AgentBoardEntry[] }) {
+// Agents with a ticket but no department at all — a structural gap (no
+// squad membership), distinct from the Lounge's "no ticket" gap below.
+function OrphanSection({ entries }: { entries: AgentBoardEntry[] }) {
   const { t } = useT("office");
   return (
     <section className="rounded-lg border border-dashed border-border/60 p-4">
@@ -470,9 +563,47 @@ function UnassignedSection({ entries }: { entries: AgentBoardEntry[] }) {
       <p className="mb-3 text-[11px] text-muted-foreground/70">
         {t(($) => $.org.unassigned_hint)}
       </p>
-      <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {entries.map((entry) => (
-          <AgentOrgRow key={entry.agent.id} entry={entry} />
+          <DeskCard key={entry.agent.id} entry={entry} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// NEX-1072 mock5 ("라운지를 따로 뒀습니다"): agents holding zero tickets,
+// physically separated from idle-with-work desks so the whip target is
+// never ambiguous. Compact avatar-row instead of full desks — there is no
+// ticket tray or wait state to show here.
+function LoungeSection({ entries }: { entries: AgentBoardEntry[] }) {
+  const { t } = useT("office");
+  return (
+    <section className="rounded-lg border border-border/60 bg-muted/10 p-4">
+      <div className="mb-1 flex items-center gap-2">
+        <Armchair className="size-4 text-muted-foreground" aria-hidden="true" />
+        <h3 className="text-sm font-medium text-muted-foreground">
+          {t(($) => $.org.lounge_heading)}
+        </h3>
+        <span className="text-xs text-muted-foreground">
+          {t(($) => $.org.member_count, { count: entries.length })}
+        </span>
+      </div>
+      <p className="mb-3 text-[11px] text-muted-foreground/70">{t(($) => $.org.lounge_hint)}</p>
+      <div className="flex flex-wrap gap-3">
+        {entries.map((entry) => (
+          <div key={entry.agent.id} className="flex items-center gap-1.5">
+            <ActorAvatar
+              actorType="agent"
+              actorId={entry.agent.id}
+              size={28}
+              enableHoverCard
+              hoverCardVariant="live"
+            />
+            <span className="max-w-20 truncate text-xs text-muted-foreground">
+              {entry.agent.name}
+            </span>
+          </div>
         ))}
       </div>
     </section>
@@ -485,12 +616,56 @@ function severityRingClass(entry: AgentBoardEntry): string {
   return entry.presence?.workload === "working" ? "ring-success" : "ring-border/50";
 }
 
-// One bot's row on the org chart: avatar + presence ring, name, throughput /
-// load line, and the task list it's actually holding (condition 3 — must be
-// the real waiting_on-derived list, not a count badge). Reused for 아이유,
-// department leaders, department members, and the unassigned bucket so the
+// Ticket chips for a set of held issues — shared by desks and the
+// president's room. NEX-1072 mock7: the desk view shows a human-readable
+// one-line label (getTicketShortLabel), never the raw issue identifier; the
+// full identifier + title are still one click away via the link, and in the
+// `title` attribute for hover/assistive-tech users.
+function TicketTray({ issues }: { issues: Issue[] }) {
+  const { t } = useT("office");
+  const paths = useWorkspacePaths();
+  const shown = issues.slice(0, HELD_TASKS_SHOWN);
+  const extra = issues.length - shown.length;
+  if (shown.length === 0) {
+    return (
+      <p className="mt-1.5 px-1 text-[11px] text-muted-foreground/70">
+        {t(($) => $.org.no_held_tasks)}
+      </p>
+    );
+  }
+  return (
+    <ul className="mt-1.5 space-y-1">
+      {shown.map((issue) => (
+        <li key={issue.id}>
+          <AppLink
+            href={paths.issueDetail(issue.id)}
+            title={`${issue.identifier} · ${issue.title}`}
+            className={cn(
+              "block truncate rounded border-l-2 bg-background/60 px-1.5 py-0.5 text-[11px] transition-colors hover:bg-accent",
+              waitBucketClass(hoursSince(issue.updated_at)),
+            )}
+          >
+            {getTicketShortLabel(issue)}
+          </AppLink>
+        </li>
+      ))}
+      {extra > 0 && (
+        <li className="px-1 text-[11px] text-muted-foreground">
+          {t(($) => $.org.held_tasks_more, { count: extra })}
+        </li>
+      )}
+    </ul>
+  );
+}
+
+// One bot's desk: avatar + escalation ring, a monitor indicator for
+// "actively working right now" (independent of escalation state — a bot can
+// be mid-ticket and still idle between turns), name, throughput line, and
+// the ticket tray it's actually holding (condition 3 — must be the real
+// waiting_on-derived list, not a count badge). Reused for 아이유, department
+// leaders, department members, and the no-department bucket so the
 // escalation visuals stay identical everywhere a bot appears.
-function AgentOrgRow({
+function DeskCard({
   entry,
   isDepartmentLeader,
   roleLabel,
@@ -500,12 +675,9 @@ function AgentOrgRow({
   roleLabel?: string;
 }) {
   const { t } = useT("office");
-  const paths = useWorkspacePaths();
   const { agent, presence, held, doneCount7d, severity, reassignHistory, maxWaitHours: agentMaxWait } =
     entry;
   const working = presence?.workload === "working";
-  const shown = held.slice(0, HELD_TASKS_SHOWN);
-  const extra = held.length - shown.length;
 
   return (
     <div className="flex items-start gap-3 rounded-lg border border-border/60 p-3">
@@ -528,14 +700,27 @@ function AgentOrgRow({
               "absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full text-white",
               severity >= SEVERITY_RECALLED ? "bg-destructive" : "bg-warning",
             )}
+            title={t(($) => $.org.idle_with_work_label)}
           >
-            <AlertTriangle className="h-2.5 w-2.5" />
+            <AlertTriangle className="h-2.5 w-2.5" aria-hidden="true" />
+            <span className="sr-only">{t(($) => $.org.idle_with_work_label)}</span>
           </span>
         )}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="truncate text-sm font-medium">{agent.name}</span>
+          <Monitor
+            className={cn(
+              "size-3 shrink-0",
+              working ? "text-success" : "text-muted-foreground/40",
+            )}
+            aria-hidden="true"
+          />
+          {!working && <Moon className="size-3 shrink-0 text-muted-foreground/40" aria-hidden="true" />}
+          <span className="sr-only">
+            {working ? t(($) => $.org.monitor_working) : t(($) => $.org.monitor_idle)}
+          </span>
           {isDepartmentLeader && (
             <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
               <Crown className="size-3" />
@@ -555,39 +740,11 @@ function AgentOrgRow({
         </div>
         <div className="mt-0.5 text-[11px] text-muted-foreground">
           {t(($) => $.org.done_7d, { count: doneCount7d })}
-          {held.length > 0 ? (
+          {held.length > 0 && (
             <> · {t(($) => $.page.load, { count: held.length, wait: formatWaitHours(agentMaxWait) })}</>
-          ) : (
-            !working && <> · {t(($) => $.page.resting)}</>
           )}
         </div>
-        {shown.length > 0 ? (
-          <ul className="mt-1.5 space-y-0.5">
-            {shown.map((issue) => (
-              <li key={issue.id}>
-                <AppLink
-                  href={paths.issueDetail(issue.id)}
-                  className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] transition-colors hover:bg-accent"
-                >
-                  <StatusIcon status={issue.status} className="h-3 w-3 shrink-0" />
-                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
-                    {issue.identifier}
-                  </span>
-                  <span className="truncate">{issue.title}</span>
-                </AppLink>
-              </li>
-            ))}
-            {extra > 0 && (
-              <li className="px-1 text-[11px] text-muted-foreground">
-                {t(($) => $.org.held_tasks_more, { count: extra })}
-              </li>
-            )}
-          </ul>
-        ) : (
-          <p className="mt-1.5 px-1 text-[11px] text-muted-foreground/70">
-            {t(($) => $.org.no_held_tasks)}
-          </p>
-        )}
+        <TicketTray issues={held} />
       </div>
     </div>
   );

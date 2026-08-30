@@ -24,6 +24,12 @@
     "no_held_tasks": "잡고 있는 업무 없음",
     "no_members": "소속된 봇 없음",
     "unassigned_heading": "미배정",
-    "unassigned_hint": "아직 어느 부서에도 속하지 않음"
+    "unassigned_hint": "아직 어느 부서에도 속하지 않음",
+    "president_room_heading": "사장실",
+    "lounge_heading": "라운지",
+    "lounge_hint": "배정된 업무 없음 · 업무가 생기면 자동 배차",
+    "monitor_working": "열일 중",
+    "monitor_idle": "모니터 꺼짐",
+    "idle_with_work_label": "업무 있는데 유휴"
   }
 }

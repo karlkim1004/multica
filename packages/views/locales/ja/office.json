@@ -24,6 +24,12 @@
     "no_held_tasks": "保持中のタスクなし",
     "no_members": "所属エージェントなし",
     "unassigned_heading": "未割当",
-    "unassigned_hint": "まだどの部門にも属していません"
+    "unassigned_hint": "まだどの部門にも属していません",
+    "president_room_heading": "社長室",
+    "lounge_heading": "ラウンジ",
+    "lounge_hint": "割り当てられた業務なし・業務が発生すると自動的に配車されます",
+    "monitor_working": "作業中",
+    "monitor_idle": "モニターオフ",
+    "idle_with_work_label": "業務ありで待機中"
   }
 }

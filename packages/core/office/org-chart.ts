@@ -57,6 +57,47 @@ export function getReassignedFromAgentId(issue: Issue): string | null {
     : null;
 }
 
+// NEX-1072 mock6 finding: the president's room needs the owner's own held
+// tickets (대표님 대기 9건 was measured live), and the owner is a *member*,
+// never an agent, so getEffectiveOwnerAgentId (agent-only) can't answer
+// this. Mirrors that function's precedence: waiting_on="ceo" is the
+// authoritative current holder; assignee_id is the fallback for issues that
+// haven't been through a wait cycle (waiting_on unset).
+export function isOwnerHeldIssue(issue: Issue, ownerId: string): boolean {
+  const waitingOn = issue.metadata.waiting_on;
+  if (typeof waitingOn === "string" && waitingOn.length > 0) {
+    return waitingOn === "ceo";
+  }
+  return issue.assignee_type === "member" && issue.assignee_id === ownerId;
+}
+
+export function getOwnerHeldIssues(issues: readonly Issue[], ownerId: string): Issue[] {
+  return issues.filter((issue) => isOwnerHeldIssue(issue, ownerId));
+}
+
+// NEX-1072 mock7 ("티켓 번호를 보여주면 내가 잘 모르잖아"): the office desk
+// view must show a human-readable one-line label instead of the issue
+// identifier. `metadata.short_label` is an explicit editorial override for
+// when the auto-derived label reads awkwardly; otherwise this strips
+// leading `[bracket]` tag prefixes (e.g. "[P1/플랫폼] ") off the title and
+// caps the remainder to keep desk ticket chips a fixed width. The full
+// identifier + title are still available in the tooltip/link — this only
+// changes what's visible on the desk itself.
+const BRACKET_PREFIX_RE = /^(\s*\[[^\]]*\]\s*)+/;
+const SHORT_LABEL_MAX_CHARS = 14;
+
+export function getTicketShortLabel(issue: Issue): string {
+  const override = issue.metadata.short_label;
+  const raw =
+    typeof override === "string" && override.trim().length > 0
+      ? override.trim()
+      : issue.title.replace(BRACKET_PREFIX_RE, "").trim() || issue.title;
+  const chars = Array.from(raw);
+  return chars.length > SHORT_LABEL_MAX_CHARS
+    ? `${chars.slice(0, SHORT_LABEL_MAX_CHARS).join("")}…`
+    : raw;
+}
+
 // 아이유(TeamLeader) is the one workspace-specific persona this screen is
 // allowed to hardcode. The backend already made this exact tradeoff for the
 // same agent — `teamLeaderMentionUUID` in server/internal/handler/comment.go

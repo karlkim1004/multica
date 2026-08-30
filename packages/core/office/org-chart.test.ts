@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Issue, IssueMetadata, IssueStatus } from "../types";
 import {
   getEffectiveOwnerAgentId,
+  getOwnerHeldIssues,
   getReassignedFromAgentId,
+  getTicketShortLabel,
   getWaitingEscalationTier,
 } from "./org-chart";
 
@@ -114,5 +116,69 @@ describe("getReassignedFromAgentId", () => {
 
   it("returns null when there is no reassign stamp", () => {
     expect(getReassignedFromAgentId(makeIssue())).toBeNull();
+  });
+});
+
+describe("getOwnerHeldIssues", () => {
+  it("includes issues explicitly waiting on the ceo queue", () => {
+    const issue = makeIssue({ metadata: { waiting_on: "ceo" } });
+    expect(getOwnerHeldIssues([issue], "owner-1")).toEqual([issue]);
+  });
+
+  it("excludes a ceo-queue issue once waiting_on has moved to an agent", () => {
+    const issue = makeIssue({ metadata: { waiting_on: "agent:bot-a" } });
+    expect(getOwnerHeldIssues([issue], "owner-1")).toEqual([]);
+  });
+
+  it("falls back to a direct member assignee when waiting_on is unset", () => {
+    const issue = makeIssue({ assignee_type: "member", assignee_id: "owner-1" });
+    expect(getOwnerHeldIssues([issue], "owner-1")).toEqual([issue]);
+  });
+
+  it("does not fall back to assignee_id for a different member", () => {
+    const issue = makeIssue({ assignee_type: "member", assignee_id: "someone-else" });
+    expect(getOwnerHeldIssues([issue], "owner-1")).toEqual([]);
+  });
+
+  it("ignores an agent assignee even without waiting_on", () => {
+    const issue = makeIssue({ assignee_type: "agent", assignee_id: "bot-a" });
+    expect(getOwnerHeldIssues([issue], "owner-1")).toEqual([]);
+  });
+});
+
+describe("getTicketShortLabel", () => {
+  it("strips a single leading bracket tag", () => {
+    const issue = makeIssue({ title: "[P1/플랫폼] 가상 오피스 2차" });
+    expect(getTicketShortLabel(issue)).toBe("가상 오피스 2차");
+  });
+
+  it("strips multiple leading bracket tags", () => {
+    const issue = makeIssue({ title: "[P1] [5ETS] 대시보드 결함 정리" });
+    expect(getTicketShortLabel(issue)).toBe("대시보드 결함 정리");
+  });
+
+  it("truncates a long remainder with an ellipsis", () => {
+    const issue = makeIssue({ title: "이 제목은 열네 글자보다 훨씬 더 길게 작성되었습니다" });
+    const label = getTicketShortLabel(issue);
+    expect(Array.from(label).length).toBe(15);
+    expect(label.endsWith("…")).toBe(true);
+  });
+
+  it("leaves a short bracket-free title untouched", () => {
+    const issue = makeIssue({ title: "잡코리아 채용공고" });
+    expect(getTicketShortLabel(issue)).toBe("잡코리아 채용공고");
+  });
+
+  it("prefers an explicit short_label override", () => {
+    const issue = makeIssue({
+      title: "[P1/5ETS] 대시보드 4가지 결함 정리",
+      metadata: { short_label: "5ETS 대시보드 4결함" },
+    });
+    expect(getTicketShortLabel(issue)).toBe("5ETS 대시보드 4결함");
+  });
+
+  it("falls back to the raw title if stripping brackets empties it", () => {
+    const issue = makeIssue({ title: "[P1/플랫폼]" });
+    expect(getTicketShortLabel(issue)).toBe("[P1/플랫폼]");
   });
 });

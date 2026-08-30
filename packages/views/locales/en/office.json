@@ -24,6 +24,12 @@
     "no_held_tasks": "No open tasks",
     "no_members": "No members yet",
     "unassigned_heading": "Unassigned",
-    "unassigned_hint": "Not part of any department yet."
+    "unassigned_hint": "Not part of any department yet.",
+    "president_room_heading": "Executive room",
+    "lounge_heading": "Lounge",
+    "lounge_hint": "No assigned work — new work will be auto-dispatched.",
+    "monitor_working": "Working",
+    "monitor_idle": "Monitor off",
+    "idle_with_work_label": "Idle with pending work"
   }
 }
