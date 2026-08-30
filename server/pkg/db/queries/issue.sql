@@ -102,12 +102,36 @@ UPDATE issue SET
 WHERE id = $1
 RETURNING *;
 
+-- name: UnclaimTodoIssueForPoolAgent :one
+-- Failure compensation for a just-created overload clone: only undo the
+-- exact temporary owner, never a user or another dispatcher assignment.
+UPDATE issue
+SET assignee_type = NULL, assignee_id = NULL, updated_at = now()
+WHERE id = $1
+  AND status = 'todo'
+  AND assignee_type = 'agent'
+  AND assignee_id = $2
+RETURNING *;
+
 -- name: UpdateIssueStatus :one
 -- Workspace_id in the WHERE clause is a SQL-layer tenant guard; see DeleteIssue.
 UPDATE issue SET
     status = $2,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $3
+RETURNING *;
+
+-- name: ClaimUnassignedTodoIssueForAgent :one
+-- Atomically binds the explicitly opt-in issue to a selected worker.  It must
+-- never search the workspace queue: ordinary unassigned todo items are not
+-- pool work and retain their NULL assignee.
+UPDATE issue
+SET assignee_type = 'agent', assignee_id = @assignee_id, updated_at = now()
+WHERE id = @issue_id
+  AND workspace_id = @workspace_id
+  AND status = 'todo'
+  AND assignee_id IS NULL
+  AND assignee_type IS NULL
 RETURNING *;
 
 -- name: CreateIssueWithOrigin :one

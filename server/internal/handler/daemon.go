@@ -1014,6 +1014,11 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 		return nil, m, err
 	}
 	m.UpdateMs = time.Since(updateStart).Milliseconds()
+	// An online runtime is the natural clock for worker-pool recovery. The
+	// service throttles this to one sweep per workspace/minute and takes an
+	// expiring issue lease before enqueueing, so concurrent heartbeats cannot
+	// revive the same stale issue twice.
+	h.IssueService.SweepStaleAssigned(ctx, rt.WorkspaceID)
 
 	slog.Debug("daemon heartbeat", "runtime_id", runtimeID)
 
