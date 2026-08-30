@@ -17,7 +17,10 @@ func TestValidationAutoCloseReasonsDefaultDenyAndGates(t *testing.T) {
 	}
 	sameVerifier := issue
 	sameVerifier.ImplementationAgentID = pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
-	if got := validationAutoCloseReasons(sameVerifier, verdict, "00000000-0000-0000-0000-000000000002", 0, 0); !strings.Contains(strings.Join(got, " "), "independent") {
+	// [16]byte{2} renders as 02000000-0000-0000-0000-000000000000,
+	// not a UUID whose final byte is 2. Use the identical UUID so this
+	// asserts the self-verification rejection rather than a different actor.
+	if got := validationAutoCloseReasons(sameVerifier, verdict, "02000000-0000-0000-0000-000000000000", 0, 0); !strings.Contains(strings.Join(got, " "), "independent") {
 		t.Fatalf("same verifier was not rejected: %v", got)
 	}
 
