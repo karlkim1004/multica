@@ -1014,6 +1014,11 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 		return nil, m, err
 	}
 	m.UpdateMs = time.Since(updateStart).Milliseconds()
+	// An online runtime is the natural clock for worker-pool recovery. The
+	// service throttles this to one sweep per workspace/minute and takes an
+	// expiring issue lease before enqueueing, so concurrent heartbeats cannot
+	// revive the same stale issue twice.
+	h.IssueService.SweepStaleAssigned(ctx, rt.WorkspaceID)
 
 	slog.Debug("daemon heartbeat", "runtime_id", runtimeID)
 
@@ -2102,6 +2107,39 @@ func (h *Handler) ExtendTaskPrepareLease(w http.ResponseWriter, r *http.Request)
 	updated, err := h.TaskService.ExtendTaskPrepareLease(r.Context(), parseUUID(taskID), parseUUID(runtimeID))
 	if err != nil {
 		slog.Warn("extend task prepare lease failed", "task_id", taskID, "runtime_id", runtimeID, "error", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, taskToResponse(*updated, taskWorkspaceID))
+}
+
+// ExtendTaskRunningLease keeps a running task protected while the daemon's
+// per-task watcher is alive and heartbeating (NEX-1032). Unlike
+// ExtendTaskPrepareLease it only accepts the transition while status is
+// still 'running' — a task that has already reached a terminal state or
+// gotten reaped by FailStaleTasks returns an error the daemon simply logs
+// and ignores (the request is fire-and-forget from the daemon's side).
+func (h *Handler) ExtendTaskRunningLease(w http.ResponseWriter, r *http.Request) {
+	runtimeID := chi.URLParam(r, "runtimeId")
+	taskID := chi.URLParam(r, "taskId")
+
+	runtime, ok := h.requireDaemonRuntimeAccess(w, r, runtimeID)
+	if !ok {
+		return
+	}
+	task, taskWorkspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	if !ok {
+		return
+	}
+	if taskWorkspaceID != uuidToString(runtime.WorkspaceID) || uuidToString(task.RuntimeID) != runtimeID {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+
+	updated, err := h.TaskService.ExtendTaskRunningLease(r.Context(), parseUUID(taskID), parseUUID(runtimeID))
+	if err != nil {
+		slog.Warn("extend task running lease failed", "task_id", taskID, "runtime_id", runtimeID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
