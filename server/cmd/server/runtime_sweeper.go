@@ -112,6 +112,7 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 			sweepSilentQuotaLimitRetries(ctx, queries, taskSvc)
 			sweepExpiredQueuedTasks(ctx, queries, taskSvc)
 			gcRuntimes(ctx, queries, bus)
+			sweepWaitingEscalations(ctx, queries, taskSvc)
 		}
 	}
 }

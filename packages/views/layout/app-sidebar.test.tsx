@@ -1,11 +1,15 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { AppSidebar } from "./app-sidebar";
 
-const { detail, deletePin, pins, workspace } = vi.hoisted(() => ({
+const { detail, deletePin, navPush, pins, workspace } = vi.hoisted(() => ({
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
+  // Shared across tests so the mocked AppLink below can report clicks the
+  // same way the real one calls useNavigation().push(href) on click.
+  navPush: vi.fn(),
   pins: {
     current: [
       {
@@ -46,7 +50,29 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarHeader: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  SidebarMenuButton: ({ children }: { children: React.ReactNode }) => <button type="button">{children}</button>,
+  // The real SidebarMenuButton is a Base UI `render`-prop component: it
+  // merges its own `children`/`onClick` into whatever element `render`
+  // supplies (here, always an <AppLink>). Dropping `render` and rendering
+  // a plain <button> — the previous version of this mock — silently
+  // discarded every nav item's <a href> and click handler, so href/click
+  // assertions against real nav items (not just the ad-hoc PinRow) had no
+  // DOM to find (NEX-1040 validator FAIL: menu click test).
+  SidebarMenuButton: ({
+    children,
+    render,
+    onClick,
+  }: {
+    children: ReactNode;
+    render?: ReactElement<{ onClick?: React.MouseEventHandler }>;
+    onClick?: React.MouseEventHandler;
+  }) =>
+    render ? (
+      cloneElement(render, { onClick: onClick ?? render.props.onClick }, children)
+    ) : (
+      <button type="button" onClick={onClick}>
+        {children}
+      </button>
+    ),
   SidebarMenuItem: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarRail: () => null,
 }));
@@ -73,8 +99,31 @@ vi.mock("./help-launcher", () => ({ HelpLauncher: () => null }));
 vi.mock("../auth", () => ({ useLogout: () => vi.fn() }));
 vi.mock("../issues/components/status-icon", () => ({ StatusIcon: () => <span /> }));
 vi.mock("../navigation", () => ({
-  AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
-  useNavigation: () => ({ pathname: "/acme/issues", push: vi.fn() }),
+  // Mirrors the real AppLink's click contract (preventDefault + push(href))
+  // so a fireEvent.click in this file's tests is a meaningful proxy for
+  // "clicking this nav item navigates" without pulling in the full
+  // NavigationProvider stack.
+  AppLink: ({
+    children,
+    href,
+    onClick,
+  }: {
+    children: React.ReactNode;
+    href: string;
+    onClick?: React.MouseEventHandler;
+  }) => (
+    <a
+      href={href}
+      onClick={(event) => {
+        event.preventDefault();
+        onClick?.(event);
+        navPush(href);
+      }}
+    >
+      {children}
+    </a>
+  ),
+  useNavigation: () => ({ pathname: "/acme/issues", push: navPush }),
 }));
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
 vi.mock("../workspace/workspace-avatar", () => ({
@@ -108,6 +157,7 @@ vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     myIssues: () => "/acme/my-issues",
+    office: () => "/acme/office",
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
     autopilots: () => "/acme/autopilots",
@@ -198,5 +248,39 @@ describe("PinRow", () => {
     expect(logo).toHaveClass("h-12");
     expect(wordmark).toHaveClass("opacity-0");
     expect(wordmark?.textContent).toBe("NexAI");
+  });
+});
+
+// NEX-1040 validator FAIL: the shared sidebar (rendered by both web and
+// desktop, see apps/desktop/src/renderer/src/components/desktop-layout.tsx)
+// links to /office, but nothing proved the link was in the right place or
+// that clicking it actually navigates. This is that proof at the shared
+// component level; the desktop-side route registration itself is asserted
+// in apps/desktop/src/renderer/src/routes.test.tsx.
+describe("Office nav item", () => {
+  beforeEach(() => {
+    navPush.mockReset();
+    detail.current = { isPending: false, isError: false, data: null, error: null };
+    workspace.current = { id: "ws-1", name: "Acme", slug: "acme", avatar_url: null };
+  });
+
+  it("sits directly above Issues in the workspace nav", () => {
+    render(<AppSidebar />);
+    const links = screen
+      .getAllByRole("link")
+      .map((el) => el.getAttribute("href"))
+      .filter((href): href is string => href === "/acme/office" || href === "/acme/issues");
+
+    expect(links).toEqual(["/acme/office", "/acme/issues"]);
+  });
+
+  it("clicking the Office link navigates to /acme/office", () => {
+    render(<AppSidebar />);
+    const officeLink = document.querySelector('a[href="/acme/office"]');
+    expect(officeLink).toBeTruthy();
+
+    fireEvent.click(officeLink!);
+
+    expect(navPush).toHaveBeenCalledWith("/acme/office");
   });
 });
