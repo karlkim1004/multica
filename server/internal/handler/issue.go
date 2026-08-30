@@ -2370,6 +2370,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		Stage:         prevIssue.Stage,
 	}
 
+	// NEX-1043 warn-only gate bookkeeping (in_review): set when this status
+	// transition proceeds despite missing ownership metadata, applied to
+	// waitingMetadataWarningKey after UpdateIssue commits below.
+	var waitingWarningNote string
+	var clearWaitingWarning bool
+
 	// COALESCE fields — only set when explicitly provided
 	if req.Title != nil {
 		params.Title = pgtype.Text{String: *req.Title, Valid: true}
@@ -2380,6 +2386,21 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	if req.Status != nil {
 		if !validateIssueEnum(w, "status", *req.Status, validIssueStatuses) {
 			return
+		}
+		existingWaitingMeta := parseIssueMetadata(prevIssue.Metadata)
+		if missing := missingWaitingMetadataKeys(*req.Status, existingWaitingMeta); len(missing) > 0 {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf(
+				"cannot transition to %q: missing required metadata key(s) %s (set via `issue metadata set`, e.g. waiting_on=ceo|agent:<id>|external|event, unblock_condition=<one observable sentence>, waiting_since=<RFC3339>)",
+				*req.Status, strings.Join(missing, ", "),
+			))
+			return
+		}
+		if warnMissing := missingWaitingMetadataKeysWarnOnly(*req.Status, existingWaitingMeta); len(warnMissing) > 0 {
+			waitingWarningNote = waitingMetadataWarningNote(*req.Status, warnMissing, time.Now())
+		} else if transitionsWarnOnlyMissingWaitingMetadata[*req.Status] {
+			if _, hadWarning := existingWaitingMeta[waitingMetadataWarningKey]; hadWarning {
+				clearWaitingWarning = true
+			}
 		}
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
 	}
@@ -2519,6 +2540,25 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("update issue failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to update issue: "+err.Error())
 		return
+	}
+
+	if waitingWarningNote != "" {
+		noteJSON, _ := json.Marshal(waitingWarningNote)
+		if updated, werr := h.Queries.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
+			ID: issue.ID, WorkspaceID: issue.WorkspaceID, Key: waitingMetadataWarningKey, Value: noteJSON,
+		}); werr != nil {
+			slog.Warn("failed to record waiting-metadata warning", append(logger.RequestAttrs(r), "error", werr, "issue_id", id)...)
+		} else {
+			issue = updated
+		}
+	} else if clearWaitingWarning {
+		if updated, werr := h.Queries.DeleteIssueMetadataKey(r.Context(), db.DeleteIssueMetadataKeyParams{
+			ID: issue.ID, WorkspaceID: issue.WorkspaceID, Key: waitingMetadataWarningKey,
+		}); werr != nil {
+			slog.Warn("failed to clear waiting-metadata warning", append(logger.RequestAttrs(r), "error", werr, "issue_id", id)...)
+		} else {
+			issue = updated
+		}
 	}
 
 	if len(attachmentIDs) > 0 {
@@ -2921,6 +2961,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			params.Description = pgtype.Text{String: *req.Updates.Description, Valid: true}
 		}
 		if req.Updates.Status != nil {
+			if missing := missingWaitingMetadataKeys(*req.Updates.Status, parseIssueMetadata(prevIssue.Metadata)); len(missing) > 0 {
+				continue
+			}
 			params.Status = pgtype.Text{String: *req.Updates.Status, Valid: true}
 		}
 		if req.Updates.Priority != nil {

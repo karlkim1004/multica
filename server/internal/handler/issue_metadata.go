@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -30,6 +32,82 @@ import (
 const (
 	maxIssueMetadataKeys = 50
 )
+
+// requiredWaitingMetadataKeys are the ownership fields NEX-1043 introduces so
+// "who currently holds the ball" and "what clears it" are machine-readable
+// instead of living only in comment prose. waiting_on: "ceo" | "agent:<id>" |
+// "external" | "event". unblock_condition: one observable sentence.
+// waiting_since: RFC3339.
+var requiredWaitingMetadataKeys = []string{"waiting_on", "unblock_condition", "waiting_since"}
+
+// transitionsRequiringWaitingMetadata is intentionally blocked-only, not
+// blocked+in_review. Every agent's standard runtime workflow ends every
+// completed run with `issue status <id> in_review` (see the platform-wide
+// assignment brief), so gating in_review here would 400 that closing call
+// fleet-wide the moment this ships, for every workspace, before any agent
+// template is updated to pre-set these keys. blocked is far rarer and
+// already carried an informal waiting_on/blocked_reason convention (see
+// missing-blocked-reason-means-bad-criteria), so it is the safe first step.
+// Extending to in_review is a follow-up once the runtime brief sets these
+// keys before closing a run.
+var transitionsRequiringWaitingMetadata = map[string]bool{"blocked": true}
+
+// transitionsWarnOnlyMissingWaitingMetadata are transitions where NEX-1043
+// leaves a durable warning instead of rejecting the request outright.
+// in_review is warn-only, not hard-gated like blocked: every agent's
+// standard runtime workflow closes a completed run with `issue status <id>
+// in_review`, so hard-gating it would 400 that closing call fleet-wide
+// before any runtime template pre-sets these keys. The warning is written
+// to issue metadata (see waitingMetadataWarningKey) rather than only
+// returned in the HTTP response, so it survives the fire-and-forget CLI
+// call that triggered it and stays queryable via `issue metadata list` /
+// `issue list --metadata`.
+var transitionsWarnOnlyMissingWaitingMetadata = map[string]bool{"in_review": true}
+
+// waitingMetadataWarningKey holds a human-readable note recording that a
+// warn-only transition happened without the three NEX-1043 ownership keys
+// set. UpdateIssue clears it automatically the next time the issue makes a
+// warn-gated transition with all three keys present.
+const waitingMetadataWarningKey = "waiting_metadata_warning"
+
+// missingWaitingMetadataKeys returns which of requiredWaitingMetadataKeys are
+// absent from an issue's existing metadata, given the status it is
+// transitioning to. Returns nil when the target status isn't gated or all
+// keys are already present.
+func missingWaitingMetadataKeys(targetStatus string, existing map[string]any) []string {
+	if !transitionsRequiringWaitingMetadata[targetStatus] {
+		return nil
+	}
+	return missingKeysOf(existing)
+}
+
+// missingWaitingMetadataKeysWarnOnly mirrors missingWaitingMetadataKeys but
+// checks transitionsWarnOnlyMissingWaitingMetadata instead of the hard-gated
+// set.
+func missingWaitingMetadataKeysWarnOnly(targetStatus string, existing map[string]any) []string {
+	if !transitionsWarnOnlyMissingWaitingMetadata[targetStatus] {
+		return nil
+	}
+	return missingKeysOf(existing)
+}
+
+func missingKeysOf(existing map[string]any) []string {
+	var missing []string
+	for _, k := range requiredWaitingMetadataKeys {
+		if _, ok := existing[k]; !ok {
+			missing = append(missing, k)
+		}
+	}
+	return missing
+}
+
+// waitingMetadataWarningNote formats the durable warning value written to
+// waitingMetadataWarningKey when a warn-only transition proceeds with
+// missing ownership keys.
+func waitingMetadataWarningNote(targetStatus string, missing []string, at time.Time) string {
+	return fmt.Sprintf("%s transition on %s missing metadata key(s): %s — set via `issue metadata set` (waiting_on, unblock_condition, waiting_since)",
+		targetStatus, at.UTC().Format(time.RFC3339), strings.Join(missing, ", "))
+}
 
 var issueMetadataKeyRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$`)
 
@@ -215,6 +293,25 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// NEX-1043: deleting one of the ownership keys is otherwise
+	// indistinguishable from a transition that never set it — an issue
+	// backfilled while blocked/in_review can be silently stripped back to
+	// non-conforming by a later, unrelated metadata cleanup without ever
+	// touching status. Apply the same rule DeleteIssueMetadataKey's sibling
+	// (the status-transition gate in issue.go) already applies at the
+	// transition itself: hard-reject the delete for statuses that require
+	// these keys, warn (durably, via waitingMetadataWarningKey) for statuses
+	// that only warn.
+	if isRequiredWaitingMetadataKey(key) {
+		if transitionsRequiringWaitingMetadata[issue.Status] {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf(
+				"cannot delete %q while status is %q: NEX-1043 requires waiting_on/unblock_condition/waiting_since to stay set for this status (replace the value instead, e.g. via `issue metadata set`)",
+				key, issue.Status,
+			))
+			return
+		}
+	}
+
 	updated, err := h.Queries.DeleteIssueMetadataKey(r.Context(), db.DeleteIssueMetadataKeyParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -230,6 +327,19 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if isRequiredWaitingMetadataKey(key) && transitionsWarnOnlyMissingWaitingMetadata[issue.Status] {
+		if missing := missingKeysOf(parseIssueMetadata(updated.Metadata)); len(missing) > 0 {
+			noteJSON, _ := json.Marshal(waitingMetadataWarningNote(issue.Status, missing, time.Now()))
+			if warned, werr := h.Queries.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
+				ID: updated.ID, WorkspaceID: updated.WorkspaceID, Key: waitingMetadataWarningKey, Value: noteJSON,
+			}); werr != nil {
+				slog.Warn("failed to record waiting-metadata warning on delete", append(logger.RequestAttrs(r), "error", werr, "issue_id", issueID, "key", key)...)
+			} else {
+				updated = warned
+			}
+		}
+	}
+
 	workspaceID := uuidToString(updated.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	metadata := parseIssueMetadata(updated.Metadata)
@@ -238,4 +348,15 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 		"metadata": metadata,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": metadata})
+}
+
+// isRequiredWaitingMetadataKey reports whether key is one of the three
+// NEX-1043 ownership fields (waiting_on, unblock_condition, waiting_since).
+func isRequiredWaitingMetadataKey(key string) bool {
+	for _, k := range requiredWaitingMetadataKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
