@@ -4,6 +4,7 @@ import enAuth from "./en/auth.json";
 import enSettings from "./en/settings.json";
 import enIssues from "./en/issues.json";
 import enAgents from "./en/agents.json";
+import enOffice from "./en/office.json";
 import enEditor from "./en/editor.json";
 import enOnboarding from "./en/onboarding.json";
 import enInvite from "./en/invite.json";
@@ -29,6 +30,7 @@ import zhHansAuth from "./zh-Hans/auth.json";
 import zhHansSettings from "./zh-Hans/settings.json";
 import zhHansIssues from "./zh-Hans/issues.json";
 import zhHansAgents from "./zh-Hans/agents.json";
+import zhHansOffice from "./zh-Hans/office.json";
 import zhHansEditor from "./zh-Hans/editor.json";
 import zhHansOnboarding from "./zh-Hans/onboarding.json";
 import zhHansInvite from "./zh-Hans/invite.json";
@@ -54,6 +56,7 @@ import koAuth from "./ko/auth.json";
 import koSettings from "./ko/settings.json";
 import koIssues from "./ko/issues.json";
 import koAgents from "./ko/agents.json";
+import koOffice from "./ko/office.json";
 import koEditor from "./ko/editor.json";
 import koOnboarding from "./ko/onboarding.json";
 import koInvite from "./ko/invite.json";
@@ -79,6 +82,7 @@ import jaAuth from "./ja/auth.json";
 import jaSettings from "./ja/settings.json";
 import jaIssues from "./ja/issues.json";
 import jaAgents from "./ja/agents.json";
+import jaOffice from "./ja/office.json";
 import jaEditor from "./ja/editor.json";
 import jaOnboarding from "./ja/onboarding.json";
 import jaInvite from "./ja/invite.json";
@@ -110,6 +114,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     settings: enSettings,
     issues: enIssues,
     agents: enAgents,
+    office: enOffice,
     editor: enEditor,
     onboarding: enOnboarding,
     invite: enInvite,
@@ -137,6 +142,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     settings: zhHansSettings,
     issues: zhHansIssues,
     agents: zhHansAgents,
+    office: zhHansOffice,
     editor: zhHansEditor,
     onboarding: zhHansOnboarding,
     invite: zhHansInvite,
@@ -164,6 +170,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     settings: koSettings,
     issues: koIssues,
     agents: koAgents,
+    office: koOffice,
     editor: koEditor,
     onboarding: koOnboarding,
     invite: koInvite,
@@ -191,6 +198,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     settings: jaSettings,
     issues: jaIssues,
     agents: jaAgents,
+    office: jaOffice,
     editor: jaEditor,
     onboarding: jaOnboarding,
     invite: jaInvite,

@@ -1,0 +1,15 @@
+{
+  "page": {
+    "title": "オフィス",
+    "max_wait": "最長待機 {{wait}}",
+    "rule_a": "未割当 {{count}}件",
+    "rule_b": "空き+タスクあり {{count}}体",
+    "tasks_heading": "待機中のタスク",
+    "tasks_empty": "待機中のタスクはありません",
+    "agents_heading": "エージェント",
+    "unassigned": "未割当",
+    "waited_hours": "{{hours}}時間待機",
+    "resting": "休憩中",
+    "load": "{{count}}件 · {{wait}}"
+  }
+}
