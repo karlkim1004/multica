@@ -30,6 +30,8 @@
     "lounge_hint": "No assigned work — new work will be auto-dispatched.",
     "monitor_working": "Working",
     "monitor_idle": "Monitor off",
-    "idle_with_work_label": "Idle with pending work"
+    "idle_with_work_label": "Idle with pending work",
+    "neglected_hours_label": "neglected {{hours}}h",
+    "whip_label": "top escalation — needs immediate attention"
   }
 }

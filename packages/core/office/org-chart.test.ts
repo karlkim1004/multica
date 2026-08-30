@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Issue, IssueMetadata, IssueStatus } from "../types";
 import {
+  getDeskIntensity,
   getEffectiveOwnerAgentId,
   getOwnerHeldIssues,
   getReassignedFromAgentId,
@@ -143,6 +144,31 @@ describe("getOwnerHeldIssues", () => {
   it("ignores an agent assignee even without waiting_on", () => {
     const issue = makeIssue({ assignee_type: "agent", assignee_id: "bot-a" });
     expect(getOwnerHeldIssues([issue], "owner-1")).toEqual([]);
+  });
+});
+
+describe("getDeskIntensity", () => {
+  it("is 0 when the agent isn't idle-with-work, no matter how long the wait", () => {
+    expect(getDeskIntensity(false, 999)).toBe(0);
+  });
+
+  it("is 0 for idle-with-work under 4h", () => {
+    expect(getDeskIntensity(true, 3.9)).toBe(0);
+  });
+
+  it("is 1 (one flame) from 4h up to 12h", () => {
+    expect(getDeskIntensity(true, 4)).toBe(1);
+    expect(getDeskIntensity(true, 11.9)).toBe(1);
+  });
+
+  it("is 2 (two flames) from 12h up to 24h", () => {
+    expect(getDeskIntensity(true, 12)).toBe(2);
+    expect(getDeskIntensity(true, 23.9)).toBe(2);
+  });
+
+  it("is 3 (whip tier) at 24h and beyond", () => {
+    expect(getDeskIntensity(true, 24)).toBe(3);
+    expect(getDeskIntensity(true, 200)).toBe(3);
   });
 });
 

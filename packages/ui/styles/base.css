@@ -212,6 +212,64 @@
   }
 }
 
+/* Virtual office (NEX-1072 "states_full" spec, 2026-08-30 CEO-approved):
+ * desk-level escalation decoration. All three (shake, whip swing, aura
+ * pulse, speed lines) are colour + motion pairs — colour alone still
+ * conveys the state, so `prefers-reduced-motion: reduce` only strips the
+ * animation, matching the pattern used above for border-beam. */
+@keyframes office-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-1.5px); }
+  40% { transform: translateX(1.5px); }
+  60% { transform: translateX(-1px); }
+  80% { transform: translateX(1px); }
+}
+
+.animate-office-shake {
+  animation: office-shake 0.5s ease-in-out infinite;
+}
+
+@keyframes office-aura-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--destructive) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 10px 3px color-mix(in oklab, var(--destructive) 45%, transparent);
+  }
+}
+
+.animate-office-aura {
+  animation: office-aura-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes office-whip-swing {
+  0%, 100% { transform: rotate(-18deg); }
+  50% { transform: rotate(10deg); }
+}
+
+.animate-office-whip {
+  animation: office-whip-swing 0.6s ease-in-out infinite;
+  transform-origin: top right;
+}
+
+@keyframes office-speed-line {
+  0% { transform: translateX(2px); opacity: 0.9; }
+  100% { transform: translateX(-5px); opacity: 0; }
+}
+
+.animate-office-speed-line {
+  animation: office-speed-line 0.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-office-shake,
+  .animate-office-aura,
+  .animate-office-whip,
+  .animate-office-speed-line {
+    animation: none;
+  }
+}
+
 /* Sidebar: open triggers (dropdown/popover) get active background */
 [data-sidebar="menu-button"][data-popup-open] {
   background-color: var(--sidebar-accent);

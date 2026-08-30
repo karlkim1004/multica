@@ -98,6 +98,25 @@ export function getTicketShortLabel(issue: Issue): string {
     : raw;
 }
 
+// NEX-1072 "states_full" spec (2026-08-30, CEO-approved final): the desk's
+// flame/shake/aura/whip visuals scale with how long an agent has actually
+// been idle while holding a ticket — the same real `updated_at` elapsed-hours
+// signal `waitBucketClass` already uses for ticket chips, not a synthetic
+// countdown. This is a separate, purely additive layer on top of
+// `WaitingEscalationTier`/`Severity`: per the issue's "금지" clause, the
+// escalation *chain* (department border → team lead → owner alert) must stay
+// keyed to real sweeper stamps only, so this intensity never feeds that
+// chain — it only decorates the one desk it belongs to.
+export type DeskIntensity = 0 | 1 | 2 | 3;
+
+export function getDeskIntensity(idleWithWork: boolean, maxWaitHours: number): DeskIntensity {
+  if (!idleWithWork) return 0;
+  if (maxWaitHours >= 24) return 3;
+  if (maxWaitHours >= 12) return 2;
+  if (maxWaitHours >= 4) return 1;
+  return 0;
+}
+
 // 아이유(TeamLeader) is the one workspace-specific persona this screen is
 // allowed to hardcode. The backend already made this exact tradeoff for the
 // same agent — `teamLeaderMentionUUID` in server/internal/handler/comment.go

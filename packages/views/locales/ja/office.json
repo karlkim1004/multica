@@ -30,6 +30,8 @@
     "lounge_hint": "割り当てられた業務なし・業務が発生すると自動的に配車されます",
     "monitor_working": "作業中",
     "monitor_idle": "モニターオフ",
-    "idle_with_work_label": "業務ありで待機中"
+    "idle_with_work_label": "業務ありで待機中",
+    "neglected_hours_label": "放置 {{hours}}時間",
+    "whip_label": "最高段階 — 至急確認が必要"
   }
 }

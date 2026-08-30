@@ -30,6 +30,8 @@
     "lounge_hint": "尚无分配任务 · 有新任务时自动分派",
     "monitor_working": "工作中",
     "monitor_idle": "显示器已关闭",
-    "idle_with_work_label": "有任务但空闲"
+    "idle_with_work_label": "有任务但空闲",
+    "neglected_hours_label": "闲置 {{hours}} 小时",
+    "whip_label": "最高级别 — 需立即处理"
   }
 }

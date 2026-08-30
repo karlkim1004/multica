@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Armchair, Crown, Monitor, Moon } from "lucide-react";
+import { AlertTriangle, Armchair, Crown, Flame, Monitor, Moon } from "lucide-react";
 import type { Agent, Issue, Squad } from "@multica/core/types";
 import {
   useWorkspacePresenceMap,
@@ -11,6 +11,8 @@ import {
 import {
   officeOpenIssuesOptions,
   officeRecentDoneOptions,
+  getDeskIntensity,
+  type DeskIntensity,
   getEffectiveOwnerAgentId,
   getOwnerHeldIssues,
   getTicketShortLabel,
@@ -610,9 +612,9 @@ function LoungeSection({ entries }: { entries: AgentBoardEntry[] }) {
   );
 }
 
-function severityRingClass(entry: AgentBoardEntry): string {
+function severityRingClass(entry: AgentBoardEntry, intensity: DeskIntensity): string {
   if (entry.severity >= SEVERITY_RECALLED) return "ring-destructive";
-  if (entry.severity === SEVERITY_WARN) return "ring-warning";
+  if (entry.severity === SEVERITY_WARN) return intensity >= 2 ? "ring-destructive" : "ring-warning";
   return entry.presence?.workload === "working" ? "ring-success" : "ring-border/50";
 }
 
@@ -678,13 +680,18 @@ function DeskCard({
   const { agent, presence, held, doneCount7d, severity, reassignHistory, maxWaitHours: agentMaxWait } =
     entry;
   const working = presence?.workload === "working";
+  // NEX-1072 states_full spec: flame/shake/aura/whip intensity, desk-local
+  // only (see getDeskIntensity doc comment) — never fed into the
+  // department/team-lead/owner escalation chain above.
+  const intensity = getDeskIntensity(severity >= SEVERITY_WARN, agentMaxWait);
 
   return (
     <div className="flex items-start gap-3 rounded-lg border border-border/60 p-3">
       <div
         className={cn(
           "relative shrink-0 rounded-full ring-2 ring-offset-2 ring-offset-background",
-          severityRingClass(entry),
+          severityRingClass(entry, intensity),
+          intensity >= 2 && "animate-office-shake animate-office-aura",
         )}
       >
         <ActorAvatar
@@ -694,18 +701,33 @@ function DeskCard({
           enableHoverCard
           hoverCardVariant="live"
         />
-        {severity >= SEVERITY_WARN && (
+        {working && <SpeedLines />}
+        {severity >= SEVERITY_WARN && intensity === 0 && (
           <span
-            className={cn(
-              "absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full text-white",
-              severity >= SEVERITY_RECALLED ? "bg-destructive" : "bg-warning",
-            )}
+            className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-warning text-white"
             title={t(($) => $.org.idle_with_work_label)}
           >
             <AlertTriangle className="h-2.5 w-2.5" aria-hidden="true" />
             <span className="sr-only">{t(($) => $.org.idle_with_work_label)}</span>
           </span>
         )}
+        {intensity >= 1 && (
+          <span
+            className={cn(
+              "absolute -right-1 -top-1 flex items-center rounded-full px-1 py-0.5 text-white",
+              intensity >= 2 ? "bg-destructive" : "bg-warning",
+            )}
+            title={t(($) => $.org.neglected_hours_label, { hours: Math.round(agentMaxWait) })}
+          >
+            {Array.from({ length: intensity }).map((_, i) => (
+              <Flame key={i} className="h-2.5 w-2.5" aria-hidden="true" />
+            ))}
+            <span className="sr-only">
+              {t(($) => $.org.neglected_hours_label, { hours: Math.round(agentMaxWait) })}
+            </span>
+          </span>
+        )}
+        {intensity >= 3 && <WhipBadge label={t(($) => $.org.whip_label)} />}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -747,5 +769,49 @@ function DeskCard({
         <TicketTray issues={held} />
       </div>
     </div>
+  );
+}
+
+// NEX-1072 states_full spec, "열일 중" state: three short lines trailing the
+// avatar's left edge, each staggered so they read as continuous motion
+// rather than a single blink. Decorative only — the accessible label lives
+// on the Monitor icon's sr-only text next to it, so this has no aria role.
+function SpeedLines() {
+  return (
+    <span
+      className="absolute -left-1.5 top-1/2 flex -translate-y-1/2 flex-col gap-0.5"
+      aria-hidden="true"
+    >
+      {[0, 0.15, 0.3].map((delay) => (
+        <span
+          key={delay}
+          className="h-0.5 w-2 rounded-full bg-success animate-office-speed-line"
+          style={{ animationDelay: `${delay}s` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+// NEX-1072 states_full spec, top escalation tier (24h+ idle-with-work): the
+// one visual explicitly reserved for the worst case ("화면에 하나만 떠서
+// 시선을 끈다") — plain SVG + CSS swing, no new dependency.
+function WhipBadge({ label }: { label: string }) {
+  return (
+    <span
+      className="absolute -left-2 -top-1 flex h-4 w-4 items-center justify-center text-destructive animate-office-whip"
+      title={label}
+    >
+      <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
+        <path
+          d="M3 2 Q10 2 8 7 T4 12 T9 14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+      </svg>
+      <span className="sr-only">{label}</span>
+    </span>
   );
 }
