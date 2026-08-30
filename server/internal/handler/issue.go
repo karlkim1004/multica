@@ -55,9 +55,13 @@ type IssueResponse struct {
 	// Metadata is the per-issue KV map (see issue_metadata.go). Always emitted
 	// (empty object when unset) so frontend code can `issue.metadata[key]`
 	// without nil-guarding the parent field.
-	Metadata    map[string]any          `json:"metadata"`
-	Reactions   []IssueReactionResponse `json:"reactions,omitempty"`
-	Attachments []AttachmentResponse    `json:"attachments,omitempty"`
+	Metadata                   map[string]any          `json:"metadata"`
+	AutoCloseAllowed           bool                    `json:"auto_close_allowed"`
+	ImplementationAgentID      *string                 `json:"implementation_agent_id"`
+	CurrentRef                 *string                 `json:"current_ref"`
+	ExternalValidationRequired bool                    `json:"external_validation_required"`
+	Reactions                  []IssueReactionResponse `json:"reactions,omitempty"`
+	Attachments                []AttachmentResponse    `json:"attachments,omitempty"`
 	// Labels are bulk-attached by list/detail endpoints so the client can render
 	// chips without an N+1 round-trip per row. Pointer + omitempty so paths that
 	// don't load labels (e.g. UpdateIssue, batch UpdateIssues, the issue:updated
@@ -87,27 +91,31 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		Stage:         int4ToPtr(i.Stage),
-		StartDate:     dateToPtr(i.StartDate),
-		DueDate:       dateToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
-		Metadata:      parseIssueMetadata(i.Metadata),
+		ID:                         uuidToString(i.ID),
+		WorkspaceID:                uuidToString(i.WorkspaceID),
+		Number:                     i.Number,
+		Identifier:                 identifier,
+		Title:                      i.Title,
+		Description:                textToPtr(i.Description),
+		Status:                     i.Status,
+		Priority:                   i.Priority,
+		AssigneeType:               textToPtr(i.AssigneeType),
+		AssigneeID:                 uuidToPtr(i.AssigneeID),
+		CreatorType:                i.CreatorType,
+		CreatorID:                  uuidToString(i.CreatorID),
+		ParentIssueID:              uuidToPtr(i.ParentIssueID),
+		ProjectID:                  uuidToPtr(i.ProjectID),
+		Position:                   i.Position,
+		Stage:                      int4ToPtr(i.Stage),
+		StartDate:                  dateToPtr(i.StartDate),
+		DueDate:                    dateToPtr(i.DueDate),
+		CreatedAt:                  timestampToString(i.CreatedAt),
+		UpdatedAt:                  timestampToString(i.UpdatedAt),
+		Metadata:                   parseIssueMetadata(i.Metadata),
+		AutoCloseAllowed:           i.AutoCloseAllowed,
+		ImplementationAgentID:      uuidToPtr(i.ImplementationAgentID),
+		CurrentRef:                 textToPtr(i.CurrentRef),
+		ExternalValidationRequired: i.ExternalValidationRequired,
 	}
 }
 
@@ -2302,18 +2310,22 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateIssueRequest struct {
-	Title         *string  `json:"title"`
-	Description   *string  `json:"description"`
-	Status        *string  `json:"status"`
-	Priority      *string  `json:"priority"`
-	AssigneeType  *string  `json:"assignee_type"`
-	AssigneeID    *string  `json:"assignee_id"`
-	Position      *float64 `json:"position"`
-	StartDate     *string  `json:"start_date"`
-	DueDate       *string  `json:"due_date"`
-	ParentIssueID *string  `json:"parent_issue_id"`
-	ProjectID     *string  `json:"project_id"`
-	Stage         *int32   `json:"stage"`
+	Title                      *string  `json:"title"`
+	Description                *string  `json:"description"`
+	Status                     *string  `json:"status"`
+	Priority                   *string  `json:"priority"`
+	AssigneeType               *string  `json:"assignee_type"`
+	AssigneeID                 *string  `json:"assignee_id"`
+	Position                   *float64 `json:"position"`
+	StartDate                  *string  `json:"start_date"`
+	DueDate                    *string  `json:"due_date"`
+	ParentIssueID              *string  `json:"parent_issue_id"`
+	ProjectID                  *string  `json:"project_id"`
+	Stage                      *int32   `json:"stage"`
+	AutoCloseAllowed           *bool    `json:"auto_close_allowed"`
+	ImplementationAgentID      *string  `json:"implementation_agent_id"`
+	CurrentRef                 *string  `json:"current_ref"`
+	ExternalValidationRequired *bool    `json:"external_validation_required"`
 	// AttachmentIDs lets the description editor bind newly uploaded files to
 	// this issue so they surface in `GET /api/issues/:id/attachments` and the
 	// editor's preview Eye keeps working past a refresh. Existing bindings
@@ -2360,14 +2372,38 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
-		ID:            prevIssue.ID,
-		AssigneeType:  prevIssue.AssigneeType,
-		AssigneeID:    prevIssue.AssigneeID,
-		StartDate:     prevIssue.StartDate,
-		DueDate:       prevIssue.DueDate,
-		ParentIssueID: prevIssue.ParentIssueID,
-		ProjectID:     prevIssue.ProjectID,
-		Stage:         prevIssue.Stage,
+		ID:                    prevIssue.ID,
+		AssigneeType:          prevIssue.AssigneeType,
+		AssigneeID:            prevIssue.AssigneeID,
+		StartDate:             prevIssue.StartDate,
+		DueDate:               prevIssue.DueDate,
+		ParentIssueID:         prevIssue.ParentIssueID,
+		ProjectID:             prevIssue.ProjectID,
+		Stage:                 prevIssue.Stage,
+		ImplementationAgentID: prevIssue.ImplementationAgentID,
+		CurrentRef:            prevIssue.CurrentRef,
+	}
+	if req.AutoCloseAllowed != nil {
+		params.AutoCloseAllowed = pgtype.Bool{Bool: *req.AutoCloseAllowed, Valid: true}
+	}
+	if req.ExternalValidationRequired != nil {
+		params.ExternalValidationRequired = pgtype.Bool{Bool: *req.ExternalValidationRequired, Valid: true}
+	}
+	if _, present := rawFields["implementation_agent_id"]; present {
+		if req.ImplementationAgentID == nil {
+			params.ImplementationAgentID = pgtype.UUID{}
+		} else if id, ok := parseUUIDOrBadRequest(w, *req.ImplementationAgentID, "implementation_agent_id"); ok {
+			params.ImplementationAgentID = id
+		} else {
+			return
+		}
+	}
+	if _, present := rawFields["current_ref"]; present {
+		if req.CurrentRef == nil {
+			params.CurrentRef = pgtype.Text{}
+		} else {
+			params.CurrentRef = pgtype.Text{String: *req.CurrentRef, Valid: true}
+		}
 	}
 
 	// NEX-1043 warn-only gate bookkeeping (in_review): set when this status
