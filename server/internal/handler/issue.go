@@ -60,6 +60,7 @@ type IssueResponse struct {
 	ImplementationAgentID      *string                 `json:"implementation_agent_id"`
 	CurrentRef                 *string                 `json:"current_ref"`
 	ExternalValidationRequired bool                    `json:"external_validation_required"`
+	AutoCloseCriteriaVersion   *string                 `json:"auto_close_criteria_version"`
 	Reactions                  []IssueReactionResponse `json:"reactions,omitempty"`
 	Attachments                []AttachmentResponse    `json:"attachments,omitempty"`
 	// Labels are bulk-attached by list/detail endpoints so the client can render
@@ -116,6 +117,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		ImplementationAgentID:      uuidToPtr(i.ImplementationAgentID),
 		CurrentRef:                 textToPtr(i.CurrentRef),
 		ExternalValidationRequired: i.ExternalValidationRequired,
+		AutoCloseCriteriaVersion:   textToPtr(i.AutoCloseCriteriaVersion),
 	}
 }
 
@@ -123,27 +125,32 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		Stage:         int4ToPtr(i.Stage),
-		StartDate:     dateToPtr(i.StartDate),
-		DueDate:       dateToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
-		Metadata:      parseIssueMetadata(i.Metadata),
+		ID:                         uuidToString(i.ID),
+		WorkspaceID:                uuidToString(i.WorkspaceID),
+		Number:                     i.Number,
+		Identifier:                 identifier,
+		Title:                      i.Title,
+		Description:                textToPtr(i.Description),
+		Status:                     i.Status,
+		Priority:                   i.Priority,
+		AssigneeType:               textToPtr(i.AssigneeType),
+		AssigneeID:                 uuidToPtr(i.AssigneeID),
+		CreatorType:                i.CreatorType,
+		CreatorID:                  uuidToString(i.CreatorID),
+		ParentIssueID:              uuidToPtr(i.ParentIssueID),
+		ProjectID:                  uuidToPtr(i.ProjectID),
+		Position:                   i.Position,
+		Stage:                      int4ToPtr(i.Stage),
+		StartDate:                  dateToPtr(i.StartDate),
+		DueDate:                    dateToPtr(i.DueDate),
+		CreatedAt:                  timestampToString(i.CreatedAt),
+		UpdatedAt:                  timestampToString(i.UpdatedAt),
+		Metadata:                   parseIssueMetadata(i.Metadata),
+		AutoCloseAllowed:           i.AutoCloseAllowed,
+		ImplementationAgentID:      uuidToPtr(i.ImplementationAgentID),
+		CurrentRef:                 textToPtr(i.CurrentRef),
+		ExternalValidationRequired: i.ExternalValidationRequired,
+		AutoCloseCriteriaVersion:   textToPtr(i.AutoCloseCriteriaVersion),
 	}
 }
 
@@ -2326,6 +2333,7 @@ type UpdateIssueRequest struct {
 	ImplementationAgentID      *string  `json:"implementation_agent_id"`
 	CurrentRef                 *string  `json:"current_ref"`
 	ExternalValidationRequired *bool    `json:"external_validation_required"`
+	AutoCloseCriteriaVersion   *string  `json:"auto_close_criteria_version"`
 	// AttachmentIDs lets the description editor bind newly uploaded files to
 	// this issue so they surface in `GET /api/issues/:id/attachments` and the
 	// editor's preview Eye keeps working past a refresh. Existing bindings
@@ -2372,22 +2380,43 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
-		ID:                    prevIssue.ID,
-		AssigneeType:          prevIssue.AssigneeType,
-		AssigneeID:            prevIssue.AssigneeID,
-		StartDate:             prevIssue.StartDate,
-		DueDate:               prevIssue.DueDate,
-		ParentIssueID:         prevIssue.ParentIssueID,
-		ProjectID:             prevIssue.ProjectID,
-		Stage:                 prevIssue.Stage,
-		ImplementationAgentID: prevIssue.ImplementationAgentID,
-		CurrentRef:            prevIssue.CurrentRef,
+		ID:                       prevIssue.ID,
+		AssigneeType:             prevIssue.AssigneeType,
+		AssigneeID:               prevIssue.AssigneeID,
+		StartDate:                prevIssue.StartDate,
+		DueDate:                  prevIssue.DueDate,
+		ParentIssueID:            prevIssue.ParentIssueID,
+		ProjectID:                prevIssue.ProjectID,
+		Stage:                    prevIssue.Stage,
+		ImplementationAgentID:    prevIssue.ImplementationAgentID,
+		CurrentRef:               prevIssue.CurrentRef,
+		AutoCloseCriteriaVersion: prevIssue.AutoCloseCriteriaVersion,
 	}
 	if req.AutoCloseAllowed != nil {
+		if *req.AutoCloseAllowed {
+			member, ok := h.workspaceMember(w, r, workspaceID)
+			if !ok {
+				return
+			}
+			if !roleAllowed(member.Role, "owner", "admin") {
+				writeError(w, http.StatusForbidden, "only workspace owners or admins can enable auto_close_allowed")
+				return
+			}
+		}
 		params.AutoCloseAllowed = pgtype.Bool{Bool: *req.AutoCloseAllowed, Valid: true}
 	}
 	if req.ExternalValidationRequired != nil {
 		params.ExternalValidationRequired = pgtype.Bool{Bool: *req.ExternalValidationRequired, Valid: true}
+	}
+	if _, present := rawFields["auto_close_criteria_version"]; present {
+		if req.AutoCloseCriteriaVersion == nil {
+			params.AutoCloseCriteriaVersion = pgtype.Text{}
+		} else if strings.TrimSpace(*req.AutoCloseCriteriaVersion) == "" {
+			writeError(w, http.StatusBadRequest, "auto_close_criteria_version cannot be empty")
+			return
+		} else {
+			params.AutoCloseCriteriaVersion = pgtype.Text{String: *req.AutoCloseCriteriaVersion, Valid: true}
+		}
 	}
 	if _, present := rawFields["implementation_agent_id"]; present {
 		if req.ImplementationAgentID == nil {

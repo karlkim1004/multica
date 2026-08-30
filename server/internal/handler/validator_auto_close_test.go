@@ -10,10 +10,15 @@ import (
 
 func TestValidationAutoCloseReasonsDefaultDenyAndGates(t *testing.T) {
 	implementation := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
-	issue := db.Issue{Status: "in_review", AutoCloseAllowed: true, ImplementationAgentID: implementation, CurrentRef: pgtype.Text{String: "abc", Valid: true}}
-	verdict := db.Comment{VerifiedRef: pgtype.Text{String: "abc", Valid: true}}
+	issue := db.Issue{Status: "in_review", AutoCloseAllowed: true, ImplementationAgentID: implementation, CurrentRef: pgtype.Text{String: "abc", Valid: true}, AutoCloseCriteriaVersion: pgtype.Text{String: "v1", Valid: true}}
+	verdict := db.Comment{VerifiedRef: pgtype.Text{String: "abc", Valid: true}, CriteriaVersion: pgtype.Text{String: "v1", Valid: true}}
 	if got := validationAutoCloseReasons(issue, verdict, "00000000-0000-0000-0000-000000000002", 0, 0); len(got) != 0 {
 		t.Fatalf("safe verdict rejected: %v", got)
+	}
+	sameVerifier := issue
+	sameVerifier.ImplementationAgentID = pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
+	if got := validationAutoCloseReasons(sameVerifier, verdict, "00000000-0000-0000-0000-000000000002", 0, 0); !strings.Contains(strings.Join(got, " "), "independent") {
+		t.Fatalf("same verifier was not rejected: %v", got)
 	}
 
 	cases := []struct {
@@ -23,8 +28,9 @@ func TestValidationAutoCloseReasonsDefaultDenyAndGates(t *testing.T) {
 		want          string
 	}{
 		{"policy", func(i *db.Issue, _ *db.Comment) { i.AutoCloseAllowed = false }, 0, 0, "auto_close_allowed"},
-		{"same verifier", func(i *db.Issue, _ *db.Comment) { i.ImplementationAgentID = pgtype.UUID{} }, 0, 0, "independent"},
+		{"missing implementation", func(i *db.Issue, _ *db.Comment) { i.ImplementationAgentID = pgtype.UUID{} }, 0, 0, "independent"},
 		{"stale ref", func(_ *db.Issue, c *db.Comment) { c.VerifiedRef.String = "old" }, 0, 0, "verified_ref"},
+		{"stale criteria", func(_ *db.Issue, c *db.Comment) { c.CriteriaVersion.String = "v0" }, 0, 0, "criteria_version"},
 		{"external", func(i *db.Issue, _ *db.Comment) { i.ExternalValidationRequired = true }, 0, 0, "external validation"},
 		{"open pr", func(_ *db.Issue, _ *db.Comment) {}, 1, 0, "linked PR"},
 		{"open child", func(_ *db.Issue, _ *db.Comment) {}, 0, 1, "child issue"},

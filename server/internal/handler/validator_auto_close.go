@@ -16,27 +16,29 @@ import (
 // tryAutoCloseAfterValidation is deliberately default-deny. It only consumes
 // the structured fields written by CreateComment; comment prose is never read.
 func (h *Handler) tryAutoCloseAfterValidation(ctx context.Context, issue db.Issue, verdict db.Comment, verifierID string) {
-	openPRs, prErr := h.Queries.CountOpenPullRequestsByIssue(ctx, issue.ID)
-	openChildren, childErr := h.Queries.CountOpenChildIssues(ctx, db.CountOpenChildIssuesParams{ParentIssueID: issue.ID, WorkspaceID: issue.WorkspaceID})
-	failed := validationAutoCloseReasons(issue, verdict, verifierID, openPRs, openChildren)
-	if prErr != nil {
-		failed = append(failed, "open PR gate could not be checked")
-	}
-	if childErr != nil {
-		failed = append(failed, "child issue gate could not be checked")
-	}
-	if len(failed) > 0 {
-		// A failed automatic close is explicitly handed to the human queue and
-		// leaves an audit trail rather than silently retaining in_review.
-		waitingOn, _ := json.Marshal("ceo")
-		if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID, Key: "waiting_on", Value: waitingOn}); err != nil {
-			slog.Warn("validator waiting_on update failed", "issue_id", uuidToString(issue.ID), "error", err)
-		}
-		h.recordValidationAudit(ctx, issue, verdict.VerifierAgentID, fmt.Sprintf("Structured validator PASS %s did not auto-close: %s.", uuidToString(verdict.ID), strings.Join(failed, "; ")))
-		return
-	}
-	updated, err := h.Queries.AutoCloseIssueAfterValidation(ctx, db.AutoCloseIssueAfterValidationParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID})
+	// All authority and lifecycle gates are re-evaluated by the one conditional
+	// UPDATE below.  Do not turn the advisory reason calculation into a close
+	// decision: that would recreate the TOCTOU window this finalizer removes.
+	updated, err := h.Queries.AutoCloseIssueAfterValidation(ctx, db.AutoCloseIssueAfterValidationParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, CommentID: verdict.ID})
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			openPRs, _ := h.Queries.CountOpenPullRequestsByIssue(ctx, issue.ID)
+			openChildren, _ := h.Queries.CountOpenChildIssues(ctx, db.CountOpenChildIssuesParams{ParentIssueID: issue.ID, WorkspaceID: issue.WorkspaceID})
+			failed := validationAutoCloseReasons(issue, verdict, verifierID, openPRs, openChildren)
+			validator, validatorErr := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: verdict.VerifierAgentID, WorkspaceID: issue.WorkspaceID})
+			if validatorErr != nil || validator.ArchivedAt.Valid || !validator.IsValidator {
+				failed = append(failed, "verifier is not a registered active validator")
+			}
+			if len(failed) == 0 {
+				failed = append(failed, "an eligibility gate changed before the conditional update")
+			}
+			waitingOn, _ := json.Marshal("ceo")
+			if _, metaErr := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID, Key: "waiting_on", Value: waitingOn}); metaErr != nil {
+				slog.Warn("validator waiting_on update failed", "issue_id", uuidToString(issue.ID), "error", metaErr)
+			}
+			h.recordValidationAudit(ctx, issue, verdict.VerifierAgentID, fmt.Sprintf("Structured validator PASS %s did not auto-close: %s.", uuidToString(verdict.ID), strings.Join(failed, "; ")))
+			return
+		}
 		if err != pgx.ErrNoRows {
 			slog.Warn("validator auto-close failed", "issue_id", uuidToString(issue.ID), "error", err)
 		}
@@ -61,6 +63,9 @@ func validationAutoCloseReasons(issue db.Issue, verdict db.Comment, verifierID s
 	}
 	if !issue.CurrentRef.Valid || issue.CurrentRef.String != verdict.VerifiedRef.String {
 		failed = append(failed, "verified_ref does not match current_ref")
+	}
+	if !issue.AutoCloseCriteriaVersion.Valid || issue.AutoCloseCriteriaVersion.String != verdict.CriteriaVersion.String {
+		failed = append(failed, "criteria_version does not match auto-close criteria")
 	}
 	if issue.ExternalValidationRequired {
 		failed = append(failed, "external validation is required")
