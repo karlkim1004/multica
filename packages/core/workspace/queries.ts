@@ -15,6 +15,8 @@ export const workspaceKeys = {
   // `["workspaces", wsId, "squads"]` invalidation covers it.
   squadMemberStatus: (wsId: string, squadId: string) =>
     ["workspaces", wsId, "squads", squadId, "members-status"] as const,
+  squadMembers: (wsId: string, squadId: string) =>
+    ["workspaces", wsId, "squads", squadId, "members"] as const,
   skills: (wsId: string) => ["workspaces", wsId, "skills"] as const,
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
 };
@@ -68,6 +70,18 @@ export function squadMemberStatusOptions(wsId: string, squadId: string) {
     enabled: !!wsId && !!squadId,
     staleTime: 30 * 1000,
     refetchOnWindowFocus: true,
+  });
+}
+
+// Full member roster of one squad. Distinct from squadMemberStatusOptions
+// (which returns presence/active-issues for members already known) — this is
+// the identity list (member_id/role) used to enumerate who to render at all,
+// e.g. the office org-chart grouping issues by department (NEX-1072).
+export function squadMembersOptions(wsId: string, squadId: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.squadMembers(wsId, squadId),
+    queryFn: () => api.listSquadMembers(squadId),
+    enabled: !!wsId && !!squadId,
   });
 }
 

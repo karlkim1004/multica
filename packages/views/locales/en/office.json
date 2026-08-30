@@ -11,5 +11,19 @@
     "waited_hours": "waiting {{hours}}h",
     "resting": "resting",
     "load": "{{count}} · {{wait}}"
+  },
+  "org": {
+    "ceo_label": "Owner",
+    "team_leader_label": "Team Lead",
+    "leader_chip": "Lead",
+    "reassign_history_chip": "reassigned to owner queue",
+    "owner_alert_chip": "needs your attention",
+    "done_7d": "{{count}} done (7d)",
+    "member_count": "{{count}} members",
+    "held_tasks_more": "+{{count}} more",
+    "no_held_tasks": "No open tasks",
+    "no_members": "No members yet",
+    "unassigned_heading": "Unassigned",
+    "unassigned_hint": "Not part of any department yet."
   }
 }

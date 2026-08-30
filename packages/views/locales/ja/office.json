@@ -11,5 +11,19 @@
     "waited_hours": "{{hours}}時間待機",
     "resting": "休憩中",
     "load": "{{count}}件 · {{wait}}"
+  },
+  "org": {
+    "ceo_label": "オーナー",
+    "team_leader_label": "チームリード",
+    "leader_chip": "リーダー",
+    "reassign_history_chip": "オーナーキューへ再割当済み",
+    "owner_alert_chip": "確認が必要",
+    "done_7d": "直近7日完了 {{count}}件",
+    "member_count": "{{count}}名",
+    "held_tasks_more": "他{{count}}件",
+    "no_held_tasks": "保持中のタスクなし",
+    "no_members": "所属エージェントなし",
+    "unassigned_heading": "未割当",
+    "unassigned_hint": "まだどの部門にも属していません"
   }
 }
