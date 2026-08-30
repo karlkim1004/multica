@@ -22,7 +22,7 @@ UPDATE issue SET
     ),
     updated_at = now()
 WHERE id = $5 AND workspace_id = $6
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, auto_close_allowed, implementation_agent_id, current_ref, external_validation_required
 `
 
 type ReassignIssueWaitingToCeoParams struct {
@@ -75,12 +75,16 @@ func (q *Queries) ReassignIssueWaitingToCeo(ctx context.Context, arg ReassignIss
 		&i.StartDate,
 		&i.Metadata,
 		&i.Stage,
+		&i.AutoCloseAllowed,
+		&i.ImplementationAgentID,
+		&i.CurrentRef,
+		&i.ExternalValidationRequired,
 	)
 	return i, err
 }
 
 const selectIssuesNeedingWaitingReassign = `-- name: SelectIssuesNeedingWaitingReassign :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, auto_close_allowed, implementation_agent_id, current_ref, external_validation_required
 FROM issue
 WHERE status IN ('blocked', 'in_review')
   AND metadata->>'waiting_on' LIKE 'agent:%'
@@ -134,6 +138,10 @@ func (q *Queries) SelectIssuesNeedingWaitingReassign(ctx context.Context, reassi
 			&i.StartDate,
 			&i.Metadata,
 			&i.Stage,
+			&i.AutoCloseAllowed,
+			&i.ImplementationAgentID,
+			&i.CurrentRef,
+			&i.ExternalValidationRequired,
 		); err != nil {
 			return nil, err
 		}
@@ -147,7 +155,7 @@ func (q *Queries) SelectIssuesNeedingWaitingReassign(ctx context.Context, reassi
 
 const selectIssuesNeedingWaitingRecall = `-- name: SelectIssuesNeedingWaitingRecall :many
 
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, auto_close_allowed, implementation_agent_id, current_ref, external_validation_required
 FROM issue
 WHERE status IN ('blocked', 'in_review')
   AND metadata->>'waiting_on' LIKE 'agent:%'
@@ -209,6 +217,10 @@ func (q *Queries) SelectIssuesNeedingWaitingRecall(ctx context.Context, recallAf
 			&i.StartDate,
 			&i.Metadata,
 			&i.Stage,
+			&i.AutoCloseAllowed,
+			&i.ImplementationAgentID,
+			&i.CurrentRef,
+			&i.ExternalValidationRequired,
 		); err != nil {
 			return nil, err
 		}

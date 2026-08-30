@@ -98,6 +98,10 @@ UPDATE issue SET
     parent_issue_id = sqlc.narg('parent_issue_id'),
     project_id = sqlc.narg('project_id'),
     stage = sqlc.narg('stage'),
+    auto_close_allowed = COALESCE(sqlc.narg('auto_close_allowed'), auto_close_allowed),
+    implementation_agent_id = sqlc.narg('implementation_agent_id'),
+    current_ref = sqlc.narg('current_ref'),
+    external_validation_required = COALESCE(sqlc.narg('external_validation_required'), external_validation_required),
     updated_at = now()
 WHERE id = $1
 RETURNING *;
@@ -120,6 +124,16 @@ UPDATE issue SET
     updated_at = now()
 WHERE id = $1 AND workspace_id = $3
 RETURNING *;
+
+-- name: AutoCloseIssueAfterValidation :one
+UPDATE issue SET status = 'done', updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND status = 'in_review'
+RETURNING *;
+
+-- name: CountOpenChildIssues :one
+SELECT COUNT(*)::bigint FROM issue
+WHERE parent_issue_id = $1 AND workspace_id = $2
+  AND status NOT IN ('done', 'cancelled');
 
 -- name: ClaimUnassignedTodoIssueForAgent :one
 -- Atomically binds the explicitly opt-in issue to a selected worker.  It must
