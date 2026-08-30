@@ -34,6 +34,7 @@ func TestGeneralUserCannotReadWorkspaceDirectoryRoutes(t *testing.T) {
 		"/api/workspaces/" + testWorkspaceID + "/",
 		"/api/workspaces/" + testWorkspaceID + "/members",
 		"/api/workspaces/" + testWorkspaceID + "/invitations",
+		"/api/workspaces/" + testWorkspaceID + "/lark/installations",
 	}
 
 	for _, path := range paths {

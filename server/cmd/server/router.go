@@ -626,6 +626,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// an installation out from under one.
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
+					r.Use(h.RestrictGeneralUserWorkspaceRoutes)
 					r.Get("/lark/installations", h.ListLarkInstallations)
 				})
 				r.Group(func(r chi.Router) {
