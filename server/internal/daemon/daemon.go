@@ -52,6 +52,10 @@ const (
 var (
 	taskPrepareLeaseRefresh = 15 * time.Second
 	taskPrepareLeaseTimeout = 10 * time.Second
+	// taskRunningHeartbeatTimeout bounds a single running-lease heartbeat
+	// HTTP call (NEX-1032); the refresh interval itself is configurable
+	// (d.cfg.TaskRunningHeartbeatInterval, default DefaultTaskRunningHeartbeatInterval).
+	taskRunningHeartbeatTimeout = 10 * time.Second
 )
 
 func taskScopedAuthToken(task Task) (string, error) {
@@ -3221,6 +3225,50 @@ func (d *Daemon) startTaskPrepareLeaseExtender(ctx context.Context, task Task, t
 	}
 }
 
+// startTaskRunningHeartbeatExtender renews the task's execution-phase lease
+// (NEX-1032) for as long as this goroutine itself is alive. It is started
+// right after StartTask succeeds and stopped when runTask returns for any
+// reason. If the surrounding per-task watcher hangs — the exact failure mode
+// that left an agent's slot wedged for 20h in the incident this fixes — this
+// ticker goroutine is part of the same call stack and stops with it, so the
+// heartbeat simply stops and the server-side lease expires on its own; no
+// separate liveness signal is needed to detect the hang.
+func (d *Daemon) startTaskRunningHeartbeatExtender(ctx context.Context, task Task, taskLog *slog.Logger) func() {
+	interval := d.cfg.TaskRunningHeartbeatInterval
+	if interval <= 0 {
+		interval = DefaultTaskRunningHeartbeatInterval
+	}
+
+	leaseCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-leaseCtx.Done():
+				return
+			case <-ticker.C:
+				reqCtx, reqCancel := context.WithTimeout(leaseCtx, taskRunningHeartbeatTimeout)
+				err := d.client.ExtendTaskRunningLease(reqCtx, task.RuntimeID, task.ID)
+				reqCancel()
+				if err != nil {
+					taskLog.Warn("extend task running lease failed", "error", err)
+				}
+			}
+		}
+	}()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
+}
+
 func skillRefKey(source, id string) string {
 	return source + "\x00" + id
 }
@@ -3447,6 +3495,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
 	}
 	stopPrepareLease()
+	// The running-phase lease (NEX-1032) takes over from here until runTask
+	// returns, covering the rest of the agent's execution the same way
+	// stopPrepareLease covered claim→StartTask above.
+	stopRunningHeartbeat := d.startTaskRunningHeartbeatExtender(ctx, task, taskLog)
+	defer stopRunningHeartbeat()
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
 
 	reused := gateResumeToReusedWorkdir(&task, &taskCtx, env.WorkDir, taskLog)
