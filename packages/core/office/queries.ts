@@ -54,13 +54,57 @@ export async function fetchAllOpenIssuesForOffice(): Promise<Issue[]> {
   return perStatus.flat();
 }
 
+// NEX-1072: "ranked by performance, not backlog size" needs a done-issue
+// window, separate from the open-issue fetch above. Same all-pages-of-one-
+// status shape as fetchAllIssuesForStatus, but filtered server-side by
+// date_field/date_start so a 7-day window doesn't require paging through a
+// workspace's entire done history.
+export const OFFICE_DONE_LOOKBACK_DAYS = 7;
+
+async function fetchDoneIssuesSince(sinceIso: string): Promise<Issue[]> {
+  const issues: Issue[] = [];
+  let offset = 0;
+  while (offset < OFFICE_MAX_ISSUES_PER_STATUS) {
+    const res = await api.listIssues({
+      status: "done",
+      date_field: "updated_at",
+      date_start: sinceIso,
+      limit: OFFICE_PAGE_LIMIT,
+      offset,
+    });
+    issues.push(...res.issues);
+    offset += res.issues.length;
+    if (res.issues.length < OFFICE_PAGE_LIMIT) break;
+    if (issues.length >= res.total) break;
+  }
+  return issues;
+}
+
+// Recomputes the "since" bound on every call (not hoisted to a module
+// constant) so each poll tick / refetch slides the 7-day window forward
+// instead of freezing it at first render.
+export async function fetchRecentDoneIssuesForOffice(): Promise<Issue[]> {
+  const sinceIso = new Date(
+    Date.now() - OFFICE_DONE_LOOKBACK_DAYS * 24 * 3_600_000,
+  ).toISOString();
+  return fetchDoneIssuesSince(sinceIso);
+}
+
 export const officeKeys = {
   openIssues: (wsId: string) => ["workspaces", wsId, "office", "open-issues"] as const,
+  recentDone: (wsId: string) => ["workspaces", wsId, "office", "recent-done"] as const,
 };
 
 export function officeOpenIssuesOptions(wsId: string) {
   return queryOptions({
     queryKey: officeKeys.openIssues(wsId),
     queryFn: () => fetchAllOpenIssuesForOffice(),
+  });
+}
+
+export function officeRecentDoneOptions(wsId: string) {
+  return queryOptions({
+    queryKey: officeKeys.recentDone(wsId),
+    queryFn: () => fetchRecentDoneIssuesForOffice(),
   });
 }

@@ -11,5 +11,27 @@
     "waited_hours": "等待 {{hours}} 小时",
     "resting": "休息中",
     "load": "{{count}} · {{wait}}"
+  },
+  "org": {
+    "ceo_label": "负责人",
+    "team_leader_label": "团队负责人",
+    "leader_chip": "负责人",
+    "reassign_history_chip": "已转交给负责人队列",
+    "owner_alert_chip": "需要关注",
+    "done_7d": "近 7 天完成 {{count}} 项",
+    "member_count": "{{count}} 名成员",
+    "held_tasks_more": "还有 {{count}} 项",
+    "no_held_tasks": "没有正在处理的任务",
+    "no_members": "暂无成员",
+    "unassigned_heading": "未分配部门",
+    "unassigned_hint": "尚未加入任何部门",
+    "president_room_heading": "总裁办公室",
+    "lounge_heading": "休息室",
+    "lounge_hint": "尚无分配任务 · 有新任务时自动分派",
+    "monitor_working": "工作中",
+    "monitor_idle": "显示器已关闭",
+    "idle_with_work_label": "有任务但空闲",
+    "neglected_hours_label": "闲置 {{hours}} 小时",
+    "whip_label": "最高级别 — 需立即处理"
   }
 }
