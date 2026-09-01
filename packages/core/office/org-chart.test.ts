@@ -7,6 +7,7 @@ import {
   getReassignedFromAgentId,
   getTicketShortLabel,
   getWaitingEscalationTier,
+  getWaitStartedAt,
 } from "./org-chart";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
@@ -144,6 +145,32 @@ describe("getOwnerHeldIssues", () => {
   it("ignores an agent assignee even without waiting_on", () => {
     const issue = makeIssue({ assignee_type: "agent", assignee_id: "bot-a" });
     expect(getOwnerHeldIssues([issue], "owner-1")).toEqual([]);
+  });
+});
+
+describe("getWaitStartedAt", () => {
+  it("falls back to updated_at when waiting_since is unset", () => {
+    const issue = makeIssue({ updated_at: "2026-08-01T00:00:00Z" });
+    expect(getWaitStartedAt(issue)).toBe("2026-08-01T00:00:00Z");
+  });
+
+  it("prefers waiting_since over a much more recent updated_at", () => {
+    // Reproduces the live NEX-1072 whip regression: a third-party comment
+    // (sweeper/QA/CEO) bumps updated_at without the current holder taking
+    // any action, which must not reset the idle clock.
+    const issue = makeIssue({
+      updated_at: "2026-09-01T22:27:47Z",
+      metadata: { waiting_on: "agent:bot-a", waiting_since: "2026-08-31T22:35:21Z" },
+    });
+    expect(getWaitStartedAt(issue)).toBe("2026-08-31T22:35:21Z");
+  });
+
+  it("ignores a non-string waiting_since", () => {
+    const issue = makeIssue({
+      updated_at: "2026-08-01T00:00:00Z",
+      metadata: { waiting_since: 12345 as unknown as string },
+    });
+    expect(getWaitStartedAt(issue)).toBe("2026-08-01T00:00:00Z");
   });
 });
 
