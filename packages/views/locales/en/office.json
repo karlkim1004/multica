@@ -31,7 +31,16 @@
     "monitor_working": "Working",
     "monitor_idle": "Monitor off",
     "idle_with_work_label": "Idle with pending work",
-    "neglected_hours_label": "neglected {{hours}}h",
-    "whip_label": "top escalation — needs immediate attention"
+    "neglected_hours_label": "neglected {{hours}}h · stage {{stage}}/3",
+    "whip_label": "top escalation — needs immediate attention",
+    "legend_heading": "Legend",
+    "legend_warn": "under {{hours}}h",
+    "legend_flame1": "{{hours}}h+",
+    "legend_flame2": "{{hours}}h+ · shake",
+    "legend_whip": "{{hours}}h+ · whip",
+    "wait_reason_implementing": "In progress",
+    "wait_reason_verifying": "Awaiting verification",
+    "wait_reason_blocked": "Blocked",
+    "wait_reason_blocked_with_text": "Blocked: {{reason}}"
   }
 }

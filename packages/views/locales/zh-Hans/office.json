@@ -31,7 +31,16 @@
     "monitor_working": "工作中",
     "monitor_idle": "显示器已关闭",
     "idle_with_work_label": "有任务但空闲",
-    "neglected_hours_label": "闲置 {{hours}} 小时",
-    "whip_label": "最高级别 — 需立即处理"
+    "neglected_hours_label": "闲置 {{hours}} 小时 · {{stage}}/3 级",
+    "whip_label": "最高级别 — 需立即处理",
+    "legend_heading": "图例",
+    "legend_warn": "不足 {{hours}} 小时",
+    "legend_flame1": "满 {{hours}} 小时",
+    "legend_flame2": "满 {{hours}} 小时 · 抖动",
+    "legend_whip": "满 {{hours}} 小时 · 鞭子",
+    "wait_reason_implementing": "处理中",
+    "wait_reason_verifying": "等待验证",
+    "wait_reason_blocked": "受阻",
+    "wait_reason_blocked_with_text": "受阻：{{reason}}"
   }
 }

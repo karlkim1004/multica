@@ -31,7 +31,16 @@
     "monitor_working": "作業中",
     "monitor_idle": "モニターオフ",
     "idle_with_work_label": "業務ありで待機中",
-    "neglected_hours_label": "放置 {{hours}}時間",
-    "whip_label": "最高段階 — 至急確認が必要"
+    "neglected_hours_label": "放置 {{hours}}時間 · {{stage}}段階/3",
+    "whip_label": "最高段階 — 至急確認が必要",
+    "legend_heading": "凡例",
+    "legend_warn": "{{hours}}時間未満",
+    "legend_flame1": "{{hours}}時間以上",
+    "legend_flame2": "{{hours}}時間以上・振動",
+    "legend_whip": "{{hours}}時間以上・鞭",
+    "wait_reason_implementing": "作業中",
+    "wait_reason_verifying": "検証待ち",
+    "wait_reason_blocked": "ブロック中",
+    "wait_reason_blocked_with_text": "ブロック: {{reason}}"
   }
 }
