@@ -61,14 +61,18 @@ export async function fetchAllOpenIssuesForOffice(): Promise<Issue[]> {
 // workspace's entire done history.
 export const OFFICE_DONE_LOOKBACK_DAYS = 7;
 
-async function fetchDoneIssuesSince(sinceIso: string): Promise<Issue[]> {
+async function fetchDoneIssuesSince(sinceIso: string, endIso: string): Promise<Issue[]> {
   const issues: Issue[] = [];
   let offset = 0;
   while (offset < OFFICE_MAX_ISSUES_PER_STATUS) {
     const res = await api.listIssues({
       status: "done",
+      // The server rejects the request with a 400 unless date_field,
+      // date_start, AND date_end arrive together (parseIssueDateFilter),
+      // which zeroed every desk's doneCount7d when date_end was omitted.
       date_field: "updated_at",
       date_start: sinceIso,
+      date_end: endIso,
       limit: OFFICE_PAGE_LIMIT,
       offset,
     });
@@ -84,10 +88,11 @@ async function fetchDoneIssuesSince(sinceIso: string): Promise<Issue[]> {
 // constant) so each poll tick / refetch slides the 7-day window forward
 // instead of freezing it at first render.
 export async function fetchRecentDoneIssuesForOffice(): Promise<Issue[]> {
+  const now = Date.now();
   const sinceIso = new Date(
-    Date.now() - OFFICE_DONE_LOOKBACK_DAYS * 24 * 3_600_000,
+    now - OFFICE_DONE_LOOKBACK_DAYS * 24 * 3_600_000,
   ).toISOString();
-  return fetchDoneIssuesSince(sinceIso);
+  return fetchDoneIssuesSince(sinceIso, new Date(now).toISOString());
 }
 
 export const officeKeys = {
