@@ -17,6 +17,7 @@ import {
   getOwnerHeldIssues,
   getTicketShortLabel,
   getWaitingEscalationTier,
+  getWaitStartedAt,
   getReassignedFromAgentId,
   TEAM_LEADER_AGENT_ID,
 } from "@multica/core/office";
@@ -125,7 +126,7 @@ function buildBoard(
       const presence = presenceMap.get(agent.id) ?? null;
       const working = presence?.workload === "working";
       const maxWaitHours = held.reduce(
-        (max, issue) => Math.max(max, hoursSince(issue.updated_at)),
+        (max, issue) => Math.max(max, hoursSince(getWaitStartedAt(issue))),
         0,
       );
       const reassignHistory = reassignHistoryAgentIds.has(agent.id);
@@ -199,13 +200,14 @@ export function OfficePage() {
         .slice()
         .sort(
           (a, b) =>
-            new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime(),
+            new Date(getWaitStartedAt(a)).getTime() -
+            new Date(getWaitStartedAt(b)).getTime(),
         ),
     [issues],
   );
 
   const maxWaitHours = openIssues.length
-    ? hoursSince(openIssues[0]!.updated_at)
+    ? hoursSince(getWaitStartedAt(openIssues[0]!))
     : 0;
   const unassignedCount = openIssues.filter((issue) => !issue.assignee_id).length;
 
@@ -371,7 +373,7 @@ export function OfficePage() {
                         <IssueOwnerChip issue={issue} />
                         <span>
                           {t(($) => $.page.waited_hours, {
-                            hours: Math.round(hoursSince(issue.updated_at)),
+                            hours: Math.round(hoursSince(getWaitStartedAt(issue))),
                           })}
                         </span>
                       </span>
@@ -477,7 +479,7 @@ function PresidentRoom({
                     {t(($) => $.page.load, {
                       count: ownerHeld.length,
                       wait: formatWaitHours(
-                        ownerHeld.reduce((max, issue) => Math.max(max, hoursSince(issue.updated_at)), 0),
+                        ownerHeld.reduce((max, issue) => Math.max(max, hoursSince(getWaitStartedAt(issue))), 0),
                       ),
                     })}
                   </div>
@@ -644,7 +646,7 @@ function TicketTray({ issues }: { issues: Issue[] }) {
             title={`${issue.identifier} · ${issue.title}`}
             className={cn(
               "block truncate rounded border-l-2 bg-background/60 px-1.5 py-0.5 text-[11px] transition-colors hover:bg-accent",
-              waitBucketClass(hoursSince(issue.updated_at)),
+              waitBucketClass(hoursSince(getWaitStartedAt(issue))),
             )}
           >
             {getTicketShortLabel(issue)}

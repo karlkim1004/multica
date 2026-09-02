@@ -98,9 +98,30 @@ export function getTicketShortLabel(issue: Issue): string {
     : raw;
 }
 
+// NEX-1072 whip regression (2026-09-02 CEO live check, "레이아웃 좋네. 챗찍은?"):
+// `updated_at` bumps on *any* issue write — a third-party comment, a
+// metadata edit, a status flip by another agent — not just an action by the
+// actual current holder. In this workspace, issues get near-continuous
+// cross-agent commentary (sweepers, QA, the CEO checking in), which reset
+// the "how long has this desk been idle" clock every few hours and kept
+// maxWaitHours from ever crossing the 12h/24h thresholds live, even when
+// `waiting_since` (set atomically with `waiting_on`, see
+// issue_metadata.go's requiredWaitingMetadataKeys) showed the same holder
+// sitting on it for days — this issue itself (NEX-1072) had
+// waiting_since 33h in the past while updated_at was only 9h old. Use
+// getWaitStartedAt (waiting_since, falling back to updated_at) as the
+// wait-clock start instead; it only moves when ownership actually changes
+// hands.
+export function getWaitStartedAt(issue: Issue): string {
+  const waitingSince = issue.metadata.waiting_since;
+  return typeof waitingSince === "string" && waitingSince.length > 0
+    ? waitingSince
+    : issue.updated_at;
+}
+
 // NEX-1072 "states_full" spec (2026-08-30, CEO-approved final): the desk's
 // flame/shake/aura/whip visuals scale with how long an agent has actually
-// been idle while holding a ticket — the same real `updated_at` elapsed-hours
+// been idle while holding a ticket — the getWaitStartedAt elapsed-hours
 // signal `waitBucketClass` already uses for ticket chips, not a synthetic
 // countdown. This is a separate, purely additive layer on top of
 // `WaitingEscalationTier`/`Severity`: per the issue's "금지" clause, the
