@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { Issue, IssueMetadata, IssueStatus } from "../types";
+import type { Agent, Issue, IssueMetadata, IssueStatus } from "../types";
+import type { AgentPresenceDetail } from "../agents/types";
 import {
+  buildBoard,
+  getBlockedReasonText,
   getDeskIntensity,
   getEffectiveOwnerAgentId,
   getOwnerHeldIssues,
   getReassignedFromAgentId,
   getTicketShortLabel,
   getWaitingEscalationTier,
+  getWaitReason,
   getWaitStartedAt,
+  SEVERITY_OK,
+  SEVERITY_WARN,
+  TEAM_LEADER_AGENT_ID,
 } from "./org-chart";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
@@ -36,6 +43,40 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     ...overrides,
   };
 }
+
+function makeAgent(overrides: Partial<Agent> = {}): Agent {
+  return {
+    id: "bot-a",
+    workspace_id: "ws-1",
+    runtime_id: "runtime-1",
+    name: "Bot A",
+    description: "",
+    instructions: "",
+    avatar_url: null,
+    runtime_mode: "local",
+    runtime_config: {},
+    custom_args: [],
+    visibility: "workspace",
+    status: "idle",
+    max_concurrent_tasks: 1,
+    model: "claude",
+    owner_id: null,
+    skills: [],
+    created_at: "2026-08-01T00:00:00Z",
+    updated_at: "2026-08-01T00:00:00Z",
+    archived_at: null,
+    archived_by: null,
+    ...overrides,
+  };
+}
+
+const IDLE_PRESENCE: AgentPresenceDetail = {
+  availability: "online",
+  workload: "idle",
+  runningCount: 0,
+  queuedCount: 0,
+  capacity: 1,
+};
 
 describe("getEffectiveOwnerAgentId", () => {
   it("falls back to assignee_id when waiting_on is unset (most todo/in_progress work)", () => {
@@ -233,5 +274,81 @@ describe("getTicketShortLabel", () => {
   it("falls back to the raw title if stripping brackets empties it", () => {
     const issue = makeIssue({ title: "[P1/플랫폼]" });
     expect(getTicketShortLabel(issue)).toBe("[P1/플랫폼]");
+  });
+});
+
+describe("getWaitReason", () => {
+  it("reads 'verifying' from an in_review ticket — queued for someone else, not idle-holding", () => {
+    expect(getWaitReason(makeIssue({ status: "in_review" }))).toBe("verifying");
+  });
+
+  it("reads 'blocked' from a blocked ticket", () => {
+    expect(getWaitReason(makeIssue({ status: "blocked" }))).toBe("blocked");
+  });
+
+  it("defaults to 'implementing' for todo/in_progress", () => {
+    expect(getWaitReason(makeIssue({ status: "todo" }))).toBe("implementing");
+    expect(getWaitReason(makeIssue({ status: "in_progress" }))).toBe("implementing");
+  });
+});
+
+describe("getBlockedReasonText", () => {
+  it("returns the trimmed blocked_reason metadata", () => {
+    const issue = makeIssue({ metadata: { blocked_reason: "  waiting on CEO decision  " } });
+    expect(getBlockedReasonText(issue)).toBe("waiting on CEO decision");
+  });
+
+  it("returns null when blocked_reason is absent or blank", () => {
+    expect(getBlockedReasonText(makeIssue())).toBeNull();
+    expect(getBlockedReasonText(makeIssue({ metadata: { blocked_reason: "   " } }))).toBeNull();
+  });
+});
+
+describe("buildBoard", () => {
+  it("does not exempt the team lead from idle-with-work severity — regression guard for the 2026-09-02 CEO directive", () => {
+    // "오케스트레이터가 놀면 내가 채찍질" only means something if 아이유's own
+    // desk escalates exactly like every other agent's when she's holding a
+    // ticket idle. This fixture puts a 30h-idle ticket in her tray via
+    // waiting_on and asserts buildBoard gives her the same WARN severity +
+    // held/maxWaitHours a rank-and-file agent would get in the same spot —
+    // no special-cased exclusion anywhere in the aggregation.
+    const teamLeader = makeAgent({ id: TEAM_LEADER_AGENT_ID, name: "아이유(TeamLeader)" });
+    const staleIssue = makeIssue({
+      id: "issue-tl",
+      updated_at: "2026-09-02T00:00:00Z",
+      metadata: { waiting_on: `agent:${TEAM_LEADER_AGENT_ID}`, waiting_since: "2026-09-01T00:00:00Z" },
+    });
+    const board = buildBoard([teamLeader], [staleIssue], [], new Map([[TEAM_LEADER_AGENT_ID, IDLE_PRESENCE]]));
+    const entry = board.find((e) => e.agent.id === TEAM_LEADER_AGENT_ID);
+    expect(entry).toBeDefined();
+    expect(entry!.held).toEqual([staleIssue]);
+    expect(entry!.severity).toBe(SEVERITY_WARN);
+    expect(entry!.maxWaitHours).toBeGreaterThanOrEqual(24);
+  });
+
+  it("computes the same held/severity shape for a non-team-lead agent, as a control", () => {
+    const rankAndFile = makeAgent({ id: "bot-a" });
+    const staleIssue = makeIssue({
+      id: "issue-a",
+      updated_at: "2026-09-02T00:00:00Z",
+      metadata: { waiting_on: "agent:bot-a", waiting_since: "2026-09-01T00:00:00Z" },
+    });
+    const board = buildBoard([rankAndFile], [staleIssue], [], new Map([["bot-a", IDLE_PRESENCE]]));
+    const entry = board.find((e) => e.agent.id === "bot-a");
+    expect(entry?.severity).toBe(SEVERITY_WARN);
+    expect(entry?.held).toEqual([staleIssue]);
+  });
+
+  it("leaves severity OK for an agent with no held work", () => {
+    const agent = makeAgent({ id: "bot-b" });
+    const board = buildBoard([agent], [], [], new Map());
+    expect(board.find((e) => e.agent.id === "bot-b")?.severity).toBe(SEVERITY_OK);
+  });
+
+  it("counts recent done issues toward doneCount7d by assignee_id", () => {
+    const agent = makeAgent({ id: "bot-a" });
+    const done = makeIssue({ id: "done-1", assignee_type: "agent", assignee_id: "bot-a", status: "done" });
+    const board = buildBoard([agent], [], [done], new Map());
+    expect(board.find((e) => e.agent.id === "bot-a")?.doneCount7d).toBe(1);
   });
 });

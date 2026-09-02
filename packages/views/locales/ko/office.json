@@ -31,7 +31,16 @@
     "monitor_working": "열일 중",
     "monitor_idle": "모니터 꺼짐",
     "idle_with_work_label": "업무 있는데 유휴",
-    "neglected_hours_label": "{{hours}}시간 방치",
-    "whip_label": "최고 단계 — 즉시 확인 필요"
+    "neglected_hours_label": "방치 {{hours}}시간 · {{stage}}단계/3",
+    "whip_label": "최고 단계 — 즉시 확인 필요",
+    "legend_heading": "표시 기준",
+    "legend_warn": "{{hours}}시간 미만",
+    "legend_flame1": "{{hours}}시간 이상",
+    "legend_flame2": "{{hours}}시간 이상 · 흔들림",
+    "legend_whip": "{{hours}}시간 이상 · 채찍",
+    "wait_reason_implementing": "구현 중",
+    "wait_reason_verifying": "검증 대기",
+    "wait_reason_blocked": "막힘",
+    "wait_reason_blocked_with_text": "막힘: {{reason}}"
   }
 }

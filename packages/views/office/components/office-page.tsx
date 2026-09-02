@@ -3,22 +3,27 @@
 import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Armchair, Crown, Flame, Monitor, Moon } from "lucide-react";
-import type { Agent, Issue, Squad } from "@multica/core/types";
-import {
-  useWorkspacePresenceMap,
-  type AgentPresenceDetail,
-} from "@multica/core/agents";
+import type { Issue, Squad } from "@multica/core/types";
+import { useWorkspacePresenceMap } from "@multica/core/agents";
 import {
   officeOpenIssuesOptions,
   officeRecentDoneOptions,
+  buildBoard,
+  DESK_INTENSITY_THRESHOLD_HOURS,
   getDeskIntensity,
+  type AgentBoardEntry,
   type DeskIntensity,
+  type Severity,
+  SEVERITY_OK,
+  SEVERITY_WARN,
+  SEVERITY_RECALLED,
+  getBlockedReasonText,
   getEffectiveOwnerAgentId,
   getOwnerHeldIssues,
   getTicketShortLabel,
-  getWaitingEscalationTier,
+  getWaitReason,
   getWaitStartedAt,
-  getReassignedFromAgentId,
+  hoursSince,
   TEAM_LEADER_AGENT_ID,
 } from "@multica/core/office";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -49,10 +54,6 @@ const POLL_MS = 30_000;
 const TASK_LIST_LIMIT = 30;
 const HELD_TASKS_SHOWN = 3;
 
-function hoursSince(iso: string): number {
-  return (Date.now() - new Date(iso).getTime()) / 3_600_000;
-}
-
 function formatWaitHours(hours: number): string {
   if (hours < 24) return `${Math.round(hours)}h`;
   return `${Math.floor(hours / 24)}d`;
@@ -65,89 +66,6 @@ function waitBucketClass(hours: number): string {
   if (hours >= 12) return "border-l-destructive";
   if (hours >= 4) return "border-l-warning";
   return "border-l-success";
-}
-
-// NEX-1072 escalation severity, worst-first. Every level above OK traces to
-// a real signal — open work held while not working, or an actual NEX-1043
-// sweeper stamp (see packages/core/office/org-chart.ts) — never a client-side
-// timer standing in for one, per the "no decoration-only whip" requirement.
-type Severity = 0 | 1 | 2 | 3;
-const SEVERITY_OK: Severity = 0;
-const SEVERITY_WARN: Severity = 1;
-const SEVERITY_RECALLED: Severity = 2;
-const SEVERITY_REASSIGNED: Severity = 3;
-
-interface AgentBoardEntry {
-  agent: Agent;
-  presence: AgentPresenceDetail | null;
-  /** Open issues this agent is the *current* holder of, oldest-first. */
-  held: Issue[];
-  maxWaitHours: number;
-  doneCount7d: number;
-  /** This agent previously held a wait the sweeper had to reassign away. */
-  reassignHistory: boolean;
-  severity: Severity;
-}
-
-function buildBoard(
-  agents: Agent[],
-  openIssuesOldestFirst: Issue[],
-  doneIssues: Issue[],
-  presenceMap: Map<string, AgentPresenceDetail>,
-): AgentBoardEntry[] {
-  const heldByAgent = new Map<string, Issue[]>();
-  const recalledAgentIds = new Set<string>();
-  const reassignHistoryAgentIds = new Set<string>();
-
-  for (const issue of openIssuesOldestFirst) {
-    const ownerId = getEffectiveOwnerAgentId(issue);
-    if (ownerId) {
-      const list = heldByAgent.get(ownerId);
-      if (list) list.push(issue);
-      else heldByAgent.set(ownerId, [issue]);
-      if (getWaitingEscalationTier(issue) === "recalled") recalledAgentIds.add(ownerId);
-    }
-    if (getWaitingEscalationTier(issue) === "reassigned") {
-      const from = getReassignedFromAgentId(issue);
-      if (from) reassignHistoryAgentIds.add(from);
-    }
-  }
-
-  const doneCountByAgent = new Map<string, number>();
-  for (const issue of doneIssues) {
-    if (issue.assignee_type !== "agent" || !issue.assignee_id) continue;
-    doneCountByAgent.set(issue.assignee_id, (doneCountByAgent.get(issue.assignee_id) ?? 0) + 1);
-  }
-
-  return agents
-    .filter((agent) => !agent.archived_at)
-    .map((agent) => {
-      const held = heldByAgent.get(agent.id) ?? [];
-      const presence = presenceMap.get(agent.id) ?? null;
-      const working = presence?.workload === "working";
-      const maxWaitHours = held.reduce(
-        (max, issue) => Math.max(max, hoursSince(getWaitStartedAt(issue))),
-        0,
-      );
-      const reassignHistory = reassignHistoryAgentIds.has(agent.id);
-      // Design rule from NEX-1045/NEX-1072: idle with open work is a
-      // warning, never rendered as restful. Real sweeper stamps escalate it
-      // further — they only exist for blocked/in_review agent-held waits,
-      // so most todo/in_progress work tops out at WARN, honestly.
-      let severity: Severity = SEVERITY_OK;
-      if (held.length > 0 && !working) severity = SEVERITY_WARN;
-      if (recalledAgentIds.has(agent.id)) severity = SEVERITY_RECALLED;
-      if (reassignHistory) severity = SEVERITY_REASSIGNED;
-      return {
-        agent,
-        presence,
-        held,
-        maxWaitHours,
-        doneCount7d: doneCountByAgent.get(agent.id) ?? 0,
-        reassignHistory,
-        severity,
-      };
-    });
 }
 
 export function OfficePage() {
@@ -411,6 +329,40 @@ export function OfficePage() {
           </div>
         </div>
       </div>
+      <EscalationLegend />
+    </div>
+  );
+}
+
+// NEX-1072 follow-up (2026-09-02, CEO first reaction to the deployed board:
+// "챗찍은? 빨간 것만 있는데" — the stages exist but nothing on screen explains
+// what they mean). A fixed footer, not part of the scrollable board, so the
+// key stays visible without scrolling. Reuses the exact same icon elements
+// the desks render (AlertTriangle/Flame/WhipIcon) and the exact threshold
+// constants getDeskIntensity uses, so this can never drift into a second,
+// wrong copy of "4/12/24".
+function EscalationLegend() {
+  const { t } = useT("office");
+  return (
+    <div className="flex flex-wrap items-center gap-4 border-t border-border/60 px-5 py-2 text-[11px] text-muted-foreground">
+      <span className="font-medium text-foreground">{t(($) => $.org.legend_heading)}</span>
+      <span className="flex items-center gap-1">
+        <AlertTriangle className="size-3 text-warning" aria-hidden="true" />
+        {t(($) => $.org.legend_warn, { hours: DESK_INTENSITY_THRESHOLD_HOURS.flame1 })}
+      </span>
+      <span className="flex items-center gap-1">
+        <Flame className="size-3 text-warning" aria-hidden="true" />
+        {t(($) => $.org.legend_flame1, { hours: DESK_INTENSITY_THRESHOLD_HOURS.flame1 })}
+      </span>
+      <span className="flex items-center gap-1">
+        <Flame className="size-3 text-destructive" aria-hidden="true" />
+        <Flame className="-ml-1.5 size-3 text-destructive" aria-hidden="true" />
+        {t(($) => $.org.legend_flame2, { hours: DESK_INTENSITY_THRESHOLD_HOURS.flame2 })}
+      </span>
+      <span className="flex items-center gap-1">
+        <WhipIcon className="size-3 text-destructive" />
+        {t(($) => $.org.legend_whip, { hours: DESK_INTENSITY_THRESHOLD_HOURS.whip })}
+      </span>
     </div>
   );
 }
@@ -620,6 +572,40 @@ function severityRingClass(entry: AgentBoardEntry, intensity: DeskIntensity): st
   return entry.presence?.workload === "working" ? "ring-success" : "ring-border/50";
 }
 
+// NEX-1072 follow-up (2026-09-02, CEO directive after 김채원's 11-case
+// misread): a ticket sitting idle in someone's tray reads as "holding it and
+// doing nothing" whether it's mid-implementation, queued for someone else's
+// review, or stuck on an external blocker — three different situations for
+// whoever is deciding whether to escalate. This dot is the compact signal
+// (ticket chips are single-line, 11px); the full label lives in the title
+// tooltip so it doesn't compete for the chip's limited width.
+function WaitReasonDot({ issue }: { issue: Issue }) {
+  const { t } = useT("office");
+  const reason = getWaitReason(issue);
+  const blockedReason = reason === "blocked" ? getBlockedReasonText(issue) : null;
+  const label =
+    reason === "verifying"
+      ? t(($) => $.org.wait_reason_verifying)
+      : reason === "blocked"
+        ? blockedReason
+          ? t(($) => $.org.wait_reason_blocked_with_text, { reason: blockedReason })
+          : t(($) => $.org.wait_reason_blocked)
+        : t(($) => $.org.wait_reason_implementing);
+  return (
+    <span
+      className={cn(
+        "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+        reason === "blocked" && "bg-destructive",
+        reason === "verifying" && "bg-info",
+        reason === "implementing" && "bg-muted-foreground/40",
+      )}
+      title={label}
+    >
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
 // Ticket chips for a set of held issues — shared by desks and the
 // president's room. NEX-1072 mock7: the desk view shows a human-readable
 // one-line label (getTicketShortLabel), never the raw issue identifier; the
@@ -645,11 +631,12 @@ function TicketTray({ issues }: { issues: Issue[] }) {
             href={paths.issueDetail(issue.id)}
             title={`${issue.identifier} · ${issue.title}`}
             className={cn(
-              "block truncate rounded border-l-2 bg-background/60 px-1.5 py-0.5 text-[11px] transition-colors hover:bg-accent",
+              "flex items-center gap-1 truncate rounded border-l-2 bg-background/60 px-1.5 py-0.5 text-[11px] transition-colors hover:bg-accent",
               waitBucketClass(hoursSince(getWaitStartedAt(issue))),
             )}
           >
-            {getTicketShortLabel(issue)}
+            <WaitReasonDot issue={issue} />
+            <span className="truncate">{getTicketShortLabel(issue)}</span>
           </AppLink>
         </li>
       ))}
@@ -719,17 +706,30 @@ function DeskCard({
               "absolute -right-1 -top-1 flex items-center rounded-full px-1 py-0.5 text-white",
               intensity >= 2 ? "bg-destructive" : "bg-warning",
             )}
-            title={t(($) => $.org.neglected_hours_label, { hours: Math.round(agentMaxWait) })}
+            title={t(($) => $.org.neglected_hours_label, {
+              hours: Math.round(agentMaxWait),
+              stage: intensity,
+            })}
           >
             {Array.from({ length: intensity }).map((_, i) => (
               <Flame key={i} className="h-2.5 w-2.5" aria-hidden="true" />
             ))}
             <span className="sr-only">
-              {t(($) => $.org.neglected_hours_label, { hours: Math.round(agentMaxWait) })}
+              {t(($) => $.org.neglected_hours_label, {
+                hours: Math.round(agentMaxWait),
+                stage: intensity,
+              })}
             </span>
           </span>
         )}
-        {intensity >= 3 && <WhipBadge label={t(($) => $.org.whip_label)} />}
+        {intensity >= 3 && (
+          <WhipBadge
+            label={`${t(($) => $.org.neglected_hours_label, {
+              hours: Math.round(agentMaxWait),
+              stage: intensity,
+            })} · ${t(($) => $.org.whip_label)}`}
+          />
+        )}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -795,6 +795,24 @@ function SpeedLines() {
   );
 }
 
+// The raw whip mark, factored out of WhipBadge so the escalation legend can
+// render the exact same icon (no positioning/animation) next to its "24h+"
+// entry — NEX-1072 follow-up requirement that the legend show "채찍 실물",
+// not a stand-in emoji.
+function WhipIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+      <path
+        d="M3 2 Q10 2 8 7 T4 12 T9 14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 // NEX-1072 states_full spec, top escalation tier (24h+ idle-with-work): the
 // one visual explicitly reserved for the worst case ("화면에 하나만 떠서
 // 시선을 끈다") — plain SVG + CSS swing, no new dependency.
@@ -804,15 +822,7 @@ function WhipBadge({ label }: { label: string }) {
       className="absolute -left-2 -top-1 flex h-4 w-4 items-center justify-center text-destructive animate-office-whip"
       title={label}
     >
-      <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
-        <path
-          d="M3 2 Q10 2 8 7 T4 12 T9 14"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-        />
-      </svg>
+      <WhipIcon className="h-4 w-4" />
       <span className="sr-only">{label}</span>
     </span>
   );
