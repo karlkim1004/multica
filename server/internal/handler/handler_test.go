@@ -518,6 +518,145 @@ func TestDeleteIssueRejectsInvalidUUID(t *testing.T) {
 	}
 }
 
+func createHandlerTestMember(t *testing.T, role string) string {
+	t.Helper()
+	var userID string
+	if err := testPool.QueryRow(context.Background(), `INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id`, t.Name(), t.Name()+"@handler-test.local").Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(context.Background(), `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)`, testWorkspaceID, userID, role); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
+	return userID
+}
+
+func TestDeleteIssueForbidsOtherUsersIssue(t *testing.T) {
+	otherUserID := createHandlerTestMember(t, RoleGeneralUser)
+	w := httptest.NewRecorder()
+	testHandler.CreateIssue(w, newRequest("POST", "/api/issues", map[string]any{"title": "owner issue"}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	_ = json.NewDecoder(w.Body).Decode(&issue)
+	w = httptest.NewRecorder()
+	testHandler.DeleteIssue(w, withURLParam(newRequestAs(otherUserID, "DELETE", "/api/issues/"+issue.ID, nil), "id", issue.ID))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("delete other issue: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM issue WHERE id = $1`, issue.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("forbidden delete changed row: count=%d err=%v", count, err)
+	}
+}
+
+func TestBatchDeleteIssuesIsAtomicWhenOneIssueForbidden(t *testing.T) {
+	otherUserID := createHandlerTestMember(t, RoleGeneralUser)
+	// Seed the caller-owned and owner-owned rows so the batch must preflight
+	// both before deleting either one.
+	var ownID, foreignID string
+	if err := testPool.QueryRow(context.Background(), `INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, priority, position, number) VALUES ($1, 'member', $2, 'own', 'todo', 'none', 1, 99001) RETURNING id`, testWorkspaceID, otherUserID).Scan(&ownID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(context.Background(), `INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, priority, position, number) VALUES ($1, 'member', $2, 'foreign', 'todo', 'none', 2, 99002) RETURNING id`, testWorkspaceID, testUserID).Scan(&foreignID); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	testHandler.BatchDeleteIssues(w, newRequestAs(otherUserID, "POST", "/api/issues/batch-delete", map[string]any{"issue_ids": []string{ownID, foreignID}}))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("mixed batch: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM issue WHERE id IN ($1, $2)`, ownID, foreignID).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("mixed forbidden batch deleted rows: count=%d err=%v", count, err)
+	}
+}
+
+// General users are write-only issue submitters. This exercises the router
+// middleware around the real handlers so a newly added issue-derived route
+// cannot accidentally bypass the per-resource checks.
+func TestGeneralUserWorkspaceRouteRestriction(t *testing.T) {
+	generalUserID := createHandlerTestMember(t, RoleGeneralUser)
+
+	// Seed an owner issue; neither listing nor reading it may reach the handler.
+	w := httptest.NewRecorder()
+	testHandler.CreateIssue(w, newRequest("POST", "/api/issues", map[string]any{"title": "owner-only issue"}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("seed issue: %d %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	_ = json.NewDecoder(w.Body).Decode(&issue)
+
+	list := testHandler.RestrictGeneralUserWorkspaceRoutes(http.HandlerFunc(testHandler.ListIssues))
+	w = httptest.NewRecorder()
+	list.ServeHTTP(w, newRequestAs(generalUserID, "GET", "/api/issues/", nil))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("general list: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	get := testHandler.RestrictGeneralUserWorkspaceRoutes(http.HandlerFunc(testHandler.GetIssue))
+	w = httptest.NewRecorder()
+	get.ServeHTTP(w, withURLParam(newRequestAs(generalUserID, "GET", "/api/issues/"+issue.ID, nil), "id", issue.ID))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("general get: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	create := testHandler.RestrictGeneralUserWorkspaceRoutes(http.HandlerFunc(testHandler.CreateIssue))
+	w = httptest.NewRecorder()
+	create.ServeHTTP(w, newRequestAs(generalUserID, "POST", "/api/issues/", map[string]any{"title": "general may create"}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("general create: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestWorkspaceJoinRequestApprovalIsIdempotent(t *testing.T) {
+	// Owner creates a reusable code; applicant is deliberately not a member.
+	w := httptest.NewRecorder()
+	testHandler.CreateWorkspaceJoinCode(w, withURLParam(newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/join-codes", nil), "id", testWorkspaceID))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create join code: %d %s", w.Code, w.Body.String())
+	}
+	var code struct {
+		JoinCode string `json:"join_code"`
+	}
+	_ = json.NewDecoder(w.Body).Decode(&code)
+	applicant := createHandlerTestMember(t, "general_user")
+	_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, applicant)
+	w = httptest.NewRecorder()
+	testHandler.CreateWorkspaceJoinRequest(w, newRequestAs(applicant, "POST", "/api/workspace-join-requests", map[string]any{"join_code": code.JoinCode}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create join request: %d %s", w.Code, w.Body.String())
+	}
+	var request workspaceJoinRequestResponse
+	_ = json.NewDecoder(w.Body).Decode(&request)
+	var memberships int
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, applicant).Scan(&memberships)
+	if memberships != 0 {
+		t.Fatalf("pending request created membership: %d", memberships)
+	}
+
+	approve := func() workspaceJoinRequestResponse {
+		w = httptest.NewRecorder()
+		req := withURLParams(newRequest("POST", "/", nil), "id", testWorkspaceID, "requestId", request.ID)
+		testHandler.ApproveWorkspaceJoinRequest(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("approve join request: %d %s", w.Code, w.Body.String())
+		}
+		var response workspaceJoinRequestResponse
+		_ = json.NewDecoder(w.Body).Decode(&response)
+		return response
+	}
+	first, second := approve(), approve()
+	if first.Status != "approved" || second.Status != "approved" {
+		t.Fatalf("approval statuses: %q, %q", first.Status, second.Status)
+	}
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, applicant).Scan(&memberships)
+	if memberships != 1 {
+		t.Fatalf("idempotent approval membership count: got %d, want 1", memberships)
+	}
+}
+
 // TestCreateIssueDefaultStatusIsTodo verifies that issues created without an
 // explicit status default to "todo" so the daemon picks them up immediately.
 // Before this fix the default was "backlog", which daemons ignore.

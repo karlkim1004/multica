@@ -837,3 +837,23 @@ type WorkspaceInvitation struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 }
+
+type WorkspaceJoinCode struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Code        string             `json:"code"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type WorkspaceJoinRequest struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	Status          string             `json:"status"`
+	RequestedAt     pgtype.Timestamptz `json:"requested_at"`
+	ReviewedAt      pgtype.Timestamptz `json:"reviewed_at"`
+	ReviewedBy      pgtype.UUID        `json:"reviewed_by"`
+	RejectionReason pgtype.Text        `json:"rejection_reason"`
+}

@@ -543,6 +543,9 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 
 func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
+	if !h.authorizeResource(w, r, workspaceID, ResourceAgent, "read", resourceOwner{}) {
+		return
+	}
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
 		return
@@ -623,6 +626,9 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, uuidToString(agent.WorkspaceID), ResourceAgent, "read", resourceOwner{CreatorType: ActorMember, CreatorID: uuidToString(agent.OwnerID)}) {
 		return
 	}
 	// Private-agent gate: members must be in allowed_principals to view
@@ -722,6 +728,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 
 	ownerID, ok := requireUserID(w, r)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, workspaceID, ResourceAgent, "create", resourceOwner{}) {
 		return
 	}
 
@@ -997,17 +1006,7 @@ func rejectIncompatibleAgentModel(w http.ResponseWriter, provider, model string)
 // regardless of whether it is public or private.
 func (h *Handler) canManageAgent(w http.ResponseWriter, r *http.Request, agent db.Agent) bool {
 	wsID := uuidToString(agent.WorkspaceID)
-	member, ok := h.requireWorkspaceRole(w, r, wsID, "agent not found", "owner", "admin", "member")
-	if !ok {
-		return false
-	}
-	isAdmin := roleAllowed(member.Role, "owner", "admin")
-	isAgentOwner := uuidToString(agent.OwnerID) == requestUserID(r)
-	if !isAdmin && !isAgentOwner {
-		writeError(w, http.StatusForbidden, "only the agent owner can manage this agent")
-		return false
-	}
-	return true
+	return h.authorizeResource(w, r, wsID, ResourceAgent, "mutate", resourceOwner{CreatorType: ActorMember, CreatorID: uuidToString(agent.OwnerID)})
 }
 
 func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
