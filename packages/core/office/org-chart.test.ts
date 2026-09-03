@@ -3,6 +3,7 @@ import type { Agent, Issue, IssueMetadata, IssueStatus } from "../types";
 import type { AgentPresenceDetail } from "../agents/types";
 import {
   buildBoard,
+  buildWhipCommentContent,
   getBlockedReasonText,
   getDeskIntensity,
   getEffectiveOwnerAgentId,
@@ -12,9 +13,11 @@ import {
   getWaitingEscalationTier,
   getWaitReason,
   getWaitStartedAt,
+  isWhipCoolingDown,
   SEVERITY_OK,
   SEVERITY_WARN,
   TEAM_LEADER_AGENT_ID,
+  WHIP_COOLDOWN_MS,
 } from "./org-chart";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
@@ -350,5 +353,34 @@ describe("buildBoard", () => {
     const done = makeIssue({ id: "done-1", assignee_type: "agent", assignee_id: "bot-a", status: "done" });
     const board = buildBoard([agent], [], [done], new Map());
     expect(board.find((e) => e.agent.id === "bot-a")?.doneCount7d).toBe(1);
+  });
+});
+
+describe("isWhipCoolingDown", () => {
+  it("is false when the agent has never been whipped", () => {
+    expect(isWhipCoolingDown(undefined, Date.now())).toBe(false);
+  });
+
+  it("is true just after a whip", () => {
+    const now = Date.now();
+    expect(isWhipCoolingDown(now, now + 1_000)).toBe(true);
+  });
+
+  it("is false once the cooldown window has fully elapsed", () => {
+    const now = Date.now();
+    expect(isWhipCoolingDown(now, now + WHIP_COOLDOWN_MS + 1)).toBe(false);
+  });
+
+  it("is true at exactly the boundary (strict less-than)", () => {
+    const now = Date.now();
+    expect(isWhipCoolingDown(now, now + WHIP_COOLDOWN_MS)).toBe(false);
+    expect(isWhipCoolingDown(now, now + WHIP_COOLDOWN_MS - 1)).toBe(true);
+  });
+});
+
+describe("buildWhipCommentContent", () => {
+  it("puts the translated prefix and an agent mention link on its own paragraph", () => {
+    const content = buildWhipCommentContent("CEO whip (visual)", "Bot A", "agent-123");
+    expect(content).toBe("CEO whip (visual)\n\n[@Bot A](mention://agent/agent-123)");
   });
 });

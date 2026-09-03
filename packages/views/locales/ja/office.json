@@ -41,6 +41,12 @@
     "wait_reason_implementing": "作業中",
     "wait_reason_verifying": "検証待ち",
     "wait_reason_blocked": "ブロック中",
-    "wait_reason_blocked_with_text": "ブロック: {{reason}}"
+    "wait_reason_blocked_with_text": "ブロック: {{reason}}",
+    "whip_button_label": "鞭を打つ",
+    "whip_comment_text": "オーナーの鞭（手動）",
+    "whip_cooldown_toast": "同じボットは5分に1回だけ鞭打てます",
+    "whip_already_active_toast": "{{name}}はすでに実行中のため、鞭打ちをスキップしました",
+    "whip_success_toast": "{{name}}に鞭打ちました — 新しい実行がキューに入りました",
+    "whip_error_toast": "鞭打ちリクエスト中にエラーが発生しました"
   }
 }

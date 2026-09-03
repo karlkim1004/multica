@@ -41,6 +41,12 @@
     "wait_reason_implementing": "In progress",
     "wait_reason_verifying": "Awaiting verification",
     "wait_reason_blocked": "Blocked",
-    "wait_reason_blocked_with_text": "Blocked: {{reason}}"
+    "wait_reason_blocked_with_text": "Blocked: {{reason}}",
+    "whip_button_label": "Whip",
+    "whip_comment_text": "CEO whip (manual)",
+    "whip_cooldown_toast": "You can whip the same bot once every 5 minutes.",
+    "whip_already_active_toast": "{{name}} already has an active run — whip skipped.",
+    "whip_success_toast": "Whipped {{name}} — a new run was enqueued.",
+    "whip_error_toast": "Something went wrong sending the whip."
   }
 }
