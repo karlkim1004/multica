@@ -1,16 +1,20 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Armchair, Crown, Flame, Monitor, Moon } from "lucide-react";
-import type { Issue, Squad } from "@multica/core/types";
+import { toast } from "sonner";
+import type { Agent, Issue, Squad } from "@multica/core/types";
 import { useWorkspacePresenceMap } from "@multica/core/agents";
+import { api } from "@multica/core/api";
 import {
   officeOpenIssuesOptions,
   officeRecentDoneOptions,
   buildBoard,
+  buildWhipCommentContent,
   DESK_INTENSITY_THRESHOLD_HOURS,
   getDeskIntensity,
+  isWhipCoolingDown,
   type AgentBoardEntry,
   type DeskIntensity,
   type Severity,
@@ -26,8 +30,10 @@ import {
   hoursSince,
   TEAM_LEADER_AGENT_ID,
 } from "@multica/core/office";
+import { useCreateComment } from "@multica/core/issues/mutations";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { useCurrentMember } from "@multica/core/permissions";
 import {
   agentListOptions,
   memberListOptions,
@@ -96,6 +102,23 @@ export function OfficePage() {
   });
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
+
+  // NEX-1072 3rd follow-up ("어디서 어떻게 해야 채찍질을 할 수 있어?"): the
+  // whip button is an owner-only affordance — `useCurrentMember` resolves the
+  // *viewer's* own role, unlike the `members` list lookup below which finds
+  // the workspace owner as a subject to render (the president's room card),
+  // not to gate against.
+  const { role: viewerRole } = useCurrentMember(wsId);
+  const isOwnerViewer = viewerRole === "owner";
+  // Client-side abuse guard only (see isWhipCoolingDown doc comment) — the
+  // real click handler lives in WhipActionButton; this state is lifted here
+  // so it survives that button's remounts as the board re-sorts on every
+  // 30s poll.
+  const [whipLastFiredAt, setWhipLastFiredAt] = useState<Record<string, number>>({});
+  const markWhipFired = useCallback(
+    (agentId: string) => setWhipLastFiredAt((prev) => ({ ...prev, [agentId]: Date.now() })),
+    [],
+  );
 
   // One members roster per department (squad). Squad count is small and
   // workspace-scoped, so N parallel queries here is cheaper than adding a
@@ -312,6 +335,9 @@ export function OfficePage() {
               ownerHeld={ownerHeld}
               teamLeaderEntry={teamLeaderEntry}
               ownerAlert={ownerAlert}
+              isOwnerViewer={isOwnerViewer}
+              whipLastFiredAt={whipLastFiredAt}
+              onWhipFired={markWhipFired}
             />
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {departments.map((dept) => (
@@ -321,10 +347,20 @@ export function OfficePage() {
                   memberIds={dept.memberIds}
                   boardById={boardById}
                   severity={departmentSeverities.get(dept.squad.id) ?? SEVERITY_OK}
+                  isOwnerViewer={isOwnerViewer}
+                  whipLastFiredAt={whipLastFiredAt}
+                  onWhipFired={markWhipFired}
                 />
               ))}
             </div>
-            {orphanedWithWork.length > 0 && <OrphanSection entries={orphanedWithWork} />}
+            {orphanedWithWork.length > 0 && (
+              <OrphanSection
+                entries={orphanedWithWork}
+                isOwnerViewer={isOwnerViewer}
+                whipLastFiredAt={whipLastFiredAt}
+                onWhipFired={markWhipFired}
+              />
+            )}
             {lounge.length > 0 && <LoungeSection entries={lounge} />}
           </div>
         </div>
@@ -392,11 +428,17 @@ function PresidentRoom({
   ownerHeld,
   teamLeaderEntry,
   ownerAlert,
+  isOwnerViewer,
+  whipLastFiredAt,
+  onWhipFired,
 }: {
   owner: { user_id: string; name: string } | null;
   ownerHeld: Issue[];
   teamLeaderEntry: AgentBoardEntry | null;
   ownerAlert: boolean;
+  isOwnerViewer: boolean;
+  whipLastFiredAt: Record<string, number>;
+  onWhipFired: (agentId: string) => void;
 }) {
   const { t } = useT("office");
   if (!owner && !teamLeaderEntry) return null;
@@ -443,7 +485,13 @@ function PresidentRoom({
         )}
         {teamLeaderEntry && (
           <div className="min-w-72 flex-1">
-            <DeskCard entry={teamLeaderEntry} roleLabel={t(($) => $.org.team_leader_label)} />
+            <DeskCard
+              entry={teamLeaderEntry}
+              roleLabel={t(($) => $.org.team_leader_label)}
+              isOwnerViewer={isOwnerViewer}
+              lastWhippedAt={whipLastFiredAt[teamLeaderEntry.agent.id]}
+              onWhipFired={() => onWhipFired(teamLeaderEntry.agent.id)}
+            />
           </div>
         )}
       </div>
@@ -456,11 +504,17 @@ function DepartmentRoom({
   memberIds,
   boardById,
   severity,
+  isOwnerViewer,
+  whipLastFiredAt,
+  onWhipFired,
 }: {
   squad: Squad;
   memberIds: string[];
   boardById: Map<string, AgentBoardEntry>;
   severity: Severity;
+  isOwnerViewer: boolean;
+  whipLastFiredAt: Record<string, number>;
+  onWhipFired: (agentId: string) => void;
 }) {
   const { t } = useT("office");
   const leaderEntry = boardById.get(squad.leader_id) ?? null;
@@ -490,9 +544,23 @@ function DepartmentRoom({
         </span>
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {leaderEntry && <DeskCard entry={leaderEntry} isDepartmentLeader />}
+        {leaderEntry && (
+          <DeskCard
+            entry={leaderEntry}
+            isDepartmentLeader
+            isOwnerViewer={isOwnerViewer}
+            lastWhippedAt={whipLastFiredAt[leaderEntry.agent.id]}
+            onWhipFired={() => onWhipFired(leaderEntry.agent.id)}
+          />
+        )}
         {memberEntries.map((entry) => (
-          <DeskCard key={entry.agent.id} entry={entry} />
+          <DeskCard
+            key={entry.agent.id}
+            entry={entry}
+            isOwnerViewer={isOwnerViewer}
+            lastWhippedAt={whipLastFiredAt[entry.agent.id]}
+            onWhipFired={() => onWhipFired(entry.agent.id)}
+          />
         ))}
         {!leaderEntry && memberEntries.length === 0 && (
           <p className="px-1 text-xs text-muted-foreground">{t(($) => $.org.no_members)}</p>
@@ -504,7 +572,17 @@ function DepartmentRoom({
 
 // Agents with a ticket but no department at all — a structural gap (no
 // squad membership), distinct from the Lounge's "no ticket" gap below.
-function OrphanSection({ entries }: { entries: AgentBoardEntry[] }) {
+function OrphanSection({
+  entries,
+  isOwnerViewer,
+  whipLastFiredAt,
+  onWhipFired,
+}: {
+  entries: AgentBoardEntry[];
+  isOwnerViewer: boolean;
+  whipLastFiredAt: Record<string, number>;
+  onWhipFired: (agentId: string) => void;
+}) {
   const { t } = useT("office");
   return (
     <section className="rounded-lg border border-dashed border-border/60 p-4">
@@ -521,7 +599,13 @@ function OrphanSection({ entries }: { entries: AgentBoardEntry[] }) {
       </p>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {entries.map((entry) => (
-          <DeskCard key={entry.agent.id} entry={entry} />
+          <DeskCard
+            key={entry.agent.id}
+            entry={entry}
+            isOwnerViewer={isOwnerViewer}
+            lastWhippedAt={whipLastFiredAt[entry.agent.id]}
+            onWhipFired={() => onWhipFired(entry.agent.id)}
+          />
         ))}
       </div>
     </section>
@@ -660,10 +744,16 @@ function DeskCard({
   entry,
   isDepartmentLeader,
   roleLabel,
+  isOwnerViewer,
+  lastWhippedAt,
+  onWhipFired,
 }: {
   entry: AgentBoardEntry;
   isDepartmentLeader?: boolean;
   roleLabel?: string;
+  isOwnerViewer: boolean;
+  lastWhippedAt: number | undefined;
+  onWhipFired: () => void;
 }) {
   const { t } = useT("office");
   const { agent, presence, held, doneCount7d, severity, reassignHistory, maxWaitHours: agentMaxWait } =
@@ -761,6 +851,14 @@ function DeskCard({
               {t(($) => $.org.reassign_history_chip)}
             </span>
           )}
+          {isOwnerViewer && intensity >= 1 && held[0] && (
+            <WhipActionButton
+              agent={agent}
+              targetIssue={held[0]}
+              lastWhippedAt={lastWhippedAt}
+              onWhipFired={onWhipFired}
+            />
+          )}
         </div>
         <div className="mt-0.5 text-[11px] text-muted-foreground">
           {t(($) => $.org.done_7d, { count: doneCount7d })}
@@ -771,6 +869,78 @@ function DeskCard({
         <TicketTray issues={held} />
       </div>
     </div>
+  );
+}
+
+// NEX-1072 3rd follow-up (2026-09-03, CEO: "어디서 어떻게 해야 채찍질을 할 수
+// 있어?" — the whip must become an action, not just a display). Reuses the
+// exact mechanism a `[@agent](mention://agent/<id>)` comment already
+// triggers (EnqueueTaskForMention, same path the multica-mentioning skill
+// documents) instead of a new backend endpoint. Previews the trigger first —
+// the same dedupe the comment composer already runs — so a bot with an
+// active run is skipped with a toast instead of posting a comment that
+// silently enqueues nothing.
+function WhipActionButton({
+  agent,
+  targetIssue,
+  lastWhippedAt,
+  onWhipFired,
+}: {
+  agent: Agent;
+  targetIssue: Issue;
+  lastWhippedAt: number | undefined;
+  onWhipFired: () => void;
+}) {
+  const { t } = useT("office");
+  const { mutateAsync: createComment } = useCreateComment(targetIssue.id);
+  const [pending, setPending] = useState(false);
+  const [strikeKey, setStrikeKey] = useState(0);
+
+  async function handleClick() {
+    if (pending) return;
+    if (isWhipCoolingDown(lastWhippedAt, Date.now())) {
+      toast.info(t(($) => $.org.whip_cooldown_toast));
+      return;
+    }
+    setPending(true);
+    try {
+      const content = buildWhipCommentContent(
+        t(($) => $.org.whip_comment_text),
+        agent.name,
+        agent.id,
+      );
+      const preview = await api.previewCommentTriggers(targetIssue.id, content);
+      if (!preview.agents.some((a) => a.id === agent.id)) {
+        toast.info(t(($) => $.org.whip_already_active_toast, { name: agent.name }));
+        return;
+      }
+      await createComment({ content });
+      onWhipFired();
+      setStrikeKey((k) => k + 1);
+      toast.success(t(($) => $.org.whip_success_toast, { name: agent.name }));
+    } catch {
+      toast.error(t(($) => $.org.whip_error_toast));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={pending}
+      className="inline-flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+      title={t(($) => $.org.whip_button_label)}
+    >
+      <span
+        key={strikeKey}
+        className={cn("flex", strikeKey > 0 && "animate-office-whip-strike")}
+      >
+        <WhipIcon className="size-3.5" />
+      </span>
+      <span className="sr-only">{t(($) => $.org.whip_button_label)}</span>
+    </button>
   );
 }
 

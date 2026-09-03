@@ -252,6 +252,15 @@
   transform-origin: top right;
 }
 
+/* One-shot swing for the clickable whip action (NEX-1072 3rd follow-up),
+ * distinct from `.animate-office-whip`'s continuous 24h+ idle badge: this
+ * plays once per click and is retriggered by remounting the element on a
+ * changing `key`, not by toggling the class. */
+.animate-office-whip-strike {
+  animation: office-whip-swing 0.4s ease-in-out 1;
+  transform-origin: top right;
+}
+
 @keyframes office-speed-line {
   0% { transform: translateX(2px); opacity: 0.9; }
   100% { transform: translateX(-5px); opacity: 0; }
@@ -265,6 +274,7 @@
   .animate-office-shake,
   .animate-office-aura,
   .animate-office-whip,
+  .animate-office-whip-strike,
   .animate-office-speed-line {
     animation: none;
   }

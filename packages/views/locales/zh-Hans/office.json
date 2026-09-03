@@ -41,6 +41,12 @@
     "wait_reason_implementing": "处理中",
     "wait_reason_verifying": "等待验证",
     "wait_reason_blocked": "受阻",
-    "wait_reason_blocked_with_text": "受阻：{{reason}}"
+    "wait_reason_blocked_with_text": "受阻：{{reason}}",
+    "whip_button_label": "抽一下",
+    "whip_comment_text": "负责人手动抽鞭",
+    "whip_cooldown_toast": "同一机器人每 5 分钟只能抽一次",
+    "whip_already_active_toast": "{{name}} 已在处理中，跳过本次抽鞭",
+    "whip_success_toast": "已抽打 {{name}} — 已加入新的运行",
+    "whip_error_toast": "发送抽鞭请求时出错"
   }
 }

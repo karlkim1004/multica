@@ -41,6 +41,12 @@
     "wait_reason_implementing": "구현 중",
     "wait_reason_verifying": "검증 대기",
     "wait_reason_blocked": "막힘",
-    "wait_reason_blocked_with_text": "막힘: {{reason}}"
+    "wait_reason_blocked_with_text": "막힘: {{reason}}",
+    "whip_button_label": "채찍질하기",
+    "whip_comment_text": "대표님 채찍 (시각)",
+    "whip_cooldown_toast": "같은 봇은 5분에 한 번만 채찍질할 수 있습니다",
+    "whip_already_active_toast": "{{name}} 봇이 이미 실행 중이라 채찍질을 건너뛰었습니다",
+    "whip_success_toast": "{{name}} 봇에게 채찍질 완료 — 런이 생성되었습니다",
+    "whip_error_toast": "채찍질 요청 중 오류가 발생했습니다"
   }
 }

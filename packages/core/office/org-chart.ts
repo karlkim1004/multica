@@ -188,6 +188,31 @@ export function getBlockedReasonText(issue: Issue): string | null {
   return typeof reason === "string" && reason.trim().length > 0 ? reason.trim() : null;
 }
 
+// NEX-1072 3rd follow-up (2026-09-03, CEO: "어디서 어떻게 해야 채찍질을 할 수
+// 있어?" — the whip must become an action, not just a display). Client-side
+// abuse guard only: the real dedupe against an already-running task is done
+// server-side by the comment mention pipeline (`HasPendingTaskForIssueAndAgent`,
+// surfaced to the client via `previewCommentTriggers`); this just stops the
+// owner from firing the same bot's whip repeatedly within a short window.
+export const WHIP_COOLDOWN_MS = 5 * 60_000;
+
+export function isWhipCoolingDown(lastWhippedAt: number | undefined, now: number): boolean {
+  return typeof lastWhippedAt === "number" && now - lastWhippedAt < WHIP_COOLDOWN_MS;
+}
+
+// The whip action reuses the exact mechanism a `[@agent](mention://agent/<id>)`
+// comment already triggers (`EnqueueTaskForMention` — see the
+// multica-mentioning skill) instead of a new enqueue endpoint. `prefixText` is
+// the translated "CEO whip (visual)" label the view supplies — this function
+// stays copy-agnostic since packages/core has no i18n dependency.
+export function buildWhipCommentContent(
+  prefixText: string,
+  agentName: string,
+  agentId: string,
+): string {
+  return `${prefixText}\n\n[@${agentName}](mention://agent/${agentId})`;
+}
+
 // NEX-1072 escalation severity, worst-first. Every level above OK traces to
 // a real signal — open work held while not working, or an actual NEX-1043
 // sweeper stamp — never a client-side timer standing in for one, per the "no
