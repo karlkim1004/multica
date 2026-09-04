@@ -54,13 +54,62 @@ export async function fetchAllOpenIssuesForOffice(): Promise<Issue[]> {
   return perStatus.flat();
 }
 
+// NEX-1072: "ranked by performance, not backlog size" needs a done-issue
+// window, separate from the open-issue fetch above. Same all-pages-of-one-
+// status shape as fetchAllIssuesForStatus, but filtered server-side by
+// date_field/date_start so a 7-day window doesn't require paging through a
+// workspace's entire done history.
+export const OFFICE_DONE_LOOKBACK_DAYS = 7;
+
+async function fetchDoneIssuesSince(sinceIso: string, endIso: string): Promise<Issue[]> {
+  const issues: Issue[] = [];
+  let offset = 0;
+  while (offset < OFFICE_MAX_ISSUES_PER_STATUS) {
+    const res = await api.listIssues({
+      status: "done",
+      // The server rejects the request with a 400 unless date_field,
+      // date_start, AND date_end arrive together (parseIssueDateFilter),
+      // which zeroed every desk's doneCount7d when date_end was omitted.
+      date_field: "updated_at",
+      date_start: sinceIso,
+      date_end: endIso,
+      limit: OFFICE_PAGE_LIMIT,
+      offset,
+    });
+    issues.push(...res.issues);
+    offset += res.issues.length;
+    if (res.issues.length < OFFICE_PAGE_LIMIT) break;
+    if (issues.length >= res.total) break;
+  }
+  return issues;
+}
+
+// Recomputes the "since" bound on every call (not hoisted to a module
+// constant) so each poll tick / refetch slides the 7-day window forward
+// instead of freezing it at first render.
+export async function fetchRecentDoneIssuesForOffice(): Promise<Issue[]> {
+  const now = Date.now();
+  const sinceIso = new Date(
+    now - OFFICE_DONE_LOOKBACK_DAYS * 24 * 3_600_000,
+  ).toISOString();
+  return fetchDoneIssuesSince(sinceIso, new Date(now).toISOString());
+}
+
 export const officeKeys = {
   openIssues: (wsId: string) => ["workspaces", wsId, "office", "open-issues"] as const,
+  recentDone: (wsId: string) => ["workspaces", wsId, "office", "recent-done"] as const,
 };
 
 export function officeOpenIssuesOptions(wsId: string) {
   return queryOptions({
     queryKey: officeKeys.openIssues(wsId),
     queryFn: () => fetchAllOpenIssuesForOffice(),
+  });
+}
+
+export function officeRecentDoneOptions(wsId: string) {
+  return queryOptions({
+    queryKey: officeKeys.recentDone(wsId),
+    queryFn: () => fetchRecentDoneIssuesForOffice(),
   });
 }
