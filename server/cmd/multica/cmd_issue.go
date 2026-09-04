@@ -371,6 +371,11 @@ func init() {
 	issueUpdateCmd.Flags().String("project", "", "Project ID")
 	issueUpdateCmd.Flags().String("start-date", "", "New start date (calendar day, YYYY-MM-DD; pass empty string to clear)")
 	issueUpdateCmd.Flags().String("due-date", "", "New due date (calendar day, YYYY-MM-DD)")
+	issueUpdateCmd.Flags().Bool("auto-close-allowed", false, "Allow structured validator PASS to auto-close this issue (owner/admin only)")
+	issueUpdateCmd.Flags().String("implementation-agent-id", "", "Implementation agent UUID for independent-validator checks; empty clears")
+	issueUpdateCmd.Flags().String("current-ref", "", "Current canonical commit/ref for validator checks; empty clears")
+	issueUpdateCmd.Flags().Bool("external-validation-required", false, "Require external validation before auto-close")
+	issueUpdateCmd.Flags().String("auto-close-criteria-version", "", "Acceptance-criteria version for auto-close; empty clears")
 	issueUpdateCmd.Flags().String("parent", "", "Parent issue ID (use --parent \"\" to clear)")
 	issueUpdateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) for this sub-issue; see `issue create --stage`")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
@@ -418,6 +423,9 @@ func init() {
 	issueCommentAddCmd.Flags().String("content-file", "", "Read comment content from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes)")
 	issueCommentAddCmd.Flags().String("parent", "", "Parent comment ID (reply to a specific comment)")
 	issueCommentAddCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
+	issueCommentAddCmd.Flags().String("verdict", "", "Structured validator verdict: PASS or FAIL (requires --verified-ref and --criteria-version)")
+	issueCommentAddCmd.Flags().String("verified-ref", "", "Commit/ref verified by a structured validator verdict")
+	issueCommentAddCmd.Flags().String("criteria-version", "", "Acceptance-criteria version verified by a structured validator verdict")
 	issueCommentAddCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue comment resolve/unresolve
@@ -903,6 +911,38 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("--stage must be >= 1")
 		}
 		body["stage"] = stage
+	}
+	if cmd.Flags().Changed("auto-close-allowed") {
+		v, _ := cmd.Flags().GetBool("auto-close-allowed")
+		body["auto_close_allowed"] = v
+	}
+	if cmd.Flags().Changed("implementation-agent-id") {
+		v, _ := cmd.Flags().GetString("implementation-agent-id")
+		if v == "" {
+			body["implementation_agent_id"] = nil
+		} else {
+			body["implementation_agent_id"] = v
+		}
+	}
+	if cmd.Flags().Changed("current-ref") {
+		v, _ := cmd.Flags().GetString("current-ref")
+		if v == "" {
+			body["current_ref"] = nil
+		} else {
+			body["current_ref"] = v
+		}
+	}
+	if cmd.Flags().Changed("external-validation-required") {
+		v, _ := cmd.Flags().GetBool("external-validation-required")
+		body["external_validation_required"] = v
+	}
+	if cmd.Flags().Changed("auto-close-criteria-version") {
+		v, _ := cmd.Flags().GetString("auto-close-criteria-version")
+		if v == "" {
+			body["auto_close_criteria_version"] = nil
+		} else {
+			body["auto_close_criteria_version"] = v
+		}
 	}
 	if v, _ := cmd.Flags().GetString("start-date"); v != "" {
 		body["start_date"] = v
@@ -1462,6 +1502,26 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	body := map[string]any{"content": content}
 	if parentID, _ := cmd.Flags().GetString("parent"); parentID != "" {
 		body["parent_id"] = parentID
+	}
+	verdictSet := cmd.Flags().Changed("verdict")
+	verifiedRefSet := cmd.Flags().Changed("verified-ref")
+	criteriaVersionSet := cmd.Flags().Changed("criteria-version")
+	if verdictSet || verifiedRefSet || criteriaVersionSet {
+		if !verdictSet || !verifiedRefSet || !criteriaVersionSet {
+			return fmt.Errorf("--verdict, --verified-ref, and --criteria-version must be provided together")
+		}
+		verdict, _ := cmd.Flags().GetString("verdict")
+		if verdict != "PASS" && verdict != "FAIL" {
+			return fmt.Errorf("--verdict must be PASS or FAIL")
+		}
+		verifiedRef, _ := cmd.Flags().GetString("verified-ref")
+		criteriaVersion, _ := cmd.Flags().GetString("criteria-version")
+		if strings.TrimSpace(verifiedRef) == "" || strings.TrimSpace(criteriaVersion) == "" {
+			return fmt.Errorf("--verified-ref and --criteria-version must not be empty")
+		}
+		body["verdict"] = verdict
+		body["verified_ref"] = verifiedRef
+		body["criteria_version"] = criteriaVersion
 	}
 	if len(attachmentIDs) > 0 {
 		body["attachment_ids"] = attachmentIDs
