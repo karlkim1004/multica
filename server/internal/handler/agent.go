@@ -61,6 +61,7 @@ type AgentResponse struct {
 	// for this agent (empty = use runtime default). The picker is per-runtime
 	// per-model; the API never normalizes across providers. See MUL-2339.
 	ThinkingLevel string              `json:"thinking_level"`
+	IsValidator   bool                `json:"is_validator"`
 	OwnerID       *string             `json:"owner_id"`
 	Skills        []AgentSkillSummary `json:"skills"`
 	CreatedAt     string              `json:"created_at"`
@@ -136,6 +137,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 		MaxConcurrentTasks: a.MaxConcurrentTasks,
 		Model:              a.Model.String,
 		ThinkingLevel:      a.ThinkingLevel.String,
+		IsValidator:        a.IsValidator,
 		OwnerID:            uuidToPtr(a.OwnerID),
 		Skills:             []AgentSkillSummary{},
 		CreatedAt:          timestampToString(a.CreatedAt),
@@ -901,6 +903,7 @@ type UpdateAgentRequest struct {
 	// Distinguishing those modes is why this is a pointer; the raw-fields
 	// map captured at decode time tells us whether the key was sent.
 	ThinkingLevel *string `json:"thinking_level"`
+	IsValidator   *bool   `json:"is_validator"`
 }
 
 // workspaceAlwaysRedactSecrets reports whether the workspace has opted
@@ -1117,6 +1120,22 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Status != nil {
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
+	}
+	if req.IsValidator != nil {
+		actorType, _ := h.resolveActor(r, requestUserID(r), uuidToString(existing.WorkspaceID))
+		if actorType == "agent" {
+			writeError(w, http.StatusForbidden, "agents cannot register validators")
+			return
+		}
+		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
+		if !ok {
+			return
+		}
+		if !roleAllowed(member.Role, "owner", "admin") {
+			writeError(w, http.StatusForbidden, "only workspace owners or admins can register validators")
+			return
+		}
+		params.IsValidator = pgtype.Bool{Bool: *req.IsValidator, Valid: true}
 	}
 	if req.MaxConcurrentTasks != nil {
 		params.MaxConcurrentTasks = pgtype.Int4{Int32: *req.MaxConcurrentTasks, Valid: true}

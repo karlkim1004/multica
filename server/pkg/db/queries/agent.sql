@@ -100,6 +100,7 @@ UPDATE agent SET
     mcp_config = COALESCE(sqlc.narg('mcp_config'), mcp_config),
     model = COALESCE(sqlc.narg('model'), model),
     thinking_level = COALESCE(sqlc.narg('thinking_level'), thinking_level),
+    is_validator = COALESCE(sqlc.narg('is_validator'), is_validator),
     updated_at = now()
 WHERE id = $1
 RETURNING *;

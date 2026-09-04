@@ -171,6 +171,11 @@ ORDER BY pr.pr_created_at DESC;
 SELECT issue_id FROM issue_pull_request
 WHERE pull_request_id = $1;
 
+-- name: CountOpenPullRequestsByIssue :one
+SELECT COUNT(*)::bigint FROM github_pull_request pr
+JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id
+WHERE ipr.issue_id = $1 AND pr.state IN ('open', 'draft');
+
 -- name: GetIssuePullRequestCloseAggregate :one
 -- Aggregates the issue's linked PRs into the two counts that gate
 -- auto-advance: how many are still in flight (`open` or `draft`) and how
