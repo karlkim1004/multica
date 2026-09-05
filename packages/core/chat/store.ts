@@ -35,6 +35,11 @@ const CHAT_EXPANDED_KEY = "multica:chat:expanded";
  * every subsequent reload.
  */
 const OPEN_KEY = "multica:chat:isOpen";
+/**
+ * Floating vs docked-right, persisted globally (not per-workspace) for the
+ * same reason as OPEN_KEY — one habitual layout preference across workspaces.
+ */
+const MODE_KEY = "multica:chat:mode";
 
 function readDrafts(storage: StorageAdapter, key: string): Record<string, string> {
   const raw = storage.getItem(key);
@@ -108,6 +113,8 @@ export const CHAT_MIN_H = 480;
 export const CHAT_DEFAULT_W = 380;
 export const CHAT_DEFAULT_H = 600;
 
+export type ChatMode = "floating" | "docked-right";
+
 /**
  * Kept as a public type because existing consumers (chat-message-list,
  * views/chat types) import it. Items themselves no longer live in the
@@ -125,6 +132,8 @@ export interface ChatTimelineItem {
 
 export interface ChatState {
   isOpen: boolean;
+  /** Floating (free-position) vs docked to the right edge, full height. */
+  chatMode: ChatMode;
   activeSessionId: string | null;
   selectedAgentId: string | null;
   /** Drafts per session: sessionId (or DRAFT_NEW_SESSION) → markdown text. */
@@ -137,6 +146,7 @@ export interface ChatState {
   isExpanded: boolean;
   setOpen: (open: boolean) => void;
   toggle: () => void;
+  setChatMode: (mode: ChatMode) => void;
   setActiveSession: (id: string | null) => void;
   setSelectedAgentId: (id: string) => void;
   /** sessionId accepts a real session UUID or DRAFT_NEW_SESSION. */
@@ -166,9 +176,12 @@ export function createChatStore(options: ChatStoreOptions) {
   // still honouring an explicit "I closed it" choice on every reload.
   const storedOpen = storage.getItem(OPEN_KEY);
   const initialIsOpen = storedOpen === null ? true : storedOpen === "true";
+  const storedMode = storage.getItem(MODE_KEY);
+  const initialChatMode: ChatMode = storedMode === "docked-right" ? "docked-right" : "floating";
 
   const store = create<ChatState>((set, get) => ({
     isOpen: initialIsOpen,
+    chatMode: initialChatMode,
     activeSessionId: storage.getItem(wsKey(SESSION_STORAGE_KEY)),
     selectedAgentId: storage.getItem(wsKey(AGENT_STORAGE_KEY)),
     inputDrafts: readDrafts(storage, wsKey(DRAFTS_KEY)),
@@ -186,6 +199,11 @@ export function createChatStore(options: ChatStoreOptions) {
       logger.debug("toggle", { to: next });
       storage.setItem(OPEN_KEY, String(next));
       set({ isOpen: next });
+    },
+    setChatMode: (mode) => {
+      logger.info("setChatMode", { from: get().chatMode, to: mode });
+      storage.setItem(MODE_KEY, mode);
+      set({ chatMode: mode });
     },
     setActiveSession: (id) => {
       logger.info("setActiveSession", { from: get().activeSessionId, to: id });
