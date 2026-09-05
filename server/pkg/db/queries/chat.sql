@@ -179,3 +179,23 @@ SELECT * FROM chat_message
 WHERE chat_session_id = $1 AND role = 'user'
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- name: GetWorkspaceAgentLastOwnerMessage :many
+-- Returns, per agent, the timestamp of the most recent chat message the
+-- workspace owner sent to it (role='user', across every chat session the
+-- owner has with that agent). Backs the office desk "time since last CEO
+-- request" indicator: a request answered inline in chat never becomes an
+-- Issue, so Issue timestamps can't see it — chat_message is the only
+-- record of when the owner last spoke to an agent. Scoped to role='owner'
+-- (not any member) because the indicator is specifically about the CEO,
+-- and a workspace has exactly one owner.
+SELECT DISTINCT ON (cs.agent_id)
+    cs.agent_id,
+    cm.created_at AS last_owner_message_at
+FROM chat_message cm
+JOIN chat_session cs ON cs.id = cm.chat_session_id
+JOIN member m ON m.user_id = cs.creator_id AND m.workspace_id = cs.workspace_id
+WHERE cs.workspace_id = $1
+  AND cm.role = 'user'
+  AND m.role = 'owner'
+ORDER BY cs.agent_id, cm.created_at DESC;

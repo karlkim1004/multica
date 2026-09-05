@@ -1598,3 +1598,51 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 
 	writeJSON(w, http.StatusOK, resp)
 }
+
+// AgentLastOwnerMessage is the timestamp of the most recent chat message the
+// workspace owner sent to an agent, powering the office desk "time since
+// last CEO request" indicator. Agents the owner has never chatted with are
+// omitted rather than returned with a null timestamp.
+type AgentLastOwnerMessage struct {
+	AgentID            string `json:"agent_id"`
+	LastOwnerMessageAt string `json:"last_owner_message_at"`
+}
+
+// GetWorkspaceAgentLastOwnerMessage returns, per agent, when the workspace
+// owner last messaged it in chat. A request the owner sends and gets
+// answered inline in chat never becomes an Issue, so Issue timestamps alone
+// can't drive this indicator — chat_message is the only record of it.
+func (h *Handler) GetWorkspaceAgentLastOwnerMessage(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
+
+	rows, err := h.Queries.GetWorkspaceAgentLastOwnerMessage(r.Context(), parseUUID(workspaceID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get agent last owner message")
+		return
+	}
+
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return
+	}
+
+	resp := make([]AgentLastOwnerMessage, 0, len(rows))
+	for _, row := range rows {
+		agentID := uuidToString(row.AgentID)
+		if _, ok := allowed[agentID]; !ok {
+			continue
+		}
+		resp = append(resp, AgentLastOwnerMessage{
+			AgentID:            agentID,
+			LastOwnerMessageAt: timestampToString(row.LastOwnerMessageAt),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}

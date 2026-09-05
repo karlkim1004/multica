@@ -354,6 +354,52 @@ func (q *Queries) GetPendingChatTask(ctx context.Context, chatSessionID pgtype.U
 	return i, err
 }
 
+const getWorkspaceAgentLastOwnerMessage = `-- name: GetWorkspaceAgentLastOwnerMessage :many
+SELECT DISTINCT ON (cs.agent_id)
+    cs.agent_id,
+    cm.created_at AS last_owner_message_at
+FROM chat_message cm
+JOIN chat_session cs ON cs.id = cm.chat_session_id
+JOIN member m ON m.user_id = cs.creator_id AND m.workspace_id = cs.workspace_id
+WHERE cs.workspace_id = $1
+  AND cm.role = 'user'
+  AND m.role = 'owner'
+ORDER BY cs.agent_id, cm.created_at DESC
+`
+
+type GetWorkspaceAgentLastOwnerMessageRow struct {
+	AgentID            pgtype.UUID        `json:"agent_id"`
+	LastOwnerMessageAt pgtype.Timestamptz `json:"last_owner_message_at"`
+}
+
+// Returns, per agent, the timestamp of the most recent chat message the
+// workspace owner sent to it (role='user', across every chat session the
+// owner has with that agent). Backs the office desk "time since last CEO
+// request" indicator: a request answered inline in chat never becomes an
+// Issue, so Issue timestamps can't see it — chat_message is the only
+// record of when the owner last spoke to an agent. Scoped to role='owner'
+// (not any member) because the indicator is specifically about the CEO,
+// and a workspace has exactly one owner.
+func (q *Queries) GetWorkspaceAgentLastOwnerMessage(ctx context.Context, workspaceID pgtype.UUID) ([]GetWorkspaceAgentLastOwnerMessageRow, error) {
+	rows, err := q.db.Query(ctx, getWorkspaceAgentLastOwnerMessage, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetWorkspaceAgentLastOwnerMessageRow{}
+	for rows.Next() {
+		var i GetWorkspaceAgentLastOwnerMessageRow
+		if err := rows.Scan(&i.AgentID, &i.LastOwnerMessageAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const linkChatMessageToTask = `-- name: LinkChatMessageToTask :exec
 UPDATE chat_message
 SET task_id = $2
@@ -645,8 +691,9 @@ FOR UPDATE
 // their FK check after we commit the delete.
 func (q *Queries) LockChatSessionForDelete(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, lockChatSessionForDelete, id)
-	err := row.Scan(&id)
-	return id, err
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
 }
 
 const markChatSessionRead = `-- name: MarkChatSessionRead :exec
