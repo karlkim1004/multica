@@ -177,11 +177,22 @@ func ModelSelectionSupported(providerType string) bool {
 }
 
 // ModelKnownIncompatibleWithProvider reports whether a saved model is a known
-// mismatch for a target runtime provider. For first-party providers with
-// maintained static catalogs, compatibility is exact: the model must be one of
-// the IDs that runtime advertises. Unknown/custom model strings still return
-// false because the UI and CLI allow manual entries and the server should not
-// erase values it cannot confidently classify.
+// mismatch for a target runtime provider — i.e. an ID that clearly belongs to a
+// *different* vendor's runtime ("claude-opus-5" on codex).
+//
+// It deliberately does NOT require membership in the static catalog. Requiring
+// that made every vendor release a Multica outage: `claude-fable-5-1`
+// (2026-09-04) and `gpt-6-astra` (2026-09-05) were both runnable by the local
+// CLI on day one, yet the server rejected them with 400 until this Go file was
+// edited and redeployed. The runtime CLI is the authority on what it can
+// execute; the static catalog is a UI convenience for the dropdown. An
+// unrecognised ID from the *same* vendor family is therefore allowed through,
+// and a genuinely bad value surfaces as a run-time error from the CLI instead
+// of blocking configuration.
+//
+// Unknown/custom model strings still return false because the UI and CLI allow
+// manual entries and the server should not erase values it cannot confidently
+// classify.
 func ModelKnownIncompatibleWithProvider(providerType, model string) bool {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -195,7 +206,32 @@ func ModelKnownIncompatibleWithProvider(providerType, model string) bool {
 	if accepted[model] {
 		return false
 	}
-	return isRuntimeSpecificModelID(model)
+	if strings.Contains(model, "/") {
+		// Provider-qualified IDs ("openai/gpt-4o") come from discovery
+		// backends such as opencode; none of the three static-catalog
+		// runtimes can run them.
+		return true
+	}
+	family := modelProviderFamily(model)
+	if family == "" {
+		return false
+	}
+	return family != providerType
+}
+
+// modelProviderFamily maps a bare model ID to the runtime provider it clearly
+// belongs to, or "" when the ID carries no such signal. Prefix-based on
+// purpose: it must keep classifying vendor models this catalog has never seen.
+func modelProviderFamily(model string) string {
+	switch {
+	case strings.HasPrefix(model, "claude-"):
+		return "claude"
+	case strings.HasPrefix(model, "gpt-"), isOpenAIReasoningSeriesID(model):
+		return "codex"
+	case strings.HasPrefix(model, "gemini-"), strings.HasPrefix(model, "auto-gemini-"):
+		return "gemini"
+	}
+	return ""
 }
 
 func acceptedModelIDsForProvider(providerType string) (map[string]bool, bool) {

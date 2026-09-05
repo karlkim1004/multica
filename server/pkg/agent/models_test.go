@@ -193,9 +193,31 @@ func TestModelKnownIncompatibleWithProvider(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "known openai-looking model outside codex catalog is incompatible",
+			// Regression for the release-day outage this guard used to cause:
+			// a vendor model newer than this catalog must configure cleanly
+			// on its own runtime. gpt-6-astra shipped 2026-09-05 and the
+			// local codex CLI ran it while the server still returned 400.
+			name:     "openai model newer than the codex catalog is compatible with codex",
 			provider: "codex",
-			model:    "gpt-99",
+			model:    "gpt-6-astra",
+			want:     false,
+		},
+		{
+			name:     "anthropic model newer than the claude catalog is compatible with claude",
+			provider: "claude",
+			model:    "claude-fable-5-1",
+			want:     false,
+		},
+		{
+			name:     "openai model newer than the catalog is still incompatible with claude",
+			provider: "claude",
+			model:    "gpt-6-astra",
+			want:     true,
+		},
+		{
+			name:     "gemini model outside the catalog is incompatible with codex",
+			provider: "codex",
+			model:    "gemini-9-ultra",
 			want:     true,
 		},
 		{
