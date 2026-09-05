@@ -190,6 +190,7 @@ type ChatMessage struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	FailureReason pgtype.Text        `json:"failure_reason"`
 	ElapsedMs     pgtype.Int8        `json:"elapsed_ms"`
+	SenderID      pgtype.UUID        `json:"sender_id"`
 }
 
 type ChatSession struct {

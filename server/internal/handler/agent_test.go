@@ -10,6 +10,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/multica-ai/multica/server/internal/integrations/lark"
 )
 
 // TestListWorkspaceAgentTaskSnapshot covers the agent presence snapshot endpoint:
@@ -141,6 +144,250 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 			t.Errorf("agent %s: cancelled rows must be excluded from snapshot; got %d",
 				agentID, counts[key{agentID, "cancelled"}])
 		}
+	}
+}
+
+// TestGetWorkspaceAgentLastOwnerMessage covers the office desk "time since
+// last CEO request" data source: it must return the most recent role='user'
+// chat message the workspace OWNER sent to each agent, ignoring messages
+// from non-owner members, assistant replies, and agents the owner never
+// chatted with.
+func TestGetWorkspaceAgentLastOwnerMessage(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentA := createHandlerTestAgent(t, "last-owner-message-agent-a", []byte(`{}`))
+	agentB := createHandlerTestAgent(t, "last-owner-message-agent-b", []byte(`{}`))
+	agentC := createHandlerTestAgent(t, "last-owner-message-agent-c", []byte(`{}`))
+
+	// A non-owner member whose chat messages must NOT count toward the
+	// indicator, even if they are the most recent message to the agent.
+	var otherUserID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
+	`, "Last Owner Message Other User", "last-owner-message-other@multica.ai").Scan(&otherUserID); err != nil {
+		t.Fatalf("insert other user: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')
+	`, testWorkspaceID, otherUserID); err != nil {
+		t.Fatalf("insert other member: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, otherUserID)
+	})
+
+	insertSession := func(creatorID, agentID string) string {
+		var id string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO chat_session (workspace_id, agent_id, creator_id) VALUES ($1, $2, $3) RETURNING id
+		`, testWorkspaceID, agentID, creatorID).Scan(&id); err != nil {
+			t.Fatalf("insert chat session: %v", err)
+		}
+		return id
+	}
+	insertMessage := func(sessionID, role, ageExpr string) {
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO chat_message (chat_session_id, role, content, created_at)
+			VALUES ($1, $2, 'msg', now() - `+ageExpr+`)
+		`, sessionID, role); err != nil {
+			t.Fatalf("insert chat message: %v", err)
+		}
+	}
+
+	// Agent A: owner sends an older message, then a newer one — the newer
+	// one must win. A still-newer assistant reply and a still-newer message
+	// from a non-owner member must both be ignored.
+	ownerSessionA := insertSession(testUserID, agentA)
+	insertMessage(ownerSessionA, "user", "interval '2 hours'")
+	insertMessage(ownerSessionA, "user", "interval '1 hour'")
+	insertMessage(ownerSessionA, "assistant", "interval '30 minutes'")
+	otherSessionA := insertSession(otherUserID, agentA)
+	insertMessage(otherSessionA, "user", "interval '10 minutes'")
+
+	// Agent B: a single owner message.
+	ownerSessionB := insertSession(testUserID, agentB)
+	insertMessage(ownerSessionB, "user", "interval '3 hours'")
+
+	// Agent C: no chat activity at all — must be absent from the response.
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE agent_id IN ($1, $2, $3)`, agentA, agentB, agentC)
+	})
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodGet, "/api/agent-last-owner-message", nil)
+	testHandler.GetWorkspaceAgentLastOwnerMessage(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetWorkspaceAgentLastOwnerMessage: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var rows []AgentLastOwnerMessage
+	if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	byAgent := map[string]string{}
+	for _, row := range rows {
+		byAgent[row.AgentID] = row.LastOwnerMessageAt
+	}
+
+	if _, ok := byAgent[agentA]; !ok {
+		t.Fatalf("expected agent A to have a last owner message")
+	}
+	if _, ok := byAgent[agentB]; !ok {
+		t.Fatalf("expected agent B to have a last owner message")
+	}
+	if _, ok := byAgent[agentC]; ok {
+		t.Errorf("agent C has no chat activity and must be absent, got %q", byAgent[agentC])
+	}
+
+	// Verify agent A's timestamp is the owner's newer message (~1h old), not
+	// the older owner message, the assistant reply, or the non-owner message.
+	tsA, err := time.Parse(time.RFC3339, byAgent[agentA])
+	if err != nil {
+		t.Fatalf("parse agent A timestamp %q: %v", byAgent[agentA], err)
+	}
+	age := time.Since(tsA)
+	if age < 50*time.Minute || age > 70*time.Minute {
+		t.Errorf("agent A last owner message age = %v, want ~1h (the newer owner message, not the 2h-old one, the 30m-old assistant reply, or the 10m-old non-owner message)", age)
+	}
+}
+
+// TestGetWorkspaceAgentLastOwnerMessage_LarkGroupSenderVsInstaller regresses
+// the P2 the validator found on PR #70: a Lark group chat_session is bound
+// once to whichever member first installed it (chat_session.creator_id),
+// but every bound Lark user who posts into that group shares the same
+// session — so creator_id identifies who bound the session, not who sent
+// any given message. Exercises the real lark.ChatSessionService write path
+// (not a raw INSERT) in both directions so neither the "installer happens
+// to be owner" nor the "installer happens to be non-owner" case can regress
+// silently.
+func TestGetWorkspaceAgentLastOwnerMessage_LarkGroupSenderVsInstaller(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	chat := lark.NewChatSessionService(testHandler.Queries, testPool)
+
+	newMember := func(email, role string) string {
+		var userID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
+		`, email, email).Scan(&userID); err != nil {
+			t.Fatalf("insert user %s: %v", email, err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
+		`, testWorkspaceID, userID, role); err != nil {
+			t.Fatalf("insert member %s: %v", email, err)
+		}
+		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
+		return userID
+	}
+	newSession := func(installerID, agentID string) string {
+		var sessionID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO chat_session (workspace_id, agent_id, creator_id) VALUES ($1, $2, $3) RETURNING id
+		`, testWorkspaceID, agentID, installerID).Scan(&sessionID); err != nil {
+			t.Fatalf("insert chat session: %v", err)
+		}
+		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+		var installationID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO lark_installation
+				(workspace_id, agent_id, app_id, app_secret_encrypted, bot_open_id, installer_user_id)
+			VALUES ($1, $2, $3, '', $4, $5) RETURNING id
+		`, testWorkspaceID, agentID, "nex1121-"+agentID, "bot-"+agentID, installerID).Scan(&installationID); err != nil {
+			t.Fatalf("insert Lark installation: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO lark_chat_session_binding
+				(chat_session_id, installation_id, lark_chat_id, lark_chat_type)
+			VALUES ($1, $2, $3, 'group')
+		`, sessionID, installationID, "chat-"+agentID); err != nil {
+			t.Fatalf("insert Lark session binding: %v", err)
+		}
+		t.Cleanup(func() {
+			testPool.Exec(context.Background(), `DELETE FROM lark_installation WHERE id = $1`, installationID)
+		})
+		return sessionID
+	}
+	lastOwnerMessageFor := func(agentID string) (string, bool) {
+		w := httptest.NewRecorder()
+		testHandler.GetWorkspaceAgentLastOwnerMessage(w, newRequest(http.MethodGet, "/api/agent-last-owner-message", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GetWorkspaceAgentLastOwnerMessage: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var rows []AgentLastOwnerMessage
+		if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		for _, row := range rows {
+			if row.AgentID == agentID {
+				return row.LastOwnerMessageAt, true
+			}
+		}
+		return "", false
+	}
+
+	// Direction 1 (the validator's repro): owner installs the group session,
+	// but a non-owner member sends the message. Must NOT count as an owner
+	// message.
+	agentOwnerInstalled := createHandlerTestAgent(t, "lark-owner-installed-agent", []byte(`{}`))
+	nonOwnerSender := newMember("nex1121-non-owner-sender@multica.ai", "member")
+	sessionOwnerInstalled := newSession(testUserID, agentOwnerInstalled)
+	if _, err := chat.AppendUserMessage(ctx, lark.AppendUserMessageParams{
+		ChatSessionID: parseUUID(sessionOwnerInstalled),
+		Sender:        parseUUID(nonOwnerSender),
+		Body:          "non-owner group message",
+	}); err != nil {
+		t.Fatalf("AppendUserMessage (non-owner sender): %v", err)
+	}
+	if _, ok := lastOwnerMessageFor(agentOwnerInstalled); ok {
+		t.Errorf("owner-installed session: non-owner sender's message must NOT count as an owner message")
+	}
+	// Historical Lark rows have no sender_id. Even when the installer is the
+	// owner, the shared-session installer is not evidence that this message
+	// came from the owner, so NULL must remain excluded.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE chat_message SET sender_id = NULL
+		WHERE chat_session_id = $1
+	`, sessionOwnerInstalled); err != nil {
+		t.Fatalf("clear historical Lark sender: %v", err)
+	}
+	if _, ok := lastOwnerMessageFor(agentOwnerInstalled); ok {
+		t.Errorf("historical Lark row with NULL sender must NOT fall back to installer")
+	}
+
+	// Direction 2 (the mirror the validator asked for): a non-owner member
+	// installs the group session, but the OWNER sends the message. Must
+	// count as an owner message even though the installer isn't the owner.
+	agentNonOwnerInstalled := createHandlerTestAgent(t, "lark-non-owner-installed-agent", []byte(`{}`))
+	nonOwnerInstaller := newMember("nex1121-non-owner-installer@multica.ai", "member")
+	sessionNonOwnerInstalled := newSession(nonOwnerInstaller, agentNonOwnerInstalled)
+	if _, err := chat.AppendUserMessage(ctx, lark.AppendUserMessageParams{
+		ChatSessionID: parseUUID(sessionNonOwnerInstalled),
+		Sender:        parseUUID(testUserID),
+		Body:          "owner group message via non-owner-installed session",
+	}); err != nil {
+		t.Fatalf("AppendUserMessage (owner sender): %v", err)
+	}
+	if _, ok := lastOwnerMessageFor(agentNonOwnerInstalled); !ok {
+		t.Errorf("non-owner-installed session: owner sender's message MUST count as an owner message")
+	}
+	// A deleted sender is represented by sender_id = NULL via ON DELETE SET
+	// NULL. It must not be re-attributed to the non-owner installer.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE chat_message SET sender_id = NULL
+		WHERE chat_session_id = $1
+	`, sessionNonOwnerInstalled); err != nil {
+		t.Fatalf("clear deleted Lark sender: %v", err)
+	}
+	if _, ok := lastOwnerMessageFor(agentNonOwnerInstalled); ok {
+		t.Errorf("deleted Lark sender with NULL sender must NOT fall back to installer")
 	}
 }
 

@@ -74,8 +74,12 @@ UPDATE chat_session SET updated_at = now()
 WHERE id = $1;
 
 -- name: CreateChatMessage :one
-INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms)
-VALUES ($1, $2, $3, sqlc.narg(task_id), sqlc.narg(failure_reason), sqlc.narg(elapsed_ms))
+-- sender_id is the resolved Multica user who actually authored the message —
+-- NOT necessarily chat_session.creator_id, which for a Lark group session is
+-- just the installer that first bound it. NULL for callers that don't
+-- resolve a sender; readers fall back to chat_session.creator_id.
+INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms, sender_id)
+VALUES ($1, $2, $3, sqlc.narg(task_id), sqlc.narg(failure_reason), sqlc.narg(elapsed_ms), sqlc.narg(sender_id))
 RETURNING *;
 
 -- name: LinkChatMessageToTask :exec
@@ -179,3 +183,35 @@ SELECT * FROM chat_message
 WHERE chat_session_id = $1 AND role = 'user'
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- name: GetWorkspaceAgentLastOwnerMessage :many
+-- Returns, per agent, the timestamp of the most recent chat message the
+-- workspace owner sent to it (role='user', across every chat session the
+-- owner has with that agent). Backs the office desk "time since last CEO
+-- request" indicator: a request answered inline in chat never becomes an
+-- Issue, so Issue timestamps can't see it — chat_message is the only
+-- record of when the owner last spoke to an agent. Scoped to role='owner'
+-- (not any member) because the indicator is specifically about the CEO,
+-- and a workspace has exactly one owner.
+--
+-- A Lark-bound session is shared by every user in the chat, so
+-- cs.creator_id identifies only the installer. For those sessions,
+-- cm.sender_id must be present and is the only trustworthy author. A
+-- missing sender must not be guessed from the installer: migration 130
+-- intentionally leaves historical Lark rows NULL, and ON DELETE SET NULL
+-- does the same when an author is removed. Unbound sessions retain the
+-- creator fallback for the single-user web/desktop path.
+SELECT DISTINCT ON (cs.agent_id)
+    cs.agent_id,
+    cm.created_at AS last_owner_message_at
+FROM chat_message cm
+JOIN chat_session cs ON cs.id = cm.chat_session_id
+LEFT JOIN lark_chat_session_binding lcs ON lcs.chat_session_id = cs.id
+JOIN member m ON m.user_id = CASE
+    WHEN lcs.chat_session_id IS NOT NULL THEN cm.sender_id
+    ELSE cs.creator_id
+END AND m.workspace_id = cs.workspace_id
+WHERE cs.workspace_id = $1
+  AND cm.role = 'user'
+  AND m.role = 'owner'
+ORDER BY cs.agent_id, cm.created_at DESC;

@@ -12,9 +12,9 @@ import (
 )
 
 const createChatMessage = `-- name: CreateChatMessage :one
-INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms
+INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms, sender_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id
 `
 
 type CreateChatMessageParams struct {
@@ -24,8 +24,13 @@ type CreateChatMessageParams struct {
 	TaskID        pgtype.UUID `json:"task_id"`
 	FailureReason pgtype.Text `json:"failure_reason"`
 	ElapsedMs     pgtype.Int8 `json:"elapsed_ms"`
+	SenderID      pgtype.UUID `json:"sender_id"`
 }
 
+// sender_id is the resolved Multica user who actually authored the message —
+// NOT necessarily chat_session.creator_id, which for a Lark group session is
+// just the installer that first bound it. NULL for callers that don't
+// resolve a sender; readers fall back to chat_session.creator_id.
 func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessageParams) (ChatMessage, error) {
 	row := q.db.QueryRow(ctx, createChatMessage,
 		arg.ChatSessionID,
@@ -34,6 +39,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		arg.TaskID,
 		arg.FailureReason,
 		arg.ElapsedMs,
+		arg.SenderID,
 	)
 	var i ChatMessage
 	err := row.Scan(
@@ -45,6 +51,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.SenderID,
 	)
 	return i, err
 }
@@ -170,7 +177,7 @@ func (q *Queries) DeleteChatSession(ctx context.Context, arg DeleteChatSessionPa
 const deleteUserChatMessageByTask = `-- name: DeleteUserChatMessageByTask :one
 DELETE FROM chat_message
 WHERE task_id = $1 AND role = 'user'
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id
 `
 
 func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype.UUID) (ChatMessage, error) {
@@ -185,12 +192,13 @@ func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.SenderID,
 	)
 	return i, err
 }
 
 const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
 WHERE id = $1
 `
 
@@ -206,6 +214,7 @@ func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessa
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.SenderID,
 	)
 	return i, err
 }
@@ -302,7 +311,7 @@ func (q *Queries) GetLastChatTaskSession(ctx context.Context, chatSessionID pgty
 }
 
 const getMostRecentUserChatMessage = `-- name: GetMostRecentUserChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
 WHERE chat_session_id = $1 AND role = 'user'
 ORDER BY created_at DESC
 LIMIT 1
@@ -325,6 +334,7 @@ func (q *Queries) GetMostRecentUserChatMessage(ctx context.Context, chatSessionI
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.SenderID,
 	)
 	return i, err
 }
@@ -352,6 +362,64 @@ func (q *Queries) GetPendingChatTask(ctx context.Context, chatSessionID pgtype.U
 	var i GetPendingChatTaskRow
 	err := row.Scan(&i.ID, &i.Status, &i.CreatedAt)
 	return i, err
+}
+
+const getWorkspaceAgentLastOwnerMessage = `-- name: GetWorkspaceAgentLastOwnerMessage :many
+SELECT DISTINCT ON (cs.agent_id)
+    cs.agent_id,
+    cm.created_at AS last_owner_message_at
+FROM chat_message cm
+JOIN chat_session cs ON cs.id = cm.chat_session_id
+LEFT JOIN lark_chat_session_binding lcs ON lcs.chat_session_id = cs.id
+JOIN member m ON m.user_id = CASE
+    WHEN lcs.chat_session_id IS NOT NULL THEN cm.sender_id
+    ELSE cs.creator_id
+END AND m.workspace_id = cs.workspace_id
+WHERE cs.workspace_id = $1
+  AND cm.role = 'user'
+  AND m.role = 'owner'
+ORDER BY cs.agent_id, cm.created_at DESC
+`
+
+type GetWorkspaceAgentLastOwnerMessageRow struct {
+	AgentID            pgtype.UUID        `json:"agent_id"`
+	LastOwnerMessageAt pgtype.Timestamptz `json:"last_owner_message_at"`
+}
+
+// Returns, per agent, the timestamp of the most recent chat message the
+// workspace owner sent to it (role='user', across every chat session the
+// owner has with that agent). Backs the office desk "time since last CEO
+// request" indicator: a request answered inline in chat never becomes an
+// Issue, so Issue timestamps can't see it — chat_message is the only
+// record of when the owner last spoke to an agent. Scoped to role='owner'
+// (not any member) because the indicator is specifically about the CEO,
+// and a workspace has exactly one owner.
+//
+// A Lark-bound session is shared by every user in the chat, so
+// cs.creator_id identifies only the installer. For those sessions,
+// cm.sender_id must be present and is the only trustworthy author. A
+// missing sender must not be guessed from the installer: migration 130
+// intentionally leaves historical Lark rows NULL, and ON DELETE SET NULL
+// does the same when an author is removed. Unbound sessions retain the
+// creator fallback for the single-user web/desktop path.
+func (q *Queries) GetWorkspaceAgentLastOwnerMessage(ctx context.Context, workspaceID pgtype.UUID) ([]GetWorkspaceAgentLastOwnerMessageRow, error) {
+	rows, err := q.db.Query(ctx, getWorkspaceAgentLastOwnerMessage, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetWorkspaceAgentLastOwnerMessageRow{}
+	for rows.Next() {
+		var i GetWorkspaceAgentLastOwnerMessageRow
+		if err := rows.Scan(&i.AgentID, &i.LastOwnerMessageAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const linkChatMessageToTask = `-- name: LinkChatMessageToTask :exec
@@ -434,7 +502,7 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 }
 
 const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
 WHERE chat_session_id = $1
 ORDER BY created_at ASC
 `
@@ -457,6 +525,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 			&i.CreatedAt,
 			&i.FailureReason,
 			&i.ElapsedMs,
+			&i.SenderID,
 		); err != nil {
 			return nil, err
 		}
@@ -469,7 +538,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 }
 
 const listChatMessagesPage = `-- name: ListChatMessagesPage :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
 WHERE chat_session_id = $1
   AND (
     $3::timestamptz IS NULL
@@ -509,6 +578,7 @@ func (q *Queries) ListChatMessagesPage(ctx context.Context, arg ListChatMessages
 			&i.CreatedAt,
 			&i.FailureReason,
 			&i.ElapsedMs,
+			&i.SenderID,
 		); err != nil {
 			return nil, err
 		}
@@ -645,8 +715,9 @@ FOR UPDATE
 // their FK check after we commit the delete.
 func (q *Queries) LockChatSessionForDelete(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, lockChatSessionForDelete, id)
-	err := row.Scan(&id)
-	return id, err
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
 }
 
 const markChatSessionRead = `-- name: MarkChatSessionRead :exec
