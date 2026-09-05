@@ -12,9 +12,9 @@ import (
 )
 
 const createChatMessage = `-- name: CreateChatMessage :one
-INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms
+INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms, sender_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id
 `
 
 type CreateChatMessageParams struct {
@@ -24,8 +24,13 @@ type CreateChatMessageParams struct {
 	TaskID        pgtype.UUID `json:"task_id"`
 	FailureReason pgtype.Text `json:"failure_reason"`
 	ElapsedMs     pgtype.Int8 `json:"elapsed_ms"`
+	SenderID      pgtype.UUID `json:"sender_id"`
 }
 
+// sender_id is the resolved Multica user who actually authored the message —
+// NOT necessarily chat_session.creator_id, which for a Lark group session is
+// just the installer that first bound it. NULL for callers that don't
+// resolve a sender; readers fall back to chat_session.creator_id.
 func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessageParams) (ChatMessage, error) {
 	row := q.db.QueryRow(ctx, createChatMessage,
 		arg.ChatSessionID,
@@ -34,6 +39,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		arg.TaskID,
 		arg.FailureReason,
 		arg.ElapsedMs,
+		arg.SenderID,
 	)
 	var i ChatMessage
 	err := row.Scan(
@@ -45,6 +51,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.SenderID,
 	)
 	return i, err
 }
@@ -170,7 +177,7 @@ func (q *Queries) DeleteChatSession(ctx context.Context, arg DeleteChatSessionPa
 const deleteUserChatMessageByTask = `-- name: DeleteUserChatMessageByTask :one
 DELETE FROM chat_message
 WHERE task_id = $1 AND role = 'user'
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id
 `
 
 func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype.UUID) (ChatMessage, error) {
@@ -185,12 +192,13 @@ func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.SenderID,
 	)
 	return i, err
 }
 
 const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
 WHERE id = $1
 `
 
@@ -206,6 +214,7 @@ func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessa
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.SenderID,
 	)
 	return i, err
 }
@@ -302,7 +311,7 @@ func (q *Queries) GetLastChatTaskSession(ctx context.Context, chatSessionID pgty
 }
 
 const getMostRecentUserChatMessage = `-- name: GetMostRecentUserChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
 WHERE chat_session_id = $1 AND role = 'user'
 ORDER BY created_at DESC
 LIMIT 1
@@ -325,6 +334,7 @@ func (q *Queries) GetMostRecentUserChatMessage(ctx context.Context, chatSessionI
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.SenderID,
 	)
 	return i, err
 }
@@ -360,7 +370,7 @@ SELECT DISTINCT ON (cs.agent_id)
     cm.created_at AS last_owner_message_at
 FROM chat_message cm
 JOIN chat_session cs ON cs.id = cm.chat_session_id
-JOIN member m ON m.user_id = cs.creator_id AND m.workspace_id = cs.workspace_id
+JOIN member m ON m.user_id = COALESCE(cm.sender_id, cs.creator_id) AND m.workspace_id = cs.workspace_id
 WHERE cs.workspace_id = $1
   AND cm.role = 'user'
   AND m.role = 'owner'
@@ -380,6 +390,16 @@ type GetWorkspaceAgentLastOwnerMessageRow struct {
 // record of when the owner last spoke to an agent. Scoped to role='owner'
 // (not any member) because the indicator is specifically about the CEO,
 // and a workspace has exactly one owner.
+//
+// The actual author is COALESCE(cm.sender_id, cs.creator_id), NOT
+// cs.creator_id alone: a Lark group chat_session is created once per
+// installer, but every bound Lark user who posts into that group shares
+// the session, so cs.creator_id only identifies who first bound it, not
+// who sent any given message. cm.sender_id (nullable — see migration 130)
+// carries the real per-message author when the write path resolved one;
+// the fallback to cs.creator_id keeps single-user web/desktop sessions
+// (and any pre-migration row) working unchanged, since there sender and
+// creator are always the same person.
 func (q *Queries) GetWorkspaceAgentLastOwnerMessage(ctx context.Context, workspaceID pgtype.UUID) ([]GetWorkspaceAgentLastOwnerMessageRow, error) {
 	rows, err := q.db.Query(ctx, getWorkspaceAgentLastOwnerMessage, workspaceID)
 	if err != nil {
@@ -480,7 +500,7 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 }
 
 const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
 WHERE chat_session_id = $1
 ORDER BY created_at ASC
 `
@@ -503,6 +523,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 			&i.CreatedAt,
 			&i.FailureReason,
 			&i.ElapsedMs,
+			&i.SenderID,
 		); err != nil {
 			return nil, err
 		}
@@ -515,7 +536,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 }
 
 const listChatMessagesPage = `-- name: ListChatMessagesPage :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
 WHERE chat_session_id = $1
   AND (
     $3::timestamptz IS NULL
@@ -555,6 +576,7 @@ func (q *Queries) ListChatMessagesPage(ctx context.Context, arg ListChatMessages
 			&i.CreatedAt,
 			&i.FailureReason,
 			&i.ElapsedMs,
+			&i.SenderID,
 		); err != nil {
 			return nil, err
 		}

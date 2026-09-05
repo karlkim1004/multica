@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/integrations/lark"
 )
 
 // TestListWorkspaceAgentTaskSnapshot covers the agent presence snapshot endpoint:
@@ -250,6 +252,101 @@ func TestGetWorkspaceAgentLastOwnerMessage(t *testing.T) {
 	age := time.Since(tsA)
 	if age < 50*time.Minute || age > 70*time.Minute {
 		t.Errorf("agent A last owner message age = %v, want ~1h (the newer owner message, not the 2h-old one, the 30m-old assistant reply, or the 10m-old non-owner message)", age)
+	}
+}
+
+// TestGetWorkspaceAgentLastOwnerMessage_LarkGroupSenderVsInstaller regresses
+// the P2 the validator found on PR #70: a Lark group chat_session is bound
+// once to whichever member first installed it (chat_session.creator_id),
+// but every bound Lark user who posts into that group shares the same
+// session — so creator_id identifies who bound the session, not who sent
+// any given message. Exercises the real lark.ChatSessionService write path
+// (not a raw INSERT) in both directions so neither the "installer happens
+// to be owner" nor the "installer happens to be non-owner" case can regress
+// silently.
+func TestGetWorkspaceAgentLastOwnerMessage_LarkGroupSenderVsInstaller(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	chat := lark.NewChatSessionService(testHandler.Queries, testPool)
+
+	newMember := func(email, role string) string {
+		var userID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
+		`, email, email).Scan(&userID); err != nil {
+			t.Fatalf("insert user %s: %v", email, err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
+		`, testWorkspaceID, userID, role); err != nil {
+			t.Fatalf("insert member %s: %v", email, err)
+		}
+		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
+		return userID
+	}
+	newSession := func(installerID, agentID string) string {
+		var sessionID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO chat_session (workspace_id, agent_id, creator_id) VALUES ($1, $2, $3) RETURNING id
+		`, testWorkspaceID, agentID, installerID).Scan(&sessionID); err != nil {
+			t.Fatalf("insert chat session: %v", err)
+		}
+		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+		return sessionID
+	}
+	lastOwnerMessageFor := func(agentID string) (string, bool) {
+		w := httptest.NewRecorder()
+		testHandler.GetWorkspaceAgentLastOwnerMessage(w, newRequest(http.MethodGet, "/api/agent-last-owner-message", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GetWorkspaceAgentLastOwnerMessage: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var rows []AgentLastOwnerMessage
+		if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		for _, row := range rows {
+			if row.AgentID == agentID {
+				return row.LastOwnerMessageAt, true
+			}
+		}
+		return "", false
+	}
+
+	// Direction 1 (the validator's repro): owner installs the group session,
+	// but a non-owner member sends the message. Must NOT count as an owner
+	// message.
+	agentOwnerInstalled := createHandlerTestAgent(t, "lark-owner-installed-agent", []byte(`{}`))
+	nonOwnerSender := newMember("nex1121-non-owner-sender@multica.ai", "member")
+	sessionOwnerInstalled := newSession(testUserID, agentOwnerInstalled)
+	if _, err := chat.AppendUserMessage(ctx, lark.AppendUserMessageParams{
+		ChatSessionID: parseUUID(sessionOwnerInstalled),
+		Sender:        parseUUID(nonOwnerSender),
+		Body:          "non-owner group message",
+	}); err != nil {
+		t.Fatalf("AppendUserMessage (non-owner sender): %v", err)
+	}
+	if _, ok := lastOwnerMessageFor(agentOwnerInstalled); ok {
+		t.Errorf("owner-installed session: non-owner sender's message must NOT count as an owner message")
+	}
+
+	// Direction 2 (the mirror the validator asked for): a non-owner member
+	// installs the group session, but the OWNER sends the message. Must
+	// count as an owner message even though the installer isn't the owner.
+	agentNonOwnerInstalled := createHandlerTestAgent(t, "lark-non-owner-installed-agent", []byte(`{}`))
+	nonOwnerInstaller := newMember("nex1121-non-owner-installer@multica.ai", "member")
+	sessionNonOwnerInstalled := newSession(nonOwnerInstaller, agentNonOwnerInstalled)
+	if _, err := chat.AppendUserMessage(ctx, lark.AppendUserMessageParams{
+		ChatSessionID: parseUUID(sessionNonOwnerInstalled),
+		Sender:        parseUUID(testUserID),
+		Body:          "owner group message via non-owner-installed session",
+	}); err != nil {
+		t.Fatalf("AppendUserMessage (owner sender): %v", err)
+	}
+	if _, ok := lastOwnerMessageFor(agentNonOwnerInstalled); !ok {
+		t.Errorf("non-owner-installed session: owner sender's message MUST count as an owner message")
 	}
 }
 

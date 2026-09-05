@@ -74,8 +74,12 @@ UPDATE chat_session SET updated_at = now()
 WHERE id = $1;
 
 -- name: CreateChatMessage :one
-INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms)
-VALUES ($1, $2, $3, sqlc.narg(task_id), sqlc.narg(failure_reason), sqlc.narg(elapsed_ms))
+-- sender_id is the resolved Multica user who actually authored the message —
+-- NOT necessarily chat_session.creator_id, which for a Lark group session is
+-- just the installer that first bound it. NULL for callers that don't
+-- resolve a sender; readers fall back to chat_session.creator_id.
+INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms, sender_id)
+VALUES ($1, $2, $3, sqlc.narg(task_id), sqlc.narg(failure_reason), sqlc.narg(elapsed_ms), sqlc.narg(sender_id))
 RETURNING *;
 
 -- name: LinkChatMessageToTask :exec
@@ -189,12 +193,22 @@ LIMIT 1;
 -- record of when the owner last spoke to an agent. Scoped to role='owner'
 -- (not any member) because the indicator is specifically about the CEO,
 -- and a workspace has exactly one owner.
+--
+-- The actual author is COALESCE(cm.sender_id, cs.creator_id), NOT
+-- cs.creator_id alone: a Lark group chat_session is created once per
+-- installer, but every bound Lark user who posts into that group shares
+-- the session, so cs.creator_id only identifies who first bound it, not
+-- who sent any given message. cm.sender_id (nullable — see migration 130)
+-- carries the real per-message author when the write path resolved one;
+-- the fallback to cs.creator_id keeps single-user web/desktop sessions
+-- (and any pre-migration row) working unchanged, since there sender and
+-- creator are always the same person.
 SELECT DISTINCT ON (cs.agent_id)
     cs.agent_id,
     cm.created_at AS last_owner_message_at
 FROM chat_message cm
 JOIN chat_session cs ON cs.id = cm.chat_session_id
-JOIN member m ON m.user_id = cs.creator_id AND m.workspace_id = cs.workspace_id
+JOIN member m ON m.user_id = COALESCE(cm.sender_id, cs.creator_id) AND m.workspace_id = cs.workspace_id
 WHERE cs.workspace_id = $1
   AND cm.role = 'user'
   AND m.role = 'owner'
