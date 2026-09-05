@@ -17,6 +17,13 @@ interface DashboardLayoutProps {
   searchSlot?: ReactNode;
   /** Loading indicator */
   loadingIndicator?: ReactNode;
+  /**
+   * Space (px) reserved on the right for a docked-right overlay in `extra`
+   * (e.g. ChatWindow). The overlay is absolutely positioned and otherwise
+   * escapes layout flow entirely, so without this `children` would render
+   * underneath it. 0 / undefined behaves exactly as before.
+   */
+  contentInsetRight?: number;
 }
 
 export function DashboardLayout({
@@ -24,6 +31,7 @@ export function DashboardLayout({
   extra,
   searchSlot,
   loadingIndicator,
+  contentInsetRight,
 }: DashboardLayoutProps) {
   return (
     <DashboardGuard
@@ -38,7 +46,9 @@ export function DashboardLayout({
         <AppSidebar searchSlot={searchSlot} />
         <SidebarInset className="relative overflow-hidden">
           <NavigationProgress />
-          {children}
+          <div className="flex flex-1 min-h-0 flex-col" style={{ paddingRight: contentInsetRight || undefined }}>
+            {children}
+          </div>
           <ModalRegistry />
           <SourceBackfillModal />
           {extra}

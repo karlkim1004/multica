@@ -13,7 +13,7 @@ import {
 import { ModalRegistry } from "@multica/views/modals/registry";
 import { AppSidebar } from "@multica/views/layout";
 import { SearchCommand, SearchTrigger } from "@multica/views/search";
-import { ChatFab, ChatWindow } from "@multica/views/chat";
+import { ChatFab, ChatWindow, useChatDockOffset } from "@multica/views/chat";
 import { WorkspaceSlugProvider, paths, useCurrentWorkspace } from "@multica/core/paths";
 import { useNavigation } from "@multica/views/navigation";
 import { getCurrentSlug, subscribeToCurrentSlug } from "@multica/core/platform";
@@ -198,6 +198,7 @@ export function DesktopShell() {
   // router) sets it. Once set, the sidebar and other shell-level components
   // can resolve workspace-scoped paths via useWorkspacePaths().
   const slug = useSyncExternalStore(subscribeToCurrentSlug, getCurrentSlug, () => null);
+  const chatDockOffset = useChatDockOffset();
 
   return (
     <DesktopNavigationProvider>
@@ -220,7 +221,9 @@ export function DesktopShell() {
               <MainTopBar />
               {/* Content area with inset styling — relative so ChatWindow/ChatFab are constrained here */}
               <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden mr-2 mb-2 ml-0.5 rounded-xl shadow-sm bg-background">
-                <TabContent />
+                <div className="flex flex-1 min-h-0 flex-col" style={{ paddingRight: chatDockOffset || undefined }}>
+                  <TabContent />
+                </div>
                 {slug && <ChatWindow />}
                 {slug && <ChatFab />}
               </div>
