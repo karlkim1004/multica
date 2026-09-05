@@ -194,21 +194,23 @@ LIMIT 1;
 -- (not any member) because the indicator is specifically about the CEO,
 -- and a workspace has exactly one owner.
 --
--- The actual author is COALESCE(cm.sender_id, cs.creator_id), NOT
--- cs.creator_id alone: a Lark group chat_session is created once per
--- installer, but every bound Lark user who posts into that group shares
--- the session, so cs.creator_id only identifies who first bound it, not
--- who sent any given message. cm.sender_id (nullable — see migration 130)
--- carries the real per-message author when the write path resolved one;
--- the fallback to cs.creator_id keeps single-user web/desktop sessions
--- (and any pre-migration row) working unchanged, since there sender and
--- creator are always the same person.
+-- A Lark-bound session is shared by every user in the chat, so
+-- cs.creator_id identifies only the installer. For those sessions,
+-- cm.sender_id must be present and is the only trustworthy author. A
+-- missing sender must not be guessed from the installer: migration 130
+-- intentionally leaves historical Lark rows NULL, and ON DELETE SET NULL
+-- does the same when an author is removed. Unbound sessions retain the
+-- creator fallback for the single-user web/desktop path.
 SELECT DISTINCT ON (cs.agent_id)
     cs.agent_id,
     cm.created_at AS last_owner_message_at
 FROM chat_message cm
 JOIN chat_session cs ON cs.id = cm.chat_session_id
-JOIN member m ON m.user_id = COALESCE(cm.sender_id, cs.creator_id) AND m.workspace_id = cs.workspace_id
+LEFT JOIN lark_chat_session_binding lcs ON lcs.chat_session_id = cs.id
+JOIN member m ON m.user_id = CASE
+    WHEN lcs.chat_session_id IS NOT NULL THEN cm.sender_id
+    ELSE cs.creator_id
+END AND m.workspace_id = cs.workspace_id
 WHERE cs.workspace_id = $1
   AND cm.role = 'user'
   AND m.role = 'owner'

@@ -295,6 +295,24 @@ func TestGetWorkspaceAgentLastOwnerMessage_LarkGroupSenderVsInstaller(t *testing
 			t.Fatalf("insert chat session: %v", err)
 		}
 		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+		var installationID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO lark_installation
+				(workspace_id, agent_id, app_id, app_secret_encrypted, bot_open_id, installer_user_id)
+			VALUES ($1, $2, $3, '', $4, $5) RETURNING id
+		`, testWorkspaceID, agentID, "nex1121-"+agentID, "bot-"+agentID, installerID).Scan(&installationID); err != nil {
+			t.Fatalf("insert Lark installation: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO lark_chat_session_binding
+				(chat_session_id, installation_id, lark_chat_id, lark_chat_type)
+			VALUES ($1, $2, $3, 'group')
+		`, sessionID, installationID, "chat-"+agentID); err != nil {
+			t.Fatalf("insert Lark session binding: %v", err)
+		}
+		t.Cleanup(func() {
+			testPool.Exec(context.Background(), `DELETE FROM lark_installation WHERE id = $1`, installationID)
+		})
 		return sessionID
 	}
 	lastOwnerMessageFor := func(agentID string) (string, bool) {
@@ -331,6 +349,18 @@ func TestGetWorkspaceAgentLastOwnerMessage_LarkGroupSenderVsInstaller(t *testing
 	if _, ok := lastOwnerMessageFor(agentOwnerInstalled); ok {
 		t.Errorf("owner-installed session: non-owner sender's message must NOT count as an owner message")
 	}
+	// Historical Lark rows have no sender_id. Even when the installer is the
+	// owner, the shared-session installer is not evidence that this message
+	// came from the owner, so NULL must remain excluded.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE chat_message SET sender_id = NULL
+		WHERE chat_session_id = $1
+	`, sessionOwnerInstalled); err != nil {
+		t.Fatalf("clear historical Lark sender: %v", err)
+	}
+	if _, ok := lastOwnerMessageFor(agentOwnerInstalled); ok {
+		t.Errorf("historical Lark row with NULL sender must NOT fall back to installer")
+	}
 
 	// Direction 2 (the mirror the validator asked for): a non-owner member
 	// installs the group session, but the OWNER sends the message. Must
@@ -347,6 +377,17 @@ func TestGetWorkspaceAgentLastOwnerMessage_LarkGroupSenderVsInstaller(t *testing
 	}
 	if _, ok := lastOwnerMessageFor(agentNonOwnerInstalled); !ok {
 		t.Errorf("non-owner-installed session: owner sender's message MUST count as an owner message")
+	}
+	// A deleted sender is represented by sender_id = NULL via ON DELETE SET
+	// NULL. It must not be re-attributed to the non-owner installer.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE chat_message SET sender_id = NULL
+		WHERE chat_session_id = $1
+	`, sessionNonOwnerInstalled); err != nil {
+		t.Fatalf("clear deleted Lark sender: %v", err)
+	}
+	if _, ok := lastOwnerMessageFor(agentNonOwnerInstalled); ok {
+		t.Errorf("deleted Lark sender with NULL sender must NOT fall back to installer")
 	}
 }
 
