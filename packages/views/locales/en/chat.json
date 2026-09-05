@@ -84,6 +84,8 @@
     "restore_tooltip": "Restore",
     "expand_tooltip": "Expand",
     "minimize_tooltip": "Minimize",
+    "dock_tooltip": "Dock to the right",
+    "undock_tooltip": "Undock (floating)",
     "another_running": "Another chat is running",
     "another_unread": "Another chat has unread replies",
     "running": "Running",
