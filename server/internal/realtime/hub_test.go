@@ -117,6 +117,25 @@ func TestHandleWebSocket_WriteOnlyMemberReceivesNoWorkspaceEvents(t *testing.T) 
 	}
 }
 
+func TestHandleWebSocket_CookieWriteOnlyMemberIsNotAutoSubscribed(t *testing.T) {
+	hub, server := newTestHubWithMembershipChecker(t, &mockMembershipChecker{denyRealtime: true})
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws?workspace_id=" + testWorkspaceID
+	headers := http.Header{}
+	headers.Set("Cookie", auth.AuthCookieName+"="+makeTestToken(t))
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("cookie-authenticated dial: %v", err)
+	}
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+	if hub.HasLocalSubscribers(ScopeWorkspace, testWorkspaceID) {
+		t.Fatal("cookie-authenticated write-only member was auto-subscribed")
+	}
+}
+
 func TestHandleWebSocket_RoleChangeRevokesExistingWorkspaceDelivery(t *testing.T) {
 	mc := &mutableMembershipChecker{}
 	hub, server := newTestHubWithMembershipChecker(t, mc)
