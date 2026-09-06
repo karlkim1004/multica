@@ -843,6 +843,34 @@ func TestDaemonRegister_WithDaemonToken_WorkspaceMismatch(t *testing.T) {
 	}
 }
 
+func TestDaemonRegister_DeniesGeneralUserPAT(t *testing.T) {
+	if testPool == nil {
+		t.Skip("test database not available")
+	}
+
+	generalUserID := createHandlerTestMember(t, RoleGeneralUser)
+	w := httptest.NewRecorder()
+	req := newRequestAs(generalUserID, "POST", "/api/daemon/register", map[string]any{
+		"workspace_id": testWorkspaceID,
+		"daemon_id":    "general-user-must-not-register-daemon",
+		"runtimes": []map[string]any{
+			{"name": "denied", "type": "codex", "status": "online"},
+		},
+	})
+	testHandler.DaemonRegister(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("DaemonRegister general_user: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent_runtime WHERE daemon_id = $1`, "general-user-must-not-register-daemon").Scan(&count); err != nil {
+		t.Fatalf("count runtime: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("general_user registered %d runtime(s)", count)
+	}
+}
+
 func TestDaemonHeartbeat_WithDaemonToken_CrossWorkspace(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

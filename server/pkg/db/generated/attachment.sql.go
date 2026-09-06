@@ -195,6 +195,37 @@ func (q *Queries) GetAttachmentByIDOnly(ctx context.Context, id pgtype.UUID) (At
 	return i, err
 }
 
+const getAttachmentByLocalUploadKey = `-- name: GetAttachmentByLocalUploadKey :one
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id FROM attachment
+WHERE regexp_replace(url, '^.*/uploads/', '') = $1
+`
+
+// The legacy LocalStorage object route receives only the key below
+// /uploads/. Resolve it back to its attachment row before streaming bytes so
+// the route applies the same workspace-membership and role checks as the
+// canonical /api/attachments/{id}/download endpoint. Both a site-relative
+// URL and a LOCAL_UPLOAD_BASE_URL-prefixed URL end in /uploads/<key>.
+func (q *Queries) GetAttachmentByLocalUploadKey(ctx context.Context, url string) (Attachment, error) {
+	row := q.db.QueryRow(ctx, getAttachmentByLocalUploadKey, url)
+	var i Attachment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.CommentID,
+		&i.UploaderType,
+		&i.UploaderID,
+		&i.Filename,
+		&i.Url,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.ChatSessionID,
+		&i.ChatMessageID,
+	)
+	return i, err
+}
+
 const linkAttachmentsToChatMessage = `-- name: LinkAttachmentsToChatMessage :many
 UPDATE attachment
 SET chat_message_id = $1,

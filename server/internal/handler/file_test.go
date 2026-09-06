@@ -667,6 +667,56 @@ func TestDownloadAttachment_BareNavigationDeniesGeneralUser(t *testing.T) {
 	}
 }
 
+func TestServeLocalUpload_DeniesUnauthenticatedAndGeneralUser(t *testing.T) {
+	if testPool == nil {
+		t.Skip("test database not available")
+	}
+	store := &mockStorage{}
+	origStorage := testHandler.Storage
+	testHandler.Storage = store
+	t.Cleanup(func() { testHandler.Storage = origStorage })
+
+	key := "workspaces/secure-raw-upload.txt"
+	body := []byte("private local object")
+	store.put(key, body)
+	// mockStorage intentionally only understands its synthetic CDN prefixes;
+	// LocalStorage.KeyFromURL strips /uploads/ in production.
+	store.put("/uploads/"+key, body)
+	_ = seedAttachmentURL(t, "/uploads/"+key, "secure-raw-upload.txt", "text/plain", int64(len(body)))
+
+	for _, tc := range []struct {
+		name   string
+		userID string
+		want   int
+	}{
+		{name: "unauthenticated", want: http.StatusUnauthorized},
+		{name: "general_user", userID: createHandlerTestMember(t, RoleGeneralUser), want: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/uploads/"+key, nil)
+			if tc.userID != "" {
+				req.Header.Set("X-User-ID", tc.userID)
+			}
+			w := httptest.NewRecorder()
+			testHandler.ServeLocalUpload(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), string(body)) {
+				t.Fatalf("raw local object leaked: %q", w.Body.String())
+			}
+		})
+	}
+
+	req := httptest.NewRequest("GET", "/uploads/"+key, nil)
+	req.Header.Set("X-User-ID", testUserID)
+	w := httptest.NewRecorder()
+	testHandler.ServeLocalUpload(w, req)
+	if w.Code != http.StatusOK || w.Body.String() != string(body) {
+		t.Fatalf("member local upload: status=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
 // TestDownloadAttachment_BareNavigationDeniesNonMemberWith404 covers the
 // IDOR boundary: a stray attachment ID belonging to a workspace the
 // requester is NOT a member of must return 404, not 200 (would leak

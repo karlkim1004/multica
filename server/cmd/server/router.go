@@ -452,8 +452,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		realtime.HandleWebSocket(hub, mc, pr, slugResolver, w, r)
 	})
 
-	// Local storage is private attachment storage. Attachments are served only
-	// through /api/attachments/{id}/download, which resolves workspace access.
+	// Legacy LocalStorage object URLs remain routable, but never bypass the
+	// attachment ACL. The handler resolves the key to an attachment row before
+	// proxying it, preserving old markdown links without making raw objects
+	// public.
+	if _, ok := store.(*storage.LocalStorage); ok {
+		r.With(middleware.Auth(queries, patCache, cloudPATVerifier)).Get("/uploads/*", h.ServeLocalUpload)
+	}
 
 	// Auth (public) — per-IP rate limiting.
 	if rdb == nil {

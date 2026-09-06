@@ -682,6 +682,46 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ServeLocalUpload protects legacy /uploads/<key> URLs emitted by
+// LocalStorage. Those URLs used to bypass the attachment ACL entirely because
+// the router delegated them straight to http.ServeFile. Keep old links
+// functional, but resolve the key through the attachment row and use the same
+// authorization path as the canonical download endpoint.
+func (h *Handler) ServeLocalUpload(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimPrefix(r.URL.Path, "/uploads/")
+	if key == "" || strings.Contains(key, "..") {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+	att, err := h.Queries.GetAttachmentByLocalUploadKey(r.Context(), key)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := uuidToString(att.WorkspaceID)
+	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	if actorType != ActorAgent && effectiveMemberRole(member.Role) == RoleGeneralUser {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	if h.Storage == nil {
+		writeError(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+	h.proxyAttachmentDownload(w, r, att, h.Storage.KeyFromURL(att.Url))
+}
+
 func (h *Handler) resolveAttachmentDownloadMode(rawURL string) attachmentDownloadMode {
 	switch h.attachmentDownloadMode() {
 	case attachmentDownloadModeCloudFront:

@@ -51,14 +51,12 @@ func (h *Handler) requireDaemonWorkspaceAccess(w http.ResponseWriter, r *http.Re
 		return true
 	}
 
-	// PAT/JWT fallback: check membership cache before hitting DB.
+	// PAT/JWT fallback: resolve the member row even on a membership-cache hit.
+	// Daemon authority is a privileged capability (it can create runtimes and
+	// claim work), and the cache records membership but not role. A
+	// general_user must therefore not inherit daemon access from an earlier
+	// cache entry or from a role downgrade.
 	userID := requestUserID(r)
-	if userID != "" {
-		if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
-			return true
-		}
-	}
-
 	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "not found")
 	if ok && effectiveMemberRole(member.Role) == RoleGeneralUser {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
