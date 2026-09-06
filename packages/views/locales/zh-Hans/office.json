@@ -47,6 +47,10 @@
     "whip_cooldown_toast": "同一机器人每 5 分钟只能抽一次",
     "whip_already_active_toast": "{{name}} 已在处理中，跳过本次抽鞭",
     "whip_success_toast": "已抽打 {{name}} — 已加入新的运行",
-    "whip_error_toast": "发送抽鞭请求时出错"
+    "whip_error_toast": "发送抽鞭请求时出错",
+    "last_owner_request_value": "距负责人请求 {{time}}",
+    "last_owner_request_never": "暂无负责人请求记录",
+    "last_owner_request_loading": "正在获取负责人请求…",
+    "last_owner_request_error": "负责人请求获取失败"
   }
 }

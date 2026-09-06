@@ -233,6 +233,13 @@ export interface AgentBoardEntry {
   /** This agent previously held a wait the sweeper had to reassign away. */
   reassignHistory: boolean;
   severity: Severity;
+  /**
+   * ISO timestamp of the last chat message the workspace owner sent this
+   * agent (NEX-1121/NEX-1129), or null if the owner has never messaged it —
+   * a request answered inline in chat never becomes an Issue, so this is not
+   * derivable from `held`/`getWaitStartedAt` above.
+   */
+  lastOwnerMessageAt: string | null;
 }
 
 // NEX-1072 follow-up (2026-09-02, CEO directive "오케스트레이터가 놀면 내가
@@ -250,6 +257,7 @@ export function buildBoard(
   openIssuesOldestFirst: Issue[],
   doneIssues: Issue[],
   presenceMap: Map<string, AgentPresenceDetail>,
+  lastOwnerMessageByAgent: Map<string, string> = new Map(),
 ): AgentBoardEntry[] {
   const heldByAgent = new Map<string, Issue[]>();
   const recalledAgentIds = new Set<string>();
@@ -302,6 +310,7 @@ export function buildBoard(
         doneCount7d: doneCountByAgent.get(agent.id) ?? 0,
         reassignHistory,
         severity,
+        lastOwnerMessageAt: lastOwnerMessageByAgent.get(agent.id) ?? null,
       };
     });
 }

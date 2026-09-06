@@ -34,6 +34,7 @@ export type {
   SetAgentSkillsRequest,
   RuntimeUsage,
   RuntimeHourlyActivity,
+  AgentLastOwnerMessage,
   RuntimeUsageByAgent,
   RuntimeUsageByHour,
   DashboardUsageDaily,

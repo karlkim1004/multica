@@ -47,6 +47,10 @@
     "whip_cooldown_toast": "같은 봇은 5분에 한 번만 채찍질할 수 있습니다",
     "whip_already_active_toast": "{{name}} 봇이 이미 실행 중이라 채찍질을 건너뛰었습니다",
     "whip_success_toast": "{{name}} 봇에게 채찍질 완료 — 런이 생성되었습니다",
-    "whip_error_toast": "채찍질 요청 중 오류가 발생했습니다"
+    "whip_error_toast": "채찍질 요청 중 오류가 발생했습니다",
+    "last_owner_request_value": "대표님 요청 {{time}} 전",
+    "last_owner_request_never": "대표님 요청 이력 없음",
+    "last_owner_request_loading": "대표님 요청 확인 중…",
+    "last_owner_request_error": "대표님 요청 확인 실패"
   }
 }

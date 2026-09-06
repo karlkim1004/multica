@@ -2,12 +2,13 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Armchair, Crown, Flame, Monitor, Moon } from "lucide-react";
+import { AlertTriangle, Armchair, Clock, Crown, Flame, Monitor, Moon } from "lucide-react";
 import { toast } from "sonner";
 import type { Agent, Issue, Squad } from "@multica/core/types";
 import { useWorkspacePresenceMap } from "@multica/core/agents";
 import { api } from "@multica/core/api";
 import {
+  officeAgentLastOwnerMessageOptions,
   officeOpenIssuesOptions,
   officeRecentDoneOptions,
   buildBoard,
@@ -60,6 +61,12 @@ const POLL_MS = 30_000;
 const TASK_LIST_LIMIT = 30;
 const HELD_TASKS_SHOWN = 3;
 
+// NEX-1129: distinct from `entry.lastOwnerMessageAt === null`, which means
+// "the query answered and this agent has never been messaged" — loading/error
+// mean the query itself hasn't produced an answer yet, so the desk must not
+// render "no requests yet" as if it were a real fact.
+type LastOwnerMessageStatus = "loading" | "error" | "ready";
+
 function formatWaitHours(hours: number): string {
   if (hours < 24) return `${Math.round(hours)}h`;
   return `${Math.floor(hours / 24)}d`;
@@ -102,6 +109,23 @@ export function OfficePage() {
   });
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
+  const {
+    data: lastOwnerMessages,
+    isLoading: lastOwnerMessagesLoading,
+    isError: lastOwnerMessagesError,
+  } = useQuery({
+    ...officeAgentLastOwnerMessageOptions(wsId),
+    refetchInterval: POLL_MS,
+  });
+  const lastOwnerMessageStatus: LastOwnerMessageStatus = lastOwnerMessagesError
+    ? "error"
+    : lastOwnerMessagesLoading
+      ? "loading"
+      : "ready";
+  const lastOwnerMessageByAgent = useMemo(
+    () => new Map((lastOwnerMessages ?? []).map((row) => [row.agent_id, row.last_owner_message_at])),
+    [lastOwnerMessages],
+  );
 
   // NEX-1072 3rd follow-up ("어디서 어떻게 해야 채찍질을 할 수 있어?"): the
   // whip button is an owner-only affordance — `useCurrentMember` resolves the
@@ -153,8 +177,8 @@ export function OfficePage() {
   const unassignedCount = openIssues.filter((issue) => !issue.assignee_id).length;
 
   const board = useMemo(
-    () => buildBoard(agents, openIssues, doneIssues, presenceMap),
-    [agents, openIssues, doneIssues, presenceMap],
+    () => buildBoard(agents, openIssues, doneIssues, presenceMap, lastOwnerMessageByAgent),
+    [agents, openIssues, doneIssues, presenceMap, lastOwnerMessageByAgent],
   );
   const boardById = useMemo(
     () => new Map(board.map((entry) => [entry.agent.id, entry] as const)),
@@ -338,6 +362,7 @@ export function OfficePage() {
               isOwnerViewer={isOwnerViewer}
               whipLastFiredAt={whipLastFiredAt}
               onWhipFired={markWhipFired}
+              lastOwnerMessageStatus={lastOwnerMessageStatus}
             />
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {departments.map((dept) => (
@@ -350,6 +375,7 @@ export function OfficePage() {
                   isOwnerViewer={isOwnerViewer}
                   whipLastFiredAt={whipLastFiredAt}
                   onWhipFired={markWhipFired}
+                  lastOwnerMessageStatus={lastOwnerMessageStatus}
                 />
               ))}
             </div>
@@ -359,6 +385,7 @@ export function OfficePage() {
                 isOwnerViewer={isOwnerViewer}
                 whipLastFiredAt={whipLastFiredAt}
                 onWhipFired={markWhipFired}
+                lastOwnerMessageStatus={lastOwnerMessageStatus}
               />
             )}
             {lounge.length > 0 && <LoungeSection entries={lounge} />}
@@ -431,6 +458,7 @@ function PresidentRoom({
   isOwnerViewer,
   whipLastFiredAt,
   onWhipFired,
+  lastOwnerMessageStatus,
 }: {
   owner: { user_id: string; name: string } | null;
   ownerHeld: Issue[];
@@ -439,6 +467,7 @@ function PresidentRoom({
   isOwnerViewer: boolean;
   whipLastFiredAt: Record<string, number>;
   onWhipFired: (agentId: string) => void;
+  lastOwnerMessageStatus: LastOwnerMessageStatus;
 }) {
   const { t } = useT("office");
   if (!owner && !teamLeaderEntry) return null;
@@ -491,6 +520,7 @@ function PresidentRoom({
               isOwnerViewer={isOwnerViewer}
               lastWhippedAt={whipLastFiredAt[teamLeaderEntry.agent.id]}
               onWhipFired={() => onWhipFired(teamLeaderEntry.agent.id)}
+              lastOwnerMessageStatus={lastOwnerMessageStatus}
             />
           </div>
         )}
@@ -507,6 +537,7 @@ function DepartmentRoom({
   isOwnerViewer,
   whipLastFiredAt,
   onWhipFired,
+  lastOwnerMessageStatus,
 }: {
   squad: Squad;
   memberIds: string[];
@@ -515,6 +546,7 @@ function DepartmentRoom({
   isOwnerViewer: boolean;
   whipLastFiredAt: Record<string, number>;
   onWhipFired: (agentId: string) => void;
+  lastOwnerMessageStatus: LastOwnerMessageStatus;
 }) {
   const { t } = useT("office");
   const leaderEntry = boardById.get(squad.leader_id) ?? null;
@@ -551,6 +583,7 @@ function DepartmentRoom({
             isOwnerViewer={isOwnerViewer}
             lastWhippedAt={whipLastFiredAt[leaderEntry.agent.id]}
             onWhipFired={() => onWhipFired(leaderEntry.agent.id)}
+            lastOwnerMessageStatus={lastOwnerMessageStatus}
           />
         )}
         {memberEntries.map((entry) => (
@@ -560,6 +593,7 @@ function DepartmentRoom({
             isOwnerViewer={isOwnerViewer}
             lastWhippedAt={whipLastFiredAt[entry.agent.id]}
             onWhipFired={() => onWhipFired(entry.agent.id)}
+            lastOwnerMessageStatus={lastOwnerMessageStatus}
           />
         ))}
         {!leaderEntry && memberEntries.length === 0 && (
@@ -577,11 +611,13 @@ function OrphanSection({
   isOwnerViewer,
   whipLastFiredAt,
   onWhipFired,
+  lastOwnerMessageStatus,
 }: {
   entries: AgentBoardEntry[];
   isOwnerViewer: boolean;
   whipLastFiredAt: Record<string, number>;
   onWhipFired: (agentId: string) => void;
+  lastOwnerMessageStatus: LastOwnerMessageStatus;
 }) {
   const { t } = useT("office");
   return (
@@ -605,6 +641,7 @@ function OrphanSection({
             isOwnerViewer={isOwnerViewer}
             lastWhippedAt={whipLastFiredAt[entry.agent.id]}
             onWhipFired={() => onWhipFired(entry.agent.id)}
+            lastOwnerMessageStatus={lastOwnerMessageStatus}
           />
         ))}
       </div>
@@ -733,6 +770,40 @@ function TicketTray({ issues }: { issues: Issue[] }) {
   );
 }
 
+// NEX-1129: responsiveness indicator sourced from the NEX-1121 chat API,
+// distinct from the ticket-wait signal above — a request the owner sends and
+// gets answered inline in chat never becomes an Issue, so it's the only
+// signal for "how long since 대표님 actually spoke to this bot". Renders one
+// of three states: loading (query in flight), error (query failed — must not
+// be confused with "never messaged"), or ready (a real elapsed time, or
+// "never" when the agent is simply absent from the response).
+function LastOwnerRequestLine({
+  lastOwnerMessageAt,
+  status,
+}: {
+  lastOwnerMessageAt: string | null;
+  status: LastOwnerMessageStatus;
+}) {
+  const { t } = useT("office");
+  return (
+    <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+      <Clock className="size-3 shrink-0" aria-hidden="true" />
+      {status === "loading" && <span>{t(($) => $.org.last_owner_request_loading)}</span>}
+      {status === "error" && <span>{t(($) => $.org.last_owner_request_error)}</span>}
+      {status === "ready" &&
+        (lastOwnerMessageAt ? (
+          <span title={new Date(lastOwnerMessageAt).toLocaleString()}>
+            {t(($) => $.org.last_owner_request_value, {
+              time: formatWaitHours(hoursSince(lastOwnerMessageAt)),
+            })}
+          </span>
+        ) : (
+          <span>{t(($) => $.org.last_owner_request_never)}</span>
+        ))}
+    </div>
+  );
+}
+
 // One bot's desk: avatar + escalation ring, a monitor indicator for
 // "actively working right now" (independent of escalation state — a bot can
 // be mid-ticket and still idle between turns), name, throughput line, and
@@ -747,6 +818,7 @@ function DeskCard({
   isOwnerViewer,
   lastWhippedAt,
   onWhipFired,
+  lastOwnerMessageStatus,
 }: {
   entry: AgentBoardEntry;
   isDepartmentLeader?: boolean;
@@ -754,6 +826,7 @@ function DeskCard({
   isOwnerViewer: boolean;
   lastWhippedAt: number | undefined;
   onWhipFired: () => void;
+  lastOwnerMessageStatus: LastOwnerMessageStatus;
 }) {
   const { t } = useT("office");
   const { agent, presence, held, doneCount7d, severity, reassignHistory, maxWaitHours: agentMaxWait } =
@@ -866,6 +939,10 @@ function DeskCard({
             <> · {t(($) => $.page.load, { count: held.length, wait: formatWaitHours(agentMaxWait) })}</>
           )}
         </div>
+        <LastOwnerRequestLine
+          lastOwnerMessageAt={entry.lastOwnerMessageAt}
+          status={lastOwnerMessageStatus}
+        />
         <TicketTray issues={held} />
       </div>
     </div>

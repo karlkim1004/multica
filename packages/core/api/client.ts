@@ -52,6 +52,7 @@ import type {
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByHour,
+  AgentLastOwnerMessage,
   DashboardUsageDaily,
   DashboardUsageByAgent,
   DashboardAgentRunTime,
@@ -176,6 +177,7 @@ import {
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
+  AgentLastOwnerMessageListSchema,
   RuntimeUsageListSchema,
   SquadSchema,
   SquadListSchema,
@@ -1217,6 +1219,19 @@ export class ApiClient {
       RuntimeUsageByAgentListSchema,
       [],
       { endpoint: "GET /api/runtimes/:id/usage/by-agent" },
+    );
+  }
+
+  // Powers the office desk "time since last CEO request" indicator
+  // (NEX-1121/NEX-1129). Agents the owner has never chatted with are simply
+  // absent from the response, not returned with a null timestamp.
+  async getWorkspaceAgentLastOwnerMessage(): Promise<AgentLastOwnerMessage[]> {
+    const raw = await this.fetch<unknown>("/api/agent-last-owner-message");
+    return parseWithFallback<AgentLastOwnerMessage[]>(
+      raw,
+      AgentLastOwnerMessageListSchema,
+      [],
+      { endpoint: "GET /api/agent-last-owner-message" },
     );
   }
 

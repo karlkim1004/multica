@@ -436,6 +436,13 @@ const RuntimeUsageByAgentSchema = z.object({
 
 export const RuntimeUsageByAgentListSchema = z.array(RuntimeUsageByAgentSchema);
 
+const AgentLastOwnerMessageSchema = z.object({
+  agent_id: z.string().default(""),
+  last_owner_message_at: z.string().default(""),
+}).loose();
+
+export const AgentLastOwnerMessageListSchema = z.array(AgentLastOwnerMessageSchema);
+
 const RuntimeUsageByHourSchema = z.object({
   hour: z.number().default(0),
   model: z.string().default(""),

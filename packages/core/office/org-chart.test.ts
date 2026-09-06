@@ -354,6 +354,32 @@ describe("buildBoard", () => {
     const board = buildBoard([agent], [], [done], new Map());
     expect(board.find((e) => e.agent.id === "bot-a")?.doneCount7d).toBe(1);
   });
+
+  it("maps lastOwnerMessageAt from the NEX-1121 chat API by agent_id", () => {
+    const agent = makeAgent({ id: "bot-a" });
+    const board = buildBoard(
+      [agent],
+      [],
+      [],
+      new Map(),
+      new Map([["bot-a", "2026-09-05T00:00:00Z"]]),
+    );
+    expect(board.find((e) => e.agent.id === "bot-a")?.lastOwnerMessageAt).toBe(
+      "2026-09-05T00:00:00Z",
+    );
+  });
+
+  it("resolves lastOwnerMessageAt to null when the agent is absent from the response — never messaged, not unknown", () => {
+    const agent = makeAgent({ id: "bot-b" });
+    const board = buildBoard([agent], [], [], new Map(), new Map([["bot-a", "2026-09-05T00:00:00Z"]]));
+    expect(board.find((e) => e.agent.id === "bot-b")?.lastOwnerMessageAt).toBeNull();
+  });
+
+  it("defaults lastOwnerMessageAt to null when no map is passed at all", () => {
+    const agent = makeAgent({ id: "bot-a" });
+    const board = buildBoard([agent], [], [], new Map());
+    expect(board.find((e) => e.agent.id === "bot-a")?.lastOwnerMessageAt).toBeNull();
+  });
 });
 
 describe("isWhipCoolingDown", () => {
