@@ -59,7 +59,11 @@ func (h *Handler) requireDaemonWorkspaceAccess(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	_, ok := h.requireWorkspaceMember(w, r, workspaceID, "not found")
+	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "not found")
+	if ok && effectiveMemberRole(member.Role) == RoleGeneralUser {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return false
+	}
 	if ok && userID != "" {
 		h.MembershipCache.Set(r.Context(), userID, workspaceID)
 	}
@@ -310,6 +314,10 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	} else {
 		member, ok := h.requireWorkspaceMember(w, r, req.WorkspaceID, "workspace not found")
 		if !ok {
+			return
+		}
+		if effectiveMemberRole(member.Role) == RoleGeneralUser {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
 			return
 		}
 		ownerID = member.UserID

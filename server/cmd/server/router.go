@@ -452,13 +452,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		realtime.HandleWebSocket(hub, mc, pr, slugResolver, w, r)
 	})
 
-	// Local file serving (when using local storage)
-	if local, ok := store.(*storage.LocalStorage); ok {
-		r.Get("/uploads/*", func(w http.ResponseWriter, r *http.Request) {
-			file := strings.TrimPrefix(r.URL.Path, "/uploads/")
-			local.ServeFile(w, r, file)
-		})
-	}
+	// Local storage is private attachment storage. Attachments are served only
+	// through /api/attachments/{id}/download, which resolves workspace access.
 
 	// Auth (public) — per-IP rate limiting.
 	if rdb == nil {

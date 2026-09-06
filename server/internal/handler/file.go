@@ -145,17 +145,17 @@ func attachmentDownloadPath(id string) string {
 //
 //  1. Persist `a.Url` only when the deployment has signaled the storage
 //     backend serves URLs publicly without per-request auth:
-//       - `Storage.CdnDomain()` is non-empty (operator configured a
-//         public-facing base URL — `S3_CDN_DOMAIN` for the S3 backend or
-//         `LOCAL_UPLOAD_BASE_URL` for LocalStorage), AND
-//       - `h.CFSigner` is nil (no per-request CloudFront signing — when
-//         signing is on, the same CDN domain serves PRIVATE content via
-//         time-bounded signed URLs and the raw `a.Url` is unauth-deny),
-//         AND
-//       - `a.Url` is itself an absolute http(s) URL with no signature
-//         query — defends against legacy rows backfilled while baseURL
-//         was unset, and against a freshly-signed `download_url` ever
-//         leaking into `a.Url` (the original MUL-3130 bug).
+//     - `Storage.CdnDomain()` is non-empty (operator configured a
+//     public-facing base URL — `S3_CDN_DOMAIN` for the S3 backend or
+//     `LOCAL_UPLOAD_BASE_URL` for LocalStorage), AND
+//     - `h.CFSigner` is nil (no per-request CloudFront signing — when
+//     signing is on, the same CDN domain serves PRIVATE content via
+//     time-bounded signed URLs and the raw `a.Url` is unauth-deny),
+//     AND
+//     - `a.Url` is itself an absolute http(s) URL with no signature
+//     query — defends against legacy rows backfilled while baseURL
+//     was unset, and against a freshly-signed `download_url` ever
+//     leaking into `a.Url` (the original MUL-3130 bug).
 //
 //  2. Every other shape — CloudFront-signed mode, S3 presign /proxy
 //     against a private bucket without a CDN domain, raw S3 / R2 /
@@ -192,6 +192,12 @@ func (h *Handler) storageURLIsPubliclyReadable(rawURL string) bool {
 	if h.Storage == nil || h.CFSigner != nil {
 		// CFSigner != nil is per-request signing; the CDN domain serves
 		// private content via signed URLs and `a.Url` is the raw S3 URL.
+		return false
+	}
+	// Local storage backs private workspace attachments. Serving its raw
+	// /uploads path bypasses the attachment workspace/role check, so durable
+	// markdown must always use the authenticated download endpoint instead.
+	if _, ok := h.Storage.(*storage.LocalStorage); ok {
 		return false
 	}
 	if h.Storage.CdnDomain() == "" {
