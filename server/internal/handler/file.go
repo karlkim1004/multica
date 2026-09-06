@@ -589,11 +589,19 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
-	if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
-		return att, true
-	}
-	if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
+	// The download route is auth-only because native browser resource loads
+	// cannot provide workspace headers. Resolve membership from the attachment
+	// row, then apply the same write-only general_user rule as workspace routes.
+	// A membership-cache hit alone is not enough here: the role is needed for
+	// authorization and roles may have changed since the cache was populated.
+	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "attachment not found")
+		return db.Attachment{}, false
+	}
+	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	if actorType != ActorAgent && effectiveMemberRole(member.Role) == RoleGeneralUser {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return db.Attachment{}, false
 	}
 	h.MembershipCache.Set(r.Context(), userID, workspaceID)
