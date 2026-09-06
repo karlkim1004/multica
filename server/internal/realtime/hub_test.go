@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,11 +23,29 @@ import (
 const testWorkspaceID = "test-workspace"
 const testUserID = "test-user"
 
-// mockMembershipChecker always returns true.
-type mockMembershipChecker struct{}
+// mockMembershipChecker always recognizes membership. denyRealtime models the
+// write-only general_user role: it can connect, but cannot receive workspace,
+// task, or chat events.
+type mockMembershipChecker struct {
+	denyRealtime bool
+}
 
 func (m *mockMembershipChecker) IsMember(_ context.Context, _, _ string) bool {
 	return true
+}
+
+func (m *mockMembershipChecker) CanReceiveWorkspaceEvents(_ context.Context, _, _ string) bool {
+	return !m.denyRealtime
+}
+
+type mutableMembershipChecker struct {
+	denyRealtime atomic.Bool
+}
+
+func (m *mutableMembershipChecker) IsMember(_ context.Context, _, _ string) bool { return true }
+
+func (m *mutableMembershipChecker) CanReceiveWorkspaceEvents(_ context.Context, _, _ string) bool {
+	return !m.denyRealtime.Load()
 }
 
 func makeTestToken(t *testing.T) string {
@@ -42,17 +61,104 @@ func makeTestToken(t *testing.T) string {
 }
 
 func newTestHub(t *testing.T) (*Hub, *httptest.Server) {
+	return newTestHubWithMembershipChecker(t, &mockMembershipChecker{})
+}
+
+func newTestHubWithMembershipChecker(t *testing.T, mc MembershipChecker) (*Hub, *httptest.Server) {
 	t.Helper()
 	hub := NewHub()
 	go hub.Run()
 
-	mc := &mockMembershipChecker{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		HandleWebSocket(hub, mc, nil, nil, w, r)
 	})
 	server := httptest.NewServer(mux)
 	return hub, server
+}
+
+func TestHandleWebSocket_WriteOnlyMemberReceivesNoWorkspaceEvents(t *testing.T) {
+	hub, server := newTestHubWithMembershipChecker(t, &mockMembershipChecker{denyRealtime: true})
+	defer server.Close()
+
+	conn := connectWS(t, server)
+	defer conn.Close()
+
+	// The workspace room is auto-subscribed during registration in the
+	// vulnerable implementation. A write-only member must not be in that room,
+	// so an issue payload has no route to its connection.
+	time.Sleep(50 * time.Millisecond)
+	if hub.HasLocalSubscribers(ScopeWorkspace, testWorkspaceID) {
+		t.Fatal("write-only member was auto-subscribed to workspace events")
+	}
+
+	for _, scope := range []string{ScopeWorkspace, ScopeTask, ScopeChat} {
+		frame, err := json.Marshal(map[string]any{
+			"type": "subscribe",
+			"payload": map[string]string{
+				"scope": scope,
+				"id":    testWorkspaceID,
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal %s subscribe: %v", scope, err)
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+			t.Fatalf("write %s subscribe: %v", scope, err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_, response, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read %s subscribe response: %v", scope, err)
+		}
+		if !strings.Contains(string(response), "subscribe_error") || !strings.Contains(string(response), "forbidden") {
+			t.Fatalf("%s subscribe response = %s, want forbidden subscribe_error", scope, response)
+		}
+	}
+}
+
+func TestHandleWebSocket_RoleChangeRevokesExistingWorkspaceDelivery(t *testing.T) {
+	mc := &mutableMembershipChecker{}
+	hub, server := newTestHubWithMembershipChecker(t, mc)
+	defer server.Close()
+
+	conn := connectWS(t, server)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+	if !hub.HasLocalSubscribers(ScopeWorkspace, testWorkspaceID) {
+		t.Fatal("read-capable member was not auto-subscribed")
+	}
+
+	// A role downgrade must take effect for the existing connection. The
+	// hub checks the role again at fan-out instead of trusting the subscription
+	// created while the member had read access.
+	mc.denyRealtime.Store(true)
+	hub.BroadcastToWorkspace(testWorkspaceID, []byte(`{"type":"issue:created","title":"admin fixture","description":"private"}`))
+	conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
+	_, payload, err := conn.ReadMessage()
+	if err == nil {
+		t.Fatalf("role-downgraded member received workspace event: %s", payload)
+	}
+}
+
+func TestHandleWebSocket_ReadCapableMemberReceivesWorkspaceEvents(t *testing.T) {
+	hub, server := newTestHub(t)
+	defer server.Close()
+
+	conn := connectWS(t, server)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	message := []byte(`{"type":"issue:created","title":"allowed"}`)
+	hub.BroadcastToWorkspace(testWorkspaceID, message)
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, received, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read-capable member did not receive workspace event: %v", err)
+	}
+	if string(received) != string(message) {
+		t.Fatalf("workspace event = %s, want %s", received, message)
+	}
 }
 
 func connectWS(t *testing.T, server *httptest.Server) *websocket.Conn {

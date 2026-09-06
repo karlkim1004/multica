@@ -1096,6 +1096,17 @@ func (mc *membershipChecker) IsMember(ctx context.Context, userID, workspaceID s
 	return err == nil
 }
 
+// CanReceiveWorkspaceEvents keeps WebSocket's workspace/task/chat payloads
+// aligned with the REST write-only general_user contract. Membership itself is
+// still accepted so general users can retain their user-scoped connection.
+func (mc *membershipChecker) CanReceiveWorkspaceEvents(ctx context.Context, userID, workspaceID string) bool {
+	member, err := mc.queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		UserID:      parseUUID(userID),
+		WorkspaceID: parseUUID(workspaceID),
+	})
+	return err == nil && member.Role != "general_user"
+}
+
 // patResolver implements realtime.PATResolver using database queries.
 // patCache is shared with the Auth and DaemonAuth middlewares so a token
 // revoke through any path invalidates the cache for all of them. Nil
