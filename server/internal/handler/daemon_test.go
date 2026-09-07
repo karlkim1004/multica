@@ -4127,13 +4127,11 @@ func createEphemeralMember(t *testing.T, workspaceID, label, role string) (strin
 	return userID, memberID
 }
 
-// TestRequireDaemonWorkspaceAccess_CacheHit proves the cache lookup actually
-// short-circuits the DB query. The trick: the request actor is a "ghost"
-// user with NO member row in the workspace. With an empty cache the access
-// check must fail; after priming the cache it must succeed. If a future
-// change ever bypasses the cache and falls through to the DB, the priming
-// step stops mattering and the second assertion catches it.
-func TestRequireDaemonWorkspaceAccess_CacheHit(t *testing.T) {
+// TestRequireDaemonWorkspaceAccess_CachedGhostIsDenied proves a stale cache
+// entry cannot grant daemon access. Daemon routes can create runtimes and
+// claim work, so their authorization must re-resolve a member row (and role)
+// even when MembershipCache says the actor once belonged to the workspace.
+func TestRequireDaemonWorkspaceAccess_CachedGhostIsDenied(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -4149,14 +4147,17 @@ func TestRequireDaemonWorkspaceAccess_CacheHit(t *testing.T) {
 		t.Fatal("setup: ghost user must not be allowed without cache priming")
 	}
 
-	// Priming the cache is the only thing that changes — the access check
-	// must now succeed via the cache short-circuit.
+	// Priming a stale cache entry is the only thing that changes. It must not
+	// grant a non-member privileged daemon access.
 	testHandler.MembershipCache.Set(ctx, ghostUserID, testWorkspaceID)
 
 	req = newRequestAsUser(ghostUserID, "GET", "/api/daemon/workspaces/"+testWorkspaceID+"/repos", nil)
 	w = httptest.NewRecorder()
-	if !testHandler.requireDaemonWorkspaceAccess(w, req, testWorkspaceID) {
-		t.Fatalf("expected access via cache hit, got denied (status %d)", w.Code)
+	if testHandler.requireDaemonWorkspaceAccess(w, req, testWorkspaceID) {
+		t.Fatal("cached ghost user must not be granted daemon workspace access")
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected cached ghost denial to remain 404, got %d", w.Code)
 	}
 }
 
