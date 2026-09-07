@@ -83,7 +83,13 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 		return db.Agent{}, db.Member{}, false
 	}
 
-	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "agent not found", "owner", "admin")
+	// A super_user may manage env for an agent they own. canManageAgent uses
+	// the same resource owner predicate as update/archive/skills, while the
+	// human-actor guard above continues to exclude task tokens.
+	if !h.canManageAgent(w, r, agent) {
+		return db.Agent{}, db.Member{}, false
+	}
+	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
 		return db.Agent{}, db.Member{}, false
 	}

@@ -13,6 +13,8 @@ import (
 
 const testResolverSlug = "middleware-resolver-test"
 
+const testPendingApplicantEmail = "middleware-pending-applicant@multica.ai"
+
 // openPool returns a connected pgxpool, or skips the test if the database is
 // unreachable. Mirrors the handler package's fixture approach so tests don't
 // require a DB in environments where one isn't available.
@@ -187,5 +189,61 @@ func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tc.want, got)
 			}
 		})
+	}
+}
+
+// TestRequireWorkspaceMemberDistinguishesPendingJoinApplicants verifies the
+// live-router contract: a pending join request is denied as 403, while an
+// ordinary non-member remains indistinguishable from a missing workspace.
+func TestRequireWorkspaceMemberDistinguishesPendingJoinApplicants(t *testing.T) {
+	pool := openPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	queries := db.New(pool)
+
+	workspaceID, cleanupWorkspace := setupResolverFixture(t, pool)
+	defer cleanupWorkspace()
+
+	var applicantID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO "user" (name, email) VALUES ('Middleware Pending Applicant', $1) RETURNING id`,
+		testPendingApplicantEmail,
+	).Scan(&applicantID); err != nil {
+		t.Fatalf("insert applicant: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM workspace_join_request WHERE workspace_id=$1 AND user_id=$2`, workspaceID, applicantID)
+		_, _ = pool.Exec(ctx, `DELETE FROM "user" WHERE id=$1`, applicantID)
+	})
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO workspace_join_request (workspace_id, user_id) VALUES ($1, $2)`,
+		workspaceID, applicantID,
+	); err != nil {
+		t.Fatalf("insert pending join request: %v", err)
+	}
+
+	protected := RequireWorkspaceMember(queries)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/issues", nil)
+	req.Header.Set("X-Workspace-ID", workspaceID)
+	req.Header.Set("X-User-ID", applicantID)
+	w := httptest.NewRecorder()
+	protected.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("pending applicant: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM workspace_join_request WHERE workspace_id=$1 AND user_id=$2`, workspaceID, applicantID,
+	); err != nil {
+		t.Fatalf("remove pending join request: %v", err)
+	}
+	w = httptest.NewRecorder()
+	protected.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("ordinary non-member: want 404, got %d: %s", w.Code, w.Body.String())
 	}
 }

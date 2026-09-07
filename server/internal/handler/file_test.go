@@ -614,6 +614,109 @@ func TestDownloadAttachment_BareNavigationServesMemberWithoutWorkspaceHeaders(t 
 	}
 }
 
+// TestDownloadAttachment_BareNavigationDeniesGeneralUser verifies that the
+// auth-only download URL still observes the write-only general_user contract.
+// The attachment itself supplies the workspace context, so this cannot rely on
+// a router-level RequireWorkspaceMember middleware.
+func TestDownloadAttachment_BareNavigationDeniesGeneralUser(t *testing.T) {
+	if testPool == nil {
+		t.Skip("test database not available")
+	}
+	store := &mockStorage{}
+	origStorage := testHandler.Storage
+	origCfg := testHandler.cfg
+	origSigner := testHandler.CFSigner
+	testHandler.Storage = store
+	testHandler.cfg.AttachmentDownloadMode = "proxy"
+	testHandler.CFSigner = nil
+	t.Cleanup(func() {
+		testHandler.Storage = origStorage
+		testHandler.cfg = origCfg
+		testHandler.CFSigner = origSigner
+	})
+
+	ctx := context.Background()
+	var generalUserID string
+	if err := testPool.QueryRow(ctx,
+		`INSERT INTO "user" (name, email) VALUES ('Attachment General User', 'attachment-general-user@multica.test') RETURNING id`,
+	).Scan(&generalUserID); err != nil {
+		t.Fatalf("seed general user: %v", err)
+	}
+	if _, err := testPool.Exec(ctx,
+		`INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'general_user')`, testWorkspaceID, generalUserID,
+	); err != nil {
+		t.Fatalf("seed general membership: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, generalUserID) })
+
+	key := "downloads/general-user-denied.txt"
+	store.put(key, []byte("private attachment bytes"))
+	id := seedAttachmentURL(t, "https://s3.example.com/test-bucket/"+key, "general-user-denied.txt", "text/plain", 24)
+
+	req := httptest.NewRequest("GET", "/api/attachments/"+id+"/download", nil)
+	req.Header.Set("X-User-ID", generalUserID)
+	w := httptest.NewRecorder()
+
+	newDownloadRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "private attachment bytes") {
+		t.Fatalf("response body leaked file contents: %q", w.Body.String())
+	}
+}
+
+func TestServeLocalUpload_DeniesUnauthenticatedAndGeneralUser(t *testing.T) {
+	if testPool == nil {
+		t.Skip("test database not available")
+	}
+	store := &mockStorage{}
+	origStorage := testHandler.Storage
+	testHandler.Storage = store
+	t.Cleanup(func() { testHandler.Storage = origStorage })
+
+	key := "workspaces/secure-raw-upload.txt"
+	body := []byte("private local object")
+	store.put(key, body)
+	// mockStorage intentionally only understands its synthetic CDN prefixes;
+	// LocalStorage.KeyFromURL strips /uploads/ in production.
+	store.put("/uploads/"+key, body)
+	_ = seedAttachmentURL(t, "/uploads/"+key, "secure-raw-upload.txt", "text/plain", int64(len(body)))
+
+	for _, tc := range []struct {
+		name   string
+		userID string
+		want   int
+	}{
+		{name: "unauthenticated", want: http.StatusUnauthorized},
+		{name: "general_user", userID: createHandlerTestMember(t, RoleGeneralUser), want: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/uploads/"+key, nil)
+			if tc.userID != "" {
+				req.Header.Set("X-User-ID", tc.userID)
+			}
+			w := httptest.NewRecorder()
+			testHandler.ServeLocalUpload(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), string(body)) {
+				t.Fatalf("raw local object leaked: %q", w.Body.String())
+			}
+		})
+	}
+
+	req := httptest.NewRequest("GET", "/uploads/"+key, nil)
+	req.Header.Set("X-User-ID", testUserID)
+	w := httptest.NewRecorder()
+	testHandler.ServeLocalUpload(w, req)
+	if w.Code != http.StatusOK || w.Body.String() != string(body) {
+		t.Fatalf("member local upload: status=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
 // TestDownloadAttachment_BareNavigationDeniesNonMemberWith404 covers the
 // IDOR boundary: a stray attachment ID belonging to a workspace the
 // requester is NOT a member of must return 404, not 200 (would leak

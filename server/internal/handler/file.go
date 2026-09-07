@@ -145,17 +145,17 @@ func attachmentDownloadPath(id string) string {
 //
 //  1. Persist `a.Url` only when the deployment has signaled the storage
 //     backend serves URLs publicly without per-request auth:
-//       - `Storage.CdnDomain()` is non-empty (operator configured a
-//         public-facing base URL — `S3_CDN_DOMAIN` for the S3 backend or
-//         `LOCAL_UPLOAD_BASE_URL` for LocalStorage), AND
-//       - `h.CFSigner` is nil (no per-request CloudFront signing — when
-//         signing is on, the same CDN domain serves PRIVATE content via
-//         time-bounded signed URLs and the raw `a.Url` is unauth-deny),
-//         AND
-//       - `a.Url` is itself an absolute http(s) URL with no signature
-//         query — defends against legacy rows backfilled while baseURL
-//         was unset, and against a freshly-signed `download_url` ever
-//         leaking into `a.Url` (the original MUL-3130 bug).
+//     - `Storage.CdnDomain()` is non-empty (operator configured a
+//     public-facing base URL — `S3_CDN_DOMAIN` for the S3 backend or
+//     `LOCAL_UPLOAD_BASE_URL` for LocalStorage), AND
+//     - `h.CFSigner` is nil (no per-request CloudFront signing — when
+//     signing is on, the same CDN domain serves PRIVATE content via
+//     time-bounded signed URLs and the raw `a.Url` is unauth-deny),
+//     AND
+//     - `a.Url` is itself an absolute http(s) URL with no signature
+//     query — defends against legacy rows backfilled while baseURL
+//     was unset, and against a freshly-signed `download_url` ever
+//     leaking into `a.Url` (the original MUL-3130 bug).
 //
 //  2. Every other shape — CloudFront-signed mode, S3 presign /proxy
 //     against a private bucket without a CDN domain, raw S3 / R2 /
@@ -192,6 +192,12 @@ func (h *Handler) storageURLIsPubliclyReadable(rawURL string) bool {
 	if h.Storage == nil || h.CFSigner != nil {
 		// CFSigner != nil is per-request signing; the CDN domain serves
 		// private content via signed URLs and `a.Url` is the raw S3 URL.
+		return false
+	}
+	// Local storage backs private workspace attachments. Serving its raw
+	// /uploads path bypasses the attachment workspace/role check, so durable
+	// markdown must always use the authenticated download endpoint instead.
+	if _, ok := h.Storage.(*storage.LocalStorage); ok {
 		return false
 	}
 	if h.Storage.CdnDomain() == "" {
@@ -589,11 +595,19 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
-	if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
-		return att, true
-	}
-	if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
+	// The download route is auth-only because native browser resource loads
+	// cannot provide workspace headers. Resolve membership from the attachment
+	// row, then apply the same write-only general_user rule as workspace routes.
+	// A membership-cache hit alone is not enough here: the role is needed for
+	// authorization and roles may have changed since the cache was populated.
+	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "attachment not found")
+		return db.Attachment{}, false
+	}
+	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	if actorType != ActorAgent && effectiveMemberRole(member.Role) == RoleGeneralUser {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return db.Attachment{}, false
 	}
 	h.MembershipCache.Set(r.Context(), userID, workspaceID)
@@ -666,6 +680,46 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusInternalServerError, "invalid attachment download mode")
 	}
+}
+
+// ServeLocalUpload protects legacy /uploads/<key> URLs emitted by
+// LocalStorage. Those URLs used to bypass the attachment ACL entirely because
+// the router delegated them straight to http.ServeFile. Keep old links
+// functional, but resolve the key through the attachment row and use the same
+// authorization path as the canonical download endpoint.
+func (h *Handler) ServeLocalUpload(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimPrefix(r.URL.Path, "/uploads/")
+	if key == "" || strings.Contains(key, "..") {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+	att, err := h.Queries.GetAttachmentByLocalUploadKey(r.Context(), key)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := uuidToString(att.WorkspaceID)
+	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	if actorType != ActorAgent && effectiveMemberRole(member.Role) == RoleGeneralUser {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	if h.Storage == nil {
+		writeError(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+	h.proxyAttachmentDownload(w, r, att, h.Storage.KeyFromURL(att.Url))
 }
 
 func (h *Handler) resolveAttachmentDownloadMode(rawURL string) attachmentDownloadMode {

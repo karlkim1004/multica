@@ -51,15 +51,17 @@ func (h *Handler) requireDaemonWorkspaceAccess(w http.ResponseWriter, r *http.Re
 		return true
 	}
 
-	// PAT/JWT fallback: check membership cache before hitting DB.
+	// PAT/JWT fallback: resolve the member row even on a membership-cache hit.
+	// Daemon authority is a privileged capability (it can create runtimes and
+	// claim work), and the cache records membership but not role. A
+	// general_user must therefore not inherit daemon access from an earlier
+	// cache entry or from a role downgrade.
 	userID := requestUserID(r)
-	if userID != "" {
-		if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
-			return true
-		}
+	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "not found")
+	if ok && effectiveMemberRole(member.Role) == RoleGeneralUser {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return false
 	}
-
-	_, ok := h.requireWorkspaceMember(w, r, workspaceID, "not found")
 	if ok && userID != "" {
 		h.MembershipCache.Set(r.Context(), userID, workspaceID)
 	}
@@ -310,6 +312,10 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	} else {
 		member, ok := h.requireWorkspaceMember(w, r, req.WorkspaceID, "workspace not found")
 		if !ok {
+			return
+		}
+		if effectiveMemberRole(member.Role) == RoleGeneralUser {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
 			return
 		}
 		ownerID = member.UserID
@@ -2630,6 +2636,9 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
 		return
 	}
 
