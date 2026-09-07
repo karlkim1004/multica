@@ -22,7 +22,8 @@ export const chatKeys = {
   // in realtime/use-realtime-sync.ts (NEX-715).
   messagesAll: () => ["chat", "messages"] as const,
   messages: (sessionId: string) => [...chatKeys.messagesAll(), sessionId] as const,
-  messagesPage: (sessionId: string) => ["chat", "messages-page", sessionId] as const,
+  messagesPageAll: () => ["chat", "messages-page"] as const,
+  messagesPage: (sessionId: string) => [...chatKeys.messagesPageAll(), sessionId] as const,
   pendingTaskAll: () => ["chat", "pending-task"] as const,
   pendingTask: (sessionId: string) => [...chatKeys.pendingTaskAll(), sessionId] as const,
   /** Aggregate of in-flight chat tasks for the current user — FAB reads this. */

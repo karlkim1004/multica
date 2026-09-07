@@ -337,8 +337,12 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   // chatKeys.all(wsId) above never reaches them. Lifecycle events
   // (chat:message / chat:done / task:failed) missed while disconnected left
   // the active session's messages and pending-task stuck at "실행 중" until a
-  // full reload (NEX-715).
+  // full reload (NEX-715). messagesPage is the infinite-query cache
+  // chat-window.tsx actually renders from, so it must be included alongside
+  // messages or the "실행 중" flag clears while the transcript itself stays
+  // stale.
   qc.invalidateQueries({ queryKey: chatKeys.messagesAll() });
+  qc.invalidateQueries({ queryKey: chatKeys.messagesPageAll() });
   qc.invalidateQueries({ queryKey: chatKeys.pendingTaskAll() });
   qc.invalidateQueries({ queryKey: chatKeys.taskMessagesAll() });
   qc.invalidateQueries({ queryKey: workspaceKeys.list() });

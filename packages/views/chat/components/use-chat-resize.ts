@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useCallback, useState, useEffect } from "react";
-import { CHAT_MIN_W, CHAT_MIN_H, useChatStore } from "@multica/core/chat";
+import { CHAT_MIN_W, CHAT_MIN_H, useChatStore, type ChatMode } from "@multica/core/chat";
 
 type DragDir = "left" | "top" | "corner";
 
@@ -15,7 +15,9 @@ function clamp(v: number, min: number, max: number) {
 
 export function useChatResize(
   windowRef: React.RefObject<HTMLDivElement | null>,
+  mode: ChatMode = "floating",
 ) {
+  const isDocked = mode === "docked-right";
   const chatWidth = useChatStore((s) => s.chatWidth);
   const chatHeight = useChatStore((s) => s.chatHeight);
   const isExpanded = useChatStore((s) => s.isExpanded);
@@ -35,7 +37,10 @@ export function useChatResize(
 
     const update = () => {
       const maxW = Math.floor(parent.clientWidth * MAX_RATIO);
-      const maxH = Math.floor(parent.clientHeight * MAX_RATIO);
+      // Docked mode always spans the full height of its container — there's
+      // no vertical drag handle, so the ratio cap that leaves breathing room
+      // for a floating window doesn't apply.
+      const maxH = Math.floor(parent.clientHeight * (isDocked ? 1 : MAX_RATIO));
       setBoundsReady(true); // idempotent once true
       // Only trigger a re-render if the bounds actually changed. Without this
       // guard, any spurious ResizeObserver notification (including sub-pixel
@@ -53,24 +58,32 @@ export function useChatResize(
     const ro = new ResizeObserver(update);
     ro.observe(parent);
     return () => ro.disconnect();
-  }, [windowRef]);
+  }, [windowRef, isDocked]);
 
   // ── Derive rendered size ──────────────────────────────────────────────
   const { maxW, maxH } = boundsRef.current;
 
   const renderWidth = isExpanded ? maxW : clamp(chatWidth, CHAT_MIN_W, maxW);
-  const renderHeight = isExpanded ? maxH : clamp(chatHeight, CHAT_MIN_H, maxH);
+  // Docked mode ignores chatHeight/isExpanded entirely — height always fills
+  // the container, only width is user-adjustable via the left edge drag.
+  const renderHeight = isDocked ? maxH : isExpanded ? maxH : clamp(chatHeight, CHAT_MIN_H, maxH);
 
   // ── Expand / Restore ──────────────────────────────────────────────────
   const isAtMax = renderWidth >= maxW && renderHeight >= maxH;
 
   const toggleExpand = useCallback(() => {
+    if (isDocked) {
+      // Width-only expand/restore — chatHeight stays untouched so switching
+      // back to floating mode doesn't inherit a docked-session side effect.
+      setChatSize(isAtMax ? CHAT_MIN_W : maxW, chatHeight);
+      return;
+    }
     if (isExpanded || isAtMax) {
       setChatSize(CHAT_MIN_W, CHAT_MIN_H);
     } else {
       setExpanded(true);
     }
-  }, [isExpanded, isAtMax, setChatSize, setExpanded]);
+  }, [isDocked, isExpanded, isAtMax, maxW, chatHeight, setChatSize, setExpanded]);
 
   // ── Drag ──────────────────────────────────────────────────────────────
   const dragRef = useRef<{
@@ -105,8 +118,12 @@ export function useChatResize(
           dir === "left" || dir === "corner"
             ? d.startW - (ev.clientX - d.startX)
             : d.startW;
-        const rawH =
-          dir === "top" || dir === "corner"
+        // Docked drags are width-only — read the live stored height (rather
+        // than d.startH, which is the docked *render* height) so persisting
+        // the width change never overwrites the floating-mode chatHeight.
+        const rawH = isDocked
+          ? useChatStore.getState().chatHeight
+          : dir === "top" || dir === "corner"
             ? d.startH - (ev.clientY - d.startY)
             : d.startH;
 
@@ -133,7 +150,7 @@ export function useChatResize(
       document.body.style.cursor = cursorMap[dir];
       document.body.style.userSelect = "none";
     },
-    [renderWidth, renderHeight, setChatSize],
+    [renderWidth, renderHeight, isDocked, setChatSize],
   );
 
   return { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag };

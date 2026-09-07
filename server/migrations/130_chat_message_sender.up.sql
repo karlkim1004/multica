@@ -1,0 +1,11 @@
+-- chat_session.creator_id is the session OWNER, not necessarily the sender
+-- of every message in it: a Lark group chat_session is created once (bound
+-- to the installer) but many different bound Lark users post role='user'
+-- messages into it afterward. Without a per-message sender, any aggregate
+-- that needs "who actually sent this message" (e.g. the office desk's
+-- last-CEO-message indicator) misattributes every group message to the
+-- installer. NULL for existing rows and for callers that don't resolve a
+-- sender; readers fall back to chat_session.creator_id, which is exactly
+-- right for the single-user web/desktop chat path where sender ==
+-- session creator.
+ALTER TABLE chat_message ADD COLUMN sender_id UUID REFERENCES "user"(id) ON DELETE SET NULL;

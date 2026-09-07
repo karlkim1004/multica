@@ -81,6 +81,8 @@
     "restore_tooltip": "还原",
     "expand_tooltip": "展开",
     "minimize_tooltip": "最小化",
+    "dock_tooltip": "固定到右侧",
+    "undock_tooltip": "取消固定(浮动)",
     "another_running": "另一个对话正在运行",
     "another_unread": "另一个对话有未读回复",
     "running": "运行中",

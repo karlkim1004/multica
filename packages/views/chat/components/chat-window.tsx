@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square, Volume2, VolumeX, RefreshCw } from "lucide-react";
+import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square, Volume2, VolumeX, RefreshCw, PanelRightOpen, PanelRightClose } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
@@ -52,6 +52,7 @@ import { ChatInput } from "./chat-input";
 import { ChatResizeHandles } from "./chat-resize-handles";
 import { useChatContextItems } from "./use-chat-context-items";
 import { useChatResize } from "./use-chat-resize";
+import { useCanDockChat, useEffectiveChatMode } from "./use-chat-dock";
 import { LlmRemainingBadge } from "./llm-remaining-badge";
 import { createLogger } from "@multica/core/logger";
 import type { Agent, Attachment, ChatMessage, ChatMessagesPage, ChatPendingTask, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
@@ -168,6 +169,10 @@ export function ChatWindow() {
   const isOpen = useChatStore((s) => s.isOpen);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
+  const setChatMode = useChatStore((s) => s.setChatMode);
+  const canDockChat = useCanDockChat();
+  const effectiveChatMode = useEffectiveChatMode();
+  const isDocked = effectiveChatMode === "docked-right";
   const setOpen = useChatStore((s) => s.setOpen);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
   const setSelectedAgentId = useChatStore((s) => s.setSelectedAgentId);
@@ -681,7 +686,7 @@ export function ChatWindow() {
   const isExpanded = useChatStore((s) => s.isExpanded);
 
   const windowRef = useRef<HTMLDivElement>(null);
-  const { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag } = useChatResize(windowRef);
+  const { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag } = useChatResize(windowRef, effectiveChatMode);
 
   // Show the list (vs empty state) as soon as there's anything to display —
   // a real message, or a pending task whose timeline will stream in.
@@ -689,9 +694,14 @@ export function ChatWindow() {
 
   const isVisible = isOpen && (isExpanded || boundsReady);
 
-  const containerClass = "absolute bottom-2 right-2 z-50 flex flex-col rounded-xl ring-1 ring-foreground/10 bg-sidebar shadow-2xl overflow-hidden";
+  const containerClass = cn(
+    "z-50 flex flex-col bg-sidebar overflow-hidden",
+    isDocked
+      ? "absolute inset-y-0 right-0 border-l shadow-xl"
+      : "absolute bottom-2 right-2 rounded-xl ring-1 ring-foreground/10 shadow-2xl",
+  );
   const containerStyle: React.CSSProperties = {
-    transformOrigin: "bottom right",
+    transformOrigin: isDocked ? "right center" : "bottom right",
     pointerEvents: isOpen ? "auto" : "none",
   };
 
@@ -702,10 +712,10 @@ export function ChatWindow() {
       ref={windowRef}
       className={containerClass}
       style={containerStyle}
-      initial={{ opacity: 0, scale: 0.95, width: renderWidth, height: renderHeight }}
+      initial={{ opacity: 0, scale: isDocked ? 1 : 0.95, width: renderWidth, height: renderHeight }}
       animate={{
         opacity: isVisible ? 1 : 0,
-        scale: isVisible ? 1 : 0.95,
+        scale: isDocked ? 1 : isVisible ? 1 : 0.95,
         width: renderWidth,
         height: renderHeight,
       }}
@@ -716,7 +726,7 @@ export function ChatWindow() {
         scale: { type: "spring", duration: 0.2, bounce: 0 },
       }}
     >
-      <ChatResizeHandles onDragStart={startDrag} />
+      <ChatResizeHandles onDragStart={startDrag} mode={effectiveChatMode} />
       {/* Header — ⊕ new + session dropdown | window tools */}
       <div className="flex items-center justify-between border-b px-4 py-2.5 gap-2">
         <div className="flex items-center gap-1 min-w-0">
@@ -798,6 +808,26 @@ export function ChatWindow() {
           </Tooltip>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
+          {canDockChat && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    aria-pressed={isDocked}
+                    onClick={() => setChatMode(isDocked ? "floating" : "docked-right")}
+                  />
+                }
+              >
+                {isDocked ? <PanelRightClose /> : <PanelRightOpen />}
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                {isDocked ? t(($) => $.window.undock_tooltip) : t(($) => $.window.dock_tooltip)}
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={

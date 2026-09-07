@@ -117,13 +117,19 @@ test.describe("chat realtime rendering", () => {
         }
       }
       const sockets: E2EMockWebSocket[] = [];
-      const OriginalWebSocket = E2EMockWebSocket;
-      window.WebSocket = class extends OriginalWebSocket {
-        constructor(...args: unknown[]) {
-          super(...args);
-          sockets.push(this);
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = new Proxy(NativeWebSocket, {
+        construct(Target, args) {
+          const url = new URL(String(args[0]), location.href);
+          // Next dev's HMR socket is not application realtime. Keeping it
+          // native prevents the deterministic chat mock from aborting page
+          // navigation before the dashboard mounts.
+          if (url.pathname !== "/ws") return Reflect.construct(Target, args);
+          const socket = new E2EMockWebSocket();
+          sockets.push(socket);
+          return socket;
         }
-      } as unknown as typeof WebSocket;
+      }) as unknown as typeof WebSocket;
       window.__emitRealtimeEvent = (event) => {
         const frame = { data: JSON.stringify(event) };
         for (const socket of sockets) socket.onmessage?.(frame);

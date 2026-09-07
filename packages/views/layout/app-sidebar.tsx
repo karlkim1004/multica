@@ -34,6 +34,7 @@ import {
   X,
   Zap,
   Users,
+  Building2,
 } from "lucide-react";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
@@ -109,6 +110,7 @@ const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
 type NavKey =
   | "inbox"
   | "myIssues"
+  | "office"
   | "issues"
   | "projects"
   | "autopilots"
@@ -123,6 +125,7 @@ type NavKey =
 type NavLabelKey =
   | "inbox"
   | "my_issues"
+  | "office"
   | "issues"
   | "projects"
   | "autopilots"
@@ -139,6 +142,10 @@ const personalNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] 
 ];
 
 const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
+  // NEX-1040/NEX-1045: office sits above issues per the CEO's explicit nav
+  // placement call — this is the "who's idle while work waits" control
+  // surface, so it leads the workspace section.
+  { key: "office", labelKey: "office", icon: Building2 },
   { key: "issues", labelKey: "issues", icon: ListTodo },
   { key: "projects", labelKey: "projects", icon: FolderKanban },
   { key: "autopilots", labelKey: "autopilots", icon: Zap },

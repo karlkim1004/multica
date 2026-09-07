@@ -102,9 +102,9 @@ describe("useRealtimeSync — ws instance change", () => {
     rerender({ ws: ws2 });
 
     // Should have called invalidateQueries for all workspace-scoped keys
-    // (15 workspace-scoped + 6 per-issue prefixes + 3 per-session chat
-    // prefixes + 1 workspaceKeys.list() = 25 calls)
-    expect(invalidateSpy).toHaveBeenCalledTimes(25);
+    // (15 workspace-scoped + 6 per-issue prefixes + 4 per-session chat
+    // prefixes + 1 workspaceKeys.list() = 26 calls)
+    expect(invalidateSpy).toHaveBeenCalledTimes(26);
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
@@ -166,13 +166,16 @@ describe("useRealtimeSync — ws instance change", () => {
   });
 
   it("invalidates per-session chat caches (no wsId in key) on ws instance change", () => {
-    // chatKeys.messages/pendingTask/taskMessages are keyed by sessionId/
-    // taskId, not wsId, so they sit outside the ["chat", wsId] prefix above.
-    // A WS lifecycle event (chat:message/chat:done/task:failed) missed while
-    // disconnected leaves the active session's messages and pending-task
-    // stale forever (staleTime: Infinity) — the chat screen stays stuck on
-    // "실행 중" until a full reload. Recovering on reconnect closes that gap
-    // (NEX-715).
+    // chatKeys.messages/messagesPage/pendingTask/taskMessages are keyed by
+    // sessionId/taskId, not wsId, so they sit outside the ["chat", wsId]
+    // prefix above. A WS lifecycle event (chat:message/chat:done/task:failed)
+    // missed while disconnected leaves the active session's messages and
+    // pending-task stale forever (staleTime: Infinity) — the chat screen
+    // stays stuck on "실행 중" until a full reload. messagesPage is the
+    // infinite-query cache chat-window.tsx actually renders the transcript
+    // from, so without it the "실행 중" flag clears but the messages
+    // themselves stay stale. Recovering all four on reconnect closes that
+    // gap (NEX-715).
     const ws1 = createMockWs();
     const { rerender } = renderHook(
       ({ ws }) => useRealtimeSync(ws, stores),
@@ -187,6 +190,7 @@ describe("useRealtimeSync — ws instance change", () => {
 
     const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
     expect(calls).toContainEqual(["chat", "messages"]);
+    expect(calls).toContainEqual(["chat", "messages-page"]);
     expect(calls).toContainEqual(["chat", "pending-task"]);
     expect(calls).toContainEqual(["task-messages"]);
   });

@@ -21,21 +21,25 @@ import (
 )
 
 type CommentResponse struct {
-	ID             string               `json:"id"`
-	IssueID        string               `json:"issue_id"`
-	AuthorType     string               `json:"author_type"`
-	AuthorID       string               `json:"author_id"`
-	Content        string               `json:"content"`
-	Type           string               `json:"type"`
-	ParentID       *string              `json:"parent_id"`
-	CreatedAt      string               `json:"created_at"`
-	UpdatedAt      string               `json:"updated_at"`
-	ResolvedAt     *string              `json:"resolved_at"`
-	ResolvedByType *string              `json:"resolved_by_type"`
-	ResolvedByID   *string              `json:"resolved_by_id"`
-	SourceTaskID   *string              `json:"source_task_id,omitempty"`
-	Reactions      []ReactionResponse   `json:"reactions"`
-	Attachments    []AttachmentResponse `json:"attachments"`
+	ID              string               `json:"id"`
+	IssueID         string               `json:"issue_id"`
+	AuthorType      string               `json:"author_type"`
+	AuthorID        string               `json:"author_id"`
+	Content         string               `json:"content"`
+	Type            string               `json:"type"`
+	ParentID        *string              `json:"parent_id"`
+	CreatedAt       string               `json:"created_at"`
+	UpdatedAt       string               `json:"updated_at"`
+	ResolvedAt      *string              `json:"resolved_at"`
+	ResolvedByType  *string              `json:"resolved_by_type"`
+	ResolvedByID    *string              `json:"resolved_by_id"`
+	SourceTaskID    *string              `json:"source_task_id,omitempty"`
+	Verdict         *string              `json:"verdict,omitempty"`
+	VerifiedRef     *string              `json:"verified_ref,omitempty"`
+	CriteriaVersion *string              `json:"criteria_version,omitempty"`
+	VerifierAgentID *string              `json:"verifier_agent_id,omitempty"`
+	Reactions       []ReactionResponse   `json:"reactions"`
+	Attachments     []AttachmentResponse `json:"attachments"`
 	// Orientation stats — populated only on the roots_only path and omitted in
 	// every other mode, so the default response shape stays byte-identical for
 	// existing callers. ReplyCount is the number of descendants in the thread;
@@ -58,21 +62,25 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 		attachments = []AttachmentResponse{}
 	}
 	return CommentResponse{
-		ID:             uuidToString(c.ID),
-		IssueID:        uuidToString(c.IssueID),
-		AuthorType:     c.AuthorType,
-		AuthorID:       uuidToString(c.AuthorID),
-		Content:        c.Content,
-		Type:           c.Type,
-		ParentID:       uuidToPtr(c.ParentID),
-		CreatedAt:      timestampToString(c.CreatedAt),
-		UpdatedAt:      timestampToString(c.UpdatedAt),
-		ResolvedAt:     timestampToPtr(c.ResolvedAt),
-		ResolvedByType: textToPtr(c.ResolvedByType),
-		ResolvedByID:   uuidToPtr(c.ResolvedByID),
-		SourceTaskID:   uuidToPtr(c.SourceTaskID),
-		Reactions:      reactions,
-		Attachments:    attachments,
+		ID:              uuidToString(c.ID),
+		IssueID:         uuidToString(c.IssueID),
+		AuthorType:      c.AuthorType,
+		AuthorID:        uuidToString(c.AuthorID),
+		Content:         c.Content,
+		Type:            c.Type,
+		ParentID:        uuidToPtr(c.ParentID),
+		CreatedAt:       timestampToString(c.CreatedAt),
+		UpdatedAt:       timestampToString(c.UpdatedAt),
+		ResolvedAt:      timestampToPtr(c.ResolvedAt),
+		ResolvedByType:  textToPtr(c.ResolvedByType),
+		ResolvedByID:    uuidToPtr(c.ResolvedByID),
+		SourceTaskID:    uuidToPtr(c.SourceTaskID),
+		Verdict:         textToPtr(c.Verdict),
+		VerifiedRef:     textToPtr(c.VerifiedRef),
+		CriteriaVersion: textToPtr(c.CriteriaVersion),
+		VerifierAgentID: uuidToPtr(c.VerifierAgentID),
+		Reactions:       reactions,
+		Attachments:     attachments,
 	}
 }
 
@@ -775,6 +783,9 @@ type CreateCommentRequest struct {
 	ParentID         *string  `json:"parent_id"`
 	AttachmentIDs    []string `json:"attachment_ids"`
 	SuppressAgentIDs []string `json:"suppress_agent_ids"`
+	Verdict          *string  `json:"verdict,omitempty"`
+	VerifiedRef      *string  `json:"verified_ref,omitempty"`
+	CriteriaVersion  *string  `json:"criteria_version,omitempty"`
 }
 
 type CommentTriggerPreviewRequest struct {
@@ -967,6 +978,17 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 
 	// Determine author identity: agent (via X-Agent-ID header) or member.
 	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+	var verdict, verifiedRef, criteriaVersion pgtype.Text
+	if req.Verdict != nil || req.VerifiedRef != nil || req.CriteriaVersion != nil {
+		if authorType != "agent" || req.Verdict == nil || req.VerifiedRef == nil || req.CriteriaVersion == nil ||
+			(*req.Verdict != "PASS" && *req.Verdict != "FAIL") || strings.TrimSpace(*req.VerifiedRef) == "" || strings.TrimSpace(*req.CriteriaVersion) == "" {
+			writeError(w, http.StatusBadRequest, "structured verdict requires an agent author plus verdict PASS|FAIL, verified_ref, and criteria_version")
+			return
+		}
+		verdict = pgtype.Text{String: *req.Verdict, Valid: true}
+		verifiedRef = pgtype.Text{String: *req.VerifiedRef, Valid: true}
+		criteriaVersion = pgtype.Text{String: *req.CriteriaVersion, Valid: true}
+	}
 
 	// Defense against resumed-session drift: when an agent posts from inside a
 	// comment-triggered task AND the comment is being posted on that same
@@ -1031,18 +1053,30 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	comment, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
-		IssueID:     issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		AuthorType:  authorType,
-		AuthorID:    parseUUID(authorID),
-		Content:     req.Content,
-		Type:        req.Type,
-		ParentID:    parentID,
+		IssueID:         issue.ID,
+		WorkspaceID:     issue.WorkspaceID,
+		AuthorType:      authorType,
+		AuthorID:        parseUUID(authorID),
+		Content:         req.Content,
+		Type:            req.Type,
+		ParentID:        parentID,
+		Verdict:         verdict,
+		VerifiedRef:     verifiedRef,
+		CriteriaVersion: criteriaVersion,
+		VerifierAgentID: func() pgtype.UUID {
+			if verdict.Valid {
+				return parseUUID(authorID)
+			}
+			return pgtype.UUID{}
+		}(),
 	})
 	if err != nil {
 		slog.Warn("create comment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create comment: "+err.Error())
 		return
+	}
+	if verdict.Valid && verdict.String == "PASS" {
+		h.tryAutoCloseAfterValidation(r.Context(), issue, comment, authorID)
 	}
 
 	// Link uploaded attachments to this comment.

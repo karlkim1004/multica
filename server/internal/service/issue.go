@@ -2,10 +2,17 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -32,8 +39,127 @@ type IssueService struct {
 	// cmd/server/router.go after construction; nil in tests / self-hosted
 	// without the metrics listener — obsmetrics.RecordEvent treats a nil
 	// Metrics as "PostHog only", so leaving it unset is safe.
-	Metrics     *obsmetrics.BusinessMetrics
-	TaskService *TaskService
+	Metrics       *obsmetrics.BusinessMetrics
+	TaskService   *TaskService
+	WorkerPool    *WorkerPoolService
+	poolSweepMu   sync.Mutex
+	nextPoolSweep map[pgtype.UUID]time.Time
+}
+
+const (
+	defaultPoolStaleAfter = 6 * time.Hour
+	poolSweepInterval     = time.Minute
+)
+
+func poolStaleAfter() time.Duration {
+	if raw := os.Getenv("MULTICA_POOL_STALE_AFTER"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+		slog.Warn("pool dispatch: invalid stale threshold; using default", "value", raw, "default", defaultPoolStaleAfter)
+	}
+	return defaultPoolStaleAfter
+}
+
+func poolDispatchMax() int {
+	if raw := os.Getenv("MULTICA_POOL_DISPATCH_MAX"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+		slog.Warn("pool dispatch: invalid batch limit; using default", "value", raw, "default", 3)
+	}
+	return 3
+}
+
+// poolIssueMayDispatch keeps a persisted wait owner authoritative even when a
+// legacy issue still happens to be labelled todo. Only an agent-owned wait is
+// eligible for recovery; ceo/external/event waits require an outside action.
+func poolIssueMayDispatch(metadata []byte) bool {
+	if len(metadata) == 0 {
+		return true
+	}
+	var values map[string]any
+	if err := json.Unmarshal(metadata, &values); err != nil {
+		return false
+	}
+	waitingOn, ok := values["waiting_on"].(string)
+	return !ok || strings.HasPrefix(waitingOn, "agent:")
+}
+
+// claimPoolSweepSlot limits recovery scans per workspace. The dispatcher
+// visits every workspace in one pass, so a single global cooldown would let
+// the first row suppress every subsequent workspace.
+func (s *IssueService) claimPoolSweepSlot(workspaceID pgtype.UUID, now time.Time) bool {
+	s.poolSweepMu.Lock()
+	defer s.poolSweepMu.Unlock()
+	if s.nextPoolSweep == nil {
+		s.nextPoolSweep = make(map[pgtype.UUID]time.Time)
+	}
+	if now.Before(s.nextPoolSweep[workspaceID]) {
+		return false
+	}
+	s.nextPoolSweep[workspaceID] = now.Add(poolSweepInterval)
+	return true
+}
+
+// SweepStaleAssigned re-wakes a directly assigned idle agent only after its
+// todo issue has been untouched for the configured threshold. It never
+// considers blocked work: waiting_on remains a routing signal, not permission
+// to repeat a known blocker. The expiring issue lease serializes competing
+// heartbeat requests and makes a crashed dispatcher recoverable.
+func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtype.UUID) {
+	if s.TaskService == nil || s.WorkerPool == nil {
+		return
+	}
+	if !s.claimPoolSweepSlot(workspaceID, time.Now()) {
+		return
+	}
+
+	cutoff := time.Now().Add(-poolStaleAfter())
+	dispatched := 0
+	// Review ownership is not yet encoded in the data model; only todo is safe
+	// to resume automatically. blocked and in_review remain explicit routing.
+	for _, status := range []string{"todo"} {
+		issues, err := s.Queries.ListIssues(ctx, db.ListIssuesParams{
+			WorkspaceID: workspaceID, Limit: 100, Status: pgtype.Text{String: status, Valid: true},
+		})
+		if err != nil {
+			slog.Warn("pool dispatch: stale sweep list failed", "workspace_id", util.UUIDToString(workspaceID), "status", status, "error", err)
+			return
+		}
+		for _, candidate := range issues {
+			if candidate.AssigneeType.String != "agent" || !candidate.AssigneeID.Valid || !candidate.UpdatedAt.Valid || candidate.UpdatedAt.Time.After(cutoff) || !poolIssueMayDispatch(candidate.Metadata) {
+				continue
+			}
+			agent, err := s.Queries.GetAgent(ctx, candidate.AssigneeID)
+			if err != nil || agent.Status != "idle" || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+				continue
+			}
+			active, err := s.Queries.HasActiveTaskForIssue(ctx, candidate.ID)
+			if err != nil || active {
+				continue
+			}
+			if err := s.WorkerPool.AcquireIssueLock(ctx, workspaceID, candidate.ID, agent.ID); err != nil {
+				continue
+			}
+			// Re-read after leasing so an assignment/status update that raced the
+			// scan cannot be revived by this sweep.
+			issue, getErr := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: candidate.ID, WorkspaceID: workspaceID})
+			if getErr == nil && issue.Status == status && issue.AssigneeType.String == "agent" && issue.AssigneeID == agent.ID && issue.UpdatedAt.Valid && !issue.UpdatedAt.Time.After(cutoff) && poolIssueMayDispatch(issue.Metadata) {
+				active, activeErr := s.Queries.HasActiveTaskForIssue(ctx, issue.ID)
+				if activeErr == nil && !active {
+					if _, enqueueErr := s.TaskService.EnqueueTaskForIssue(ctx, issue); enqueueErr == nil {
+						dispatched++
+						slog.Info("pool dispatch: stale assigned issue requeued", "issue_id", util.UUIDToString(issue.ID), "worker_id", util.UUIDToString(agent.ID), "runtime_id", util.UUIDToString(agent.RuntimeID), "status", status, "stale_after", poolStaleAfter().String())
+					}
+				}
+			}
+			_ = s.WorkerPool.ReleaseIssueLock(ctx, workspaceID, candidate.ID, agent.ID)
+			if dispatched >= poolDispatchMax() {
+				return
+			}
+		}
+	}
 }
 
 func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.Client, ts *TaskService) *IssueService {
@@ -43,6 +169,7 @@ func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.
 		Bus:         bus,
 		Analytics:   ac,
 		TaskService: ts,
+		WorkerPool:  NewWorkerPoolService(q),
 	}
 }
 
@@ -67,6 +194,9 @@ type IssueCreateParams struct {
 	OriginID       pgtype.UUID
 	AttachmentIDs  []pgtype.UUID
 	AllowDuplicate bool
+	// PoolDispatch opts this unassigned todo into automatic worker-pool claim.
+	// It is explicit so ordinary backlog grooming never changes ownership.
+	PoolDispatch bool
 	// Stage groups this issue into an ordered barrier group under its parent
 	// (NULL = unstaged). See issue_child_done.go for the staged-barrier wake.
 	Stage pgtype.Int4
@@ -282,8 +412,99 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	s.publishIssueCreated(issue, attachments, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
 	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
+	// A todo without an explicit owner enters the worker pool. The claim is
+	// atomic, so two simultaneous creates/pool ticks cannot assign the same
+	// issue twice. Explicit assignment continues to take precedence.
+	if p.PoolDispatch {
+		s.dispatchUnassignedTodo(ctx, issue, p.CreatorType, actorID)
+	}
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
+}
+
+// dispatchUnassignedTodo assigns one newly-created unassigned todo to an
+// already-idle worker on the same workspace and wakes its runtime through the
+// normal task queue. It intentionally never repurposes a working/offline
+// worker; overload handling belongs to the clone policy, not this fast path.
+func (s *IssueService) dispatchUnassignedTodo(ctx context.Context, issue db.Issue, creatorType, actorID string) {
+	if issue.Status != "todo" || issue.AssigneeID.Valid || issue.AssigneeType.Valid || s.TaskService == nil {
+		return
+	}
+	agents, err := s.Queries.ListAgents(ctx, issue.WorkspaceID)
+	if err != nil {
+		slog.Warn("pool dispatch: list workers failed", "workspace_id", util.UUIDToString(issue.WorkspaceID), "error", err)
+		return
+	}
+	for _, worker := range agents {
+		if worker.Status != "idle" || !worker.RuntimeID.Valid {
+			continue
+		}
+		claimed, err := s.Queries.ClaimUnassignedTodoIssueForAgent(ctx, db.ClaimUnassignedTodoIssueForAgentParams{
+			IssueID:     issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			AssigneeID:  worker.ID,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return
+			}
+			slog.Warn("pool dispatch: claim failed", "workspace_id", util.UUIDToString(issue.WorkspaceID), "worker_id", util.UUIDToString(worker.ID), "error", err)
+			return
+		}
+		if _, err := s.TaskService.EnqueueTaskForIssue(ctx, claimed); err != nil {
+			slog.Error("pool dispatch: enqueue failed", "issue_id", util.UUIDToString(claimed.ID), "worker_id", util.UUIDToString(worker.ID), "error", err)
+			return
+		}
+		slog.Info("pool dispatch: unassigned todo claimed", "issue_id", util.UUIDToString(claimed.ID), "worker_id", util.UUIDToString(worker.ID), "runtime_id", util.UUIDToString(worker.RuntimeID))
+		return
+	}
+	// Every ready worker is busy. Clone the overloaded persona onto a distinct
+	// compatible online runtime, then use the same atomic claim and task queue
+	// path as idle dispatch. No normal todo is ever considered: this method is
+	// called only for an explicit pool_dispatch request.
+	s.dispatchOverloadClone(ctx, issue)
+}
+
+func (s *IssueService) dispatchOverloadClone(ctx context.Context, issue db.Issue) {
+	if s.WorkerPool == nil {
+		return
+	}
+	source, err := s.Queries.FindOverloadedAgentForPool(ctx, issue.WorkspaceID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("pool clone: find overload failed", "error", err)
+		}
+		return
+	}
+	target, err := s.Queries.FindCloneTargetRuntimeForAgent(ctx, source.ID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("pool clone: find target failed", "error", err)
+		}
+		return
+	}
+	clone, err := s.WorkerPool.ClonePersonaToRuntime(ctx, source.ID, issue.WorkspaceID, target.ID)
+	if err != nil {
+		slog.Warn("pool clone: create failed", "error", err)
+		return
+	}
+	claimed, err := s.Queries.ClaimUnassignedTodoIssueForAgent(ctx, db.ClaimUnassignedTodoIssueForAgentParams{IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, AssigneeID: clone.ID})
+	if err == nil {
+		_, err = s.TaskService.EnqueueTaskForIssue(ctx, claimed)
+	}
+	if err == nil {
+		slog.Info("pool clone: dispatched", "issue_id", util.UUIDToString(claimed.ID), "source_agent_id", util.UUIDToString(source.ID), "clone_agent_id", util.UUIDToString(clone.ID), "runtime_id", util.UUIDToString(target.ID))
+		return
+	}
+	// Compensate only resources this dispatch created. The conditional unclaim
+	// prevents a late retry from removing somebody else's assignment.
+	if !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("pool clone: dispatch failed; compensating", "error", err)
+	}
+	if claimed.ID.Valid {
+		_, _ = s.Queries.UnclaimTodoIssueForPoolAgent(ctx, db.UnclaimTodoIssueForPoolAgentParams{ID: claimed.ID, AssigneeID: clone.ID})
+	}
+	_ = s.Queries.ArchivePoolClone(ctx, clone.ID)
 }
 
 // linkAttachments links the given attachment IDs to the newly created

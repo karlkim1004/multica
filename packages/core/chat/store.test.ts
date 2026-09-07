@@ -71,3 +71,30 @@ describe("chat store — draft attachments", () => {
     expect(store.getState().inputDraftAttachments["draft-1"]).toBeUndefined();
   });
 });
+
+describe("chat store — chatMode", () => {
+  it("defaults to floating when nothing is persisted", () => {
+    const store = createChatStore({ storage: memStorage() });
+    expect(store.getState().chatMode).toBe("floating");
+  });
+
+  it("persists an explicit docked-right choice and restores it on next boot", () => {
+    const storage = memStorage();
+    const store = createChatStore({ storage });
+
+    store.getState().setChatMode("docked-right");
+    expect(store.getState().chatMode).toBe("docked-right");
+    expect(storage.getItem("multica:chat:mode")).toBe("docked-right");
+
+    // Simulates a reload: a fresh store instance backed by the same storage.
+    const rebooted = createChatStore({ storage });
+    expect(rebooted.getState().chatMode).toBe("docked-right");
+  });
+
+  it("falls back to floating for an unrecognized persisted value", () => {
+    const storage = memStorage();
+    storage.setItem("multica:chat:mode", "garbage");
+    const store = createChatStore({ storage });
+    expect(store.getState().chatMode).toBe("floating");
+  });
+});

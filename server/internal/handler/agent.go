@@ -61,6 +61,7 @@ type AgentResponse struct {
 	// for this agent (empty = use runtime default). The picker is per-runtime
 	// per-model; the API never normalizes across providers. See MUL-2339.
 	ThinkingLevel string              `json:"thinking_level"`
+	IsValidator   bool                `json:"is_validator"`
 	OwnerID       *string             `json:"owner_id"`
 	Skills        []AgentSkillSummary `json:"skills"`
 	CreatedAt     string              `json:"created_at"`
@@ -136,6 +137,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 		MaxConcurrentTasks: a.MaxConcurrentTasks,
 		Model:              a.Model.String,
 		ThinkingLevel:      a.ThinkingLevel.String,
+		IsValidator:        a.IsValidator,
 		OwnerID:            uuidToPtr(a.OwnerID),
 		Skills:             []AgentSkillSummary{},
 		CreatedAt:          timestampToString(a.CreatedAt),
@@ -910,6 +912,7 @@ type UpdateAgentRequest struct {
 	// Distinguishing those modes is why this is a pointer; the raw-fields
 	// map captured at decode time tells us whether the key was sent.
 	ThinkingLevel *string `json:"thinking_level"`
+	IsValidator   *bool   `json:"is_validator"`
 }
 
 // workspaceAlwaysRedactSecrets reports whether the workspace has opted
@@ -1116,6 +1119,22 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Status != nil {
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
+	}
+	if req.IsValidator != nil {
+		actorType, _ := h.resolveActor(r, requestUserID(r), uuidToString(existing.WorkspaceID))
+		if actorType == "agent" {
+			writeError(w, http.StatusForbidden, "agents cannot register validators")
+			return
+		}
+		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
+		if !ok {
+			return
+		}
+		if !roleAllowed(member.Role, "owner", "admin") {
+			writeError(w, http.StatusForbidden, "only workspace owners or admins can register validators")
+			return
+		}
+		params.IsValidator = pgtype.Bool{Bool: *req.IsValidator, Valid: true}
 	}
 	if req.MaxConcurrentTasks != nil {
 		params.MaxConcurrentTasks = pgtype.Int4{Int32: *req.MaxConcurrentTasks, Valid: true}
@@ -1574,6 +1593,54 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 			continue
 		}
 		resp = append(resp, taskToResponse(t, workspaceID))
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// AgentLastOwnerMessage is the timestamp of the most recent chat message the
+// workspace owner sent to an agent, powering the office desk "time since
+// last CEO request" indicator. Agents the owner has never chatted with are
+// omitted rather than returned with a null timestamp.
+type AgentLastOwnerMessage struct {
+	AgentID            string `json:"agent_id"`
+	LastOwnerMessageAt string `json:"last_owner_message_at"`
+}
+
+// GetWorkspaceAgentLastOwnerMessage returns, per agent, when the workspace
+// owner last messaged it in chat. A request the owner sends and gets
+// answered inline in chat never becomes an Issue, so Issue timestamps alone
+// can't drive this indicator — chat_message is the only record of it.
+func (h *Handler) GetWorkspaceAgentLastOwnerMessage(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
+
+	rows, err := h.Queries.GetWorkspaceAgentLastOwnerMessage(r.Context(), parseUUID(workspaceID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get agent last owner message")
+		return
+	}
+
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return
+	}
+
+	resp := make([]AgentLastOwnerMessage, 0, len(rows))
+	for _, row := range rows {
+		agentID := uuidToString(row.AgentID)
+		if _, ok := allowed[agentID]; !ok {
+			continue
+		}
+		resp = append(resp, AgentLastOwnerMessage{
+			AgentID:            agentID,
+			LastOwnerMessageAt: timestampToString(row.LastOwnerMessageAt),
+		})
 	}
 
 	writeJSON(w, http.StatusOK, resp)

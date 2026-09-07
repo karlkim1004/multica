@@ -8,6 +8,7 @@ import type auth from "../locales/en/auth.json";
 import type settings from "../locales/en/settings.json";
 import type issues from "../locales/en/issues.json";
 import type agents from "../locales/en/agents.json";
+import type office from "../locales/en/office.json";
 import type editor from "../locales/en/editor.json";
 import type onboarding from "../locales/en/onboarding.json";
 import type invite from "../locales/en/invite.json";
@@ -49,6 +50,7 @@ declare global {
     settings: typeof settings;
     issues: typeof issues;
     agents: typeof agents;
+    office: typeof office;
     editor: typeof editor;
     onboarding: typeof onboarding;
     invite: typeof invite;

@@ -84,6 +84,8 @@
     "restore_tooltip": "복원",
     "expand_tooltip": "펼치기",
     "minimize_tooltip": "최소화",
+    "dock_tooltip": "오른쪽에 고정",
+    "undock_tooltip": "고정 해제 (플로팅)",
     "another_running": "다른 채팅이 실행 중입니다",
     "another_unread": "다른 채팅에 읽지 않은 답변이 있습니다",
     "running": "실행 중",

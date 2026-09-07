@@ -7,7 +7,8 @@
 -- "Assigned to me"), and the two filters must produce disjoint result sets.
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata, i.stage
+       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata, i.stage,
+       i.auto_close_allowed, i.implementation_agent_id, i.current_ref, i.external_validation_required, i.auto_close_criteria_version
 FROM issue i
 WHERE i.workspace_id = $1
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
@@ -98,8 +99,24 @@ UPDATE issue SET
     parent_issue_id = sqlc.narg('parent_issue_id'),
     project_id = sqlc.narg('project_id'),
     stage = sqlc.narg('stage'),
+    auto_close_allowed = COALESCE(sqlc.narg('auto_close_allowed'), auto_close_allowed),
+    implementation_agent_id = sqlc.narg('implementation_agent_id'),
+    current_ref = sqlc.narg('current_ref'),
+    external_validation_required = COALESCE(sqlc.narg('external_validation_required'), external_validation_required),
+    auto_close_criteria_version = sqlc.narg('auto_close_criteria_version'),
     updated_at = now()
 WHERE id = $1
+RETURNING *;
+
+-- name: UnclaimTodoIssueForPoolAgent :one
+-- Failure compensation for a just-created overload clone: only undo the
+-- exact temporary owner, never a user or another dispatcher assignment.
+UPDATE issue
+SET assignee_type = NULL, assignee_id = NULL, updated_at = now()
+WHERE id = $1
+  AND status = 'todo'
+  AND assignee_type = 'agent'
+  AND assignee_id = $2
 RETURNING *;
 
 -- name: UpdateIssueStatus :one
@@ -108,6 +125,68 @@ UPDATE issue SET
     status = $2,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $3
+RETURNING *;
+
+-- name: AutoCloseIssueAfterValidation :one
+-- This is the sole automatic finalizer. Every eligibility gate lives in this
+-- conditional UPDATE: a PASS comment is evidence, never authority by itself.
+UPDATE issue AS i
+SET status = 'done', updated_at = now()
+FROM comment AS c
+WHERE i.id = sqlc.arg('issue_id')
+  AND i.workspace_id = sqlc.arg('workspace_id')
+  AND c.id = sqlc.arg('comment_id')
+  AND c.issue_id = i.id
+  AND c.workspace_id = i.workspace_id
+  AND c.verdict = 'PASS'
+  AND c.verifier_agent_id IS NOT NULL
+  AND i.status = 'in_review'
+  AND i.auto_close_allowed
+  AND i.implementation_agent_id IS NOT NULL
+  AND i.implementation_agent_id <> c.verifier_agent_id
+  AND i.current_ref IS NOT NULL
+  AND i.current_ref = c.verified_ref
+  AND i.auto_close_criteria_version IS NOT NULL
+  AND i.auto_close_criteria_version = c.criteria_version
+  AND NOT i.external_validation_required
+  AND EXISTS (
+      SELECT 1 FROM agent AS verifier
+      WHERE verifier.id = c.verifier_agent_id
+        AND verifier.workspace_id = i.workspace_id
+        AND verifier.archived_at IS NULL
+        AND verifier.is_validator
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM github_pull_request AS pr
+      JOIN issue_pull_request AS ipr ON ipr.pull_request_id = pr.id
+      WHERE ipr.issue_id = i.id
+        AND pr.state IN ('open', 'draft')
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM issue AS child
+      WHERE child.parent_issue_id = i.id
+        AND child.workspace_id = i.workspace_id
+        AND child.status NOT IN ('done', 'cancelled')
+  )
+RETURNING i.*;
+
+-- name: CountOpenChildIssues :one
+SELECT COUNT(*)::bigint FROM issue
+WHERE parent_issue_id = $1 AND workspace_id = $2
+  AND status NOT IN ('done', 'cancelled');
+
+-- name: ClaimUnassignedTodoIssueForAgent :one
+-- Atomically binds the explicitly opt-in issue to a selected worker.  It must
+-- never search the workspace queue: ordinary unassigned todo items are not
+-- pool work and retain their NULL assignee.
+UPDATE issue
+SET assignee_type = 'agent', assignee_id = @assignee_id, updated_at = now()
+WHERE id = @issue_id
+  AND workspace_id = @workspace_id
+  AND status = 'todo'
+  AND assignee_id IS NULL
+  AND assignee_type IS NULL
 RETURNING *;
 
 -- name: CreateIssueWithOrigin :one

@@ -81,6 +81,8 @@
     "restore_tooltip": "復元",
     "expand_tooltip": "展開",
     "minimize_tooltip": "最小化",
+    "dock_tooltip": "右側に固定",
+    "undock_tooltip": "固定を解除(フローティング)",
     "another_running": "別のチャットが実行中です",
     "another_unread": "別のチャットに未読の返信があります",
     "running": "実行中",

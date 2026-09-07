@@ -227,6 +227,7 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 		ChatSessionID: p.ChatSessionID,
 		Role:          "user",
 		Content:       p.Body,
+		SenderID:      p.Sender,
 	}); err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)
 	}
