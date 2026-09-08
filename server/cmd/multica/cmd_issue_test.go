@@ -2368,3 +2368,65 @@ func TestRunIssueUpdateRejectsInvalidPriorityBeforeRequest(t *testing.T) {
 		t.Fatalf("expected valid values error, got: %v", err)
 	}
 }
+
+func TestRunIssueUpdateSendsValidatorPolicy(t *testing.T) {
+	var updateBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/issues/NEX-1", "/api/issues/issue-123":
+			if r.Method == http.MethodGet {
+				json.NewEncoder(w).Encode(map[string]any{"id": "issue-123", "identifier": "NEX-1"})
+				return
+			}
+			if r.Method == http.MethodPut {
+				if err := json.NewDecoder(r.Body).Decode(&updateBody); err != nil {
+					t.Errorf("decode update body: %v", err)
+				}
+				json.NewEncoder(w).Encode(map[string]any{"id": "issue-123"})
+				return
+			}
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+
+	cmd := &cobra.Command{Use: "update"}
+	cmd.Flags().String("status", "", "")
+	cmd.Flags().String("priority", "", "")
+	cmd.Flags().Bool("auto-close-allowed", false, "")
+	cmd.Flags().String("implementation-agent-id", "", "")
+	cmd.Flags().String("current-ref", "", "")
+	cmd.Flags().Bool("external-validation-required", false, "")
+	cmd.Flags().String("auto-close-criteria-version", "", "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("profile", "", "")
+	_ = cmd.Flags().Set("auto-close-allowed", "true")
+	_ = cmd.Flags().Set("implementation-agent-id", "implementer-123")
+	_ = cmd.Flags().Set("current-ref", "sha-123")
+	_ = cmd.Flags().Set("external-validation-required", "true")
+	_ = cmd.Flags().Set("auto-close-criteria-version", "v1")
+
+	if err := runIssueUpdate(cmd, []string{"NEX-1"}); err != nil {
+		t.Fatalf("runIssueUpdate: %v", err)
+	}
+	if got := updateBody["auto_close_allowed"]; got != true {
+		t.Fatalf("auto_close_allowed = %v, want true (body=%v)", got, updateBody)
+	}
+	if got := updateBody["implementation_agent_id"]; got != "implementer-123" {
+		t.Fatalf("implementation_agent_id = %v, want implementer-123", got)
+	}
+	if got := updateBody["current_ref"]; got != "sha-123" {
+		t.Fatalf("current_ref = %v, want sha-123", got)
+	}
+	if got := updateBody["external_validation_required"]; got != true {
+		t.Fatalf("external_validation_required = %v, want true", got)
+	}
+	if got := updateBody["auto_close_criteria_version"]; got != "v1" {
+		t.Fatalf("auto_close_criteria_version = %v, want v1", got)
+	}
+}

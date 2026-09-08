@@ -1139,6 +1139,38 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		v, _ := cmd.Flags().GetString("due-date")
 		body["due_date"] = v
 	}
+	if cmd.Flags().Changed("auto-close-allowed") {
+		v, _ := cmd.Flags().GetBool("auto-close-allowed")
+		body["auto_close_allowed"] = v
+	}
+	if cmd.Flags().Changed("implementation-agent-id") {
+		v, _ := cmd.Flags().GetString("implementation-agent-id")
+		if v == "" {
+			body["implementation_agent_id"] = nil
+		} else {
+			body["implementation_agent_id"] = v
+		}
+	}
+	if cmd.Flags().Changed("current-ref") {
+		v, _ := cmd.Flags().GetString("current-ref")
+		if v == "" {
+			body["current_ref"] = nil
+		} else {
+			body["current_ref"] = v
+		}
+	}
+	if cmd.Flags().Changed("external-validation-required") {
+		v, _ := cmd.Flags().GetBool("external-validation-required")
+		body["external_validation_required"] = v
+	}
+	if cmd.Flags().Changed("auto-close-criteria-version") {
+		v, _ := cmd.Flags().GetString("auto-close-criteria-version")
+		if v == "" {
+			body["auto_close_criteria_version"] = nil
+		} else {
+			body["auto_close_criteria_version"] = v
+		}
+	}
 	if cmd.Flags().Changed("assignee") || cmd.Flags().Changed("assignee-id") {
 		aType, aID, hasAssignee, resolveErr := pickAssigneeFromFlags(ctx, client, cmd, "assignee", "assignee-id", issueAssigneeKinds)
 		if resolveErr != nil {
