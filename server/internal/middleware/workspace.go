@@ -240,6 +240,19 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				WorkspaceID: wsUUID,
 			})
 			if err != nil {
+				// A join applicant is deliberately not a member until an
+				// admin approves the request. Keep ordinary non-members and
+				// unknown workspaces indistinguishable (404), but make the
+				// pending state explicit to the applicant (403) so clients can
+				// wait for approval instead of treating it as a missing
+				// workspace.
+				if _, pendingErr := queries.GetPendingWorkspaceJoinRequest(r.Context(), db.GetPendingWorkspaceJoinRequestParams{
+					WorkspaceID: wsUUID,
+					UserID:      userUUID,
+				}); pendingErr == nil {
+					writeError(w, http.StatusForbidden, "workspace access pending approval")
+					return
+				}
 				writeError(w, http.StatusNotFound, "workspace not found")
 				return
 			}

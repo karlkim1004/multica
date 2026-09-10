@@ -452,12 +452,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		realtime.HandleWebSocket(hub, mc, pr, slugResolver, w, r)
 	})
 
-	// Local file serving (when using local storage)
-	if local, ok := store.(*storage.LocalStorage); ok {
-		r.Get("/uploads/*", func(w http.ResponseWriter, r *http.Request) {
-			file := strings.TrimPrefix(r.URL.Path, "/uploads/")
-			local.ServeFile(w, r, file)
-		})
+	// Legacy LocalStorage object URLs remain routable, but never bypass the
+	// attachment ACL. The handler resolves the key to an attachment row before
+	// proxying it, preserving old markdown links without making raw objects
+	// public.
+	if _, ok := store.(*storage.LocalStorage); ok {
+		r.With(middleware.Auth(queries, patCache, cloudPATVerifier)).Get("/uploads/*", h.ServeLocalUpload)
 	}
 
 	// Auth (public) — per-IP rate limiting.
@@ -564,12 +564,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
-			r.Get("/", h.ListWorkspaces)
+			r.With(h.RestrictGeneralUserWorkspaceList).Get("/", h.ListWorkspaces)
 			r.Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
 				// Member-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
+					r.Use(h.RestrictGeneralUserWorkspaceRoutes)
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
 					r.Post("/leave", h.LeaveWorkspace)
@@ -591,6 +592,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
+					r.Post("/join-codes", h.CreateWorkspaceJoinCode)
+					r.Get("/join-requests", h.ListWorkspaceJoinRequests)
+					r.Post("/join-requests/{requestId}/approve", h.ApproveWorkspaceJoinRequest)
+					r.Post("/join-requests/{requestId}/reject", h.RejectWorkspaceJoinRequest)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Delete("/", h.DeleteMember)
@@ -622,6 +627,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// an installation out from under one.
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
+					r.Use(h.RestrictGeneralUserWorkspaceRoutes)
 					r.Get("/lark/installations", h.ListLarkInstallations)
 				})
 				r.Group(func(r chi.Router) {
@@ -637,6 +643,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 		})
+
+		// Joining is authenticated but intentionally not member-scoped: a
+		// successful request does not create membership until an admin approves.
+		r.Post("/api/workspace-join-requests", h.CreateWorkspaceJoinRequest)
 
 		// Lark binding-token redemption. NOT workspace-scoped because
 		// the redeemer hits this BEFORE they have any workspace
@@ -699,6 +709,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// --- Workspace-scoped routes (all require workspace membership) ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceMember(queries))
+			r.Use(h.RestrictGeneralUserWorkspaceRoutes)
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
@@ -1088,6 +1099,17 @@ func (mc *membershipChecker) IsMember(ctx context.Context, userID, workspaceID s
 		WorkspaceID: parseUUID(workspaceID),
 	})
 	return err == nil
+}
+
+// CanReceiveWorkspaceEvents keeps WebSocket's workspace/task/chat payloads
+// aligned with the REST write-only general_user contract. Membership itself is
+// still accepted so general users can retain their user-scoped connection.
+func (mc *membershipChecker) CanReceiveWorkspaceEvents(ctx context.Context, userID, workspaceID string) bool {
+	member, err := mc.queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		UserID:      parseUUID(userID),
+		WorkspaceID: parseUUID(workspaceID),
+	})
+	return err == nil && member.Role != "general_user"
 }
 
 // patResolver implements realtime.PATResolver using database queries.

@@ -19,9 +19,14 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 )
 
-// MembershipChecker verifies a user belongs to a workspace.
+// MembershipChecker verifies workspace membership and whether that member may
+// receive workspace-scoped realtime payloads. A write-only member may connect
+// (for its user scope) but must not subscribe to workspace, task, or chat
+// scopes, because those payloads can contain issue content it cannot read via
+// REST.
 type MembershipChecker interface {
 	IsMember(ctx context.Context, userID, workspaceID string) bool
+	CanReceiveWorkspaceEvents(ctx context.Context, userID, workspaceID string) bool
 }
 
 // SlugResolver translates a workspace slug to its UUID.
@@ -217,6 +222,11 @@ type Client struct {
 	userID      string
 	workspaceID string
 
+	// canReceiveWorkspaceEvents is intentionally evaluated when subscribing
+	// and when fanning out. The latter revokes a pre-existing connection after
+	// a member is changed to the write-only role without requiring reconnect.
+	canReceiveWorkspaceEvents func(ctx context.Context, userID, workspaceID string) bool
+
 	// subscriptions is guarded by hub.mu. Tracks the scopes this client is
 	// currently in. Used to clean up rooms on disconnect.
 	subscriptions map[scopeKey]bool
@@ -229,6 +239,17 @@ type Client struct {
 	dedupMu  sync.Mutex
 	seenIDs  map[string]struct{}
 	seenList []string
+}
+
+func (c *Client) canReceiveWorkspaceScopedEvents() bool {
+	if c.canReceiveWorkspaceEvents == nil {
+		return true
+	}
+	return c.canReceiveWorkspaceEvents(context.Background(), c.userID, c.workspaceID)
+}
+
+func isWorkspaceScoped(scopeType string) bool {
+	return scopeType == ScopeWorkspace || scopeType == ScopeTask || scopeType == ScopeChat
 }
 
 const dedupCapacity = 128
@@ -318,8 +339,12 @@ func (h *Hub) Run() {
 			h.mu.Unlock()
 			M.ConnectsTotal.Add(1)
 			M.ActiveConnections.Add(1)
-			// Auto-subscribe to the workspace and user scopes.
-			h.subscribe(client, ScopeWorkspace, client.workspaceID)
+			// Auto-subscribe write-capable users to their workspace scope. A
+			// general_user remains connected for user-scoped notifications but
+			// must not receive issue/task/chat payloads through realtime.
+			if client.canReceiveWorkspaceScopedEvents() {
+				h.subscribe(client, ScopeWorkspace, client.workspaceID)
+			}
 			if client.userID != "" {
 				h.subscribe(client, ScopeUser, client.userID)
 			}
@@ -496,6 +521,9 @@ func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, e
 	var slow []*Client
 	var sent int64
 	for client := range clients {
+		if isWorkspaceScoped(scopeType) && !client.canReceiveWorkspaceScopedEvents() {
+			continue
+		}
 		if !client.markSeen(eventID) {
 			continue
 		}
@@ -830,11 +858,12 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 	)
 
 	client := &Client{
-		hub:         hub,
-		conn:        conn,
-		send:        make(chan []byte, 256),
-		userID:      userID,
-		workspaceID: workspaceID,
+		hub:                       hub,
+		conn:                      conn,
+		send:                      make(chan []byte, 256),
+		userID:                    userID,
+		workspaceID:               workspaceID,
+		canReceiveWorkspaceEvents: mc.CanReceiveWorkspaceEvents,
 	}
 	hub.register <- client
 
@@ -927,9 +956,33 @@ func (c *Client) handleSubscribe(scope, id string) {
 			})
 			return
 		}
+		if scope == ScopeWorkspace && !c.canReceiveWorkspaceScopedEvents() {
+			M.SubscribeDeniedTotal(scope).Add(1)
+			c.sendJSON(map[string]any{
+				"type": "subscribe_error",
+				"payload": map[string]string{
+					"scope": scope,
+					"id":    id,
+					"error": "forbidden",
+				},
+			})
+			return
+		}
 		// Already auto-subscribed at connect time; reply ack idempotently.
 		c.hub.subscribe(c, scope, id)
 	case ScopeTask, ScopeChat:
+		if !c.canReceiveWorkspaceScopedEvents() {
+			M.SubscribeDeniedTotal(scope).Add(1)
+			c.sendJSON(map[string]any{
+				"type": "subscribe_error",
+				"payload": map[string]string{
+					"scope": scope,
+					"id":    id,
+					"error": "forbidden",
+				},
+			})
+			return
+		}
 		auth := c.hub.authorizer
 		if auth != nil {
 			ok, err := auth.AuthorizeScope(context.Background(), c.userID, c.workspaceID, scope, id)

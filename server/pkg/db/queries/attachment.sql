@@ -33,6 +33,15 @@ WHERE id = $1 AND workspace_id = $2;
 SELECT * FROM attachment
 WHERE id = $1;
 
+-- name: GetAttachmentByLocalUploadKey :one
+-- The legacy LocalStorage object route receives only the key below
+-- /uploads/. Resolve it back to its attachment row before streaming bytes so
+-- the route applies the same workspace-membership and role checks as the
+-- canonical /api/attachments/{id}/download endpoint. Both a site-relative
+-- URL and a LOCAL_UPLOAD_BASE_URL-prefixed URL end in /uploads/<key>.
+SELECT * FROM attachment
+WHERE regexp_replace(url, '^.*/uploads/', '') = $1;
+
 -- name: ListAttachmentsByCommentIDs :many
 SELECT * FROM attachment
 WHERE comment_id = ANY($1::uuid[]) AND workspace_id = $2

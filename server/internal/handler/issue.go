@@ -2114,6 +2114,9 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.authorizeResource(w, r, workspaceID, ResourceIssue, "create", resourceOwner{}) {
+		return
+	}
 
 	status := req.Status
 	if status == "" {
@@ -2360,6 +2363,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := requestUserID(r)
 	workspaceID := uuidToString(prevIssue.WorkspaceID)
+	if !h.authorizeResource(w, r, workspaceID, ResourceIssue, "mutate", resourceOwner{CreatorType: prevIssue.CreatorType, CreatorID: uuidToString(prevIssue.CreatorID)}) {
+		return
+	}
 
 	// Read body as raw bytes so we can detect which fields were explicitly sent.
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -2619,6 +2625,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, req.AttachmentIDs, "attachment_ids")
 	if !ok {
+		return
+	}
+	if !h.authorizeResource(w, r, workspaceID, ResourceIssue, "mutate", resourceOwner{CreatorType: prevIssue.CreatorType, CreatorID: uuidToString(prevIssue.CreatorID)}) {
 		return
 	}
 
@@ -2906,6 +2915,9 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.authorizeResource(w, r, uuidToString(issue.WorkspaceID), ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
+		return
+	}
 
 	h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears issue_id).
@@ -3028,6 +3040,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			continue
+		}
+		if !h.authorizeResource(w, r, workspaceID, ResourceIssue, "mutate", resourceOwner{CreatorType: prevIssue.CreatorType, CreatorID: uuidToString(prevIssue.CreatorID)}) {
+			return
 		}
 
 		params := db.UpdateIssueParams{
@@ -3255,7 +3270,12 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	deleted := 0
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	issues := make([]db.Issue, 0, len(req.IssueIDs))
+	forbidden := make([]string, 0)
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
@@ -3268,6 +3288,22 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		if !h.resourceAllowed(r, workspaceID, member, ResourceIssue, "mutate", resourceOwner{CreatorType: issue.CreatorType, CreatorID: uuidToString(issue.CreatorID)}) {
+			forbidden = append(forbidden, issueID)
+			continue
+		}
+		issues = append(issues, issue)
+	}
+	if len(forbidden) > 0 {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error":               "insufficient permissions",
+			"forbidden_issue_ids": forbidden,
+		})
+		return
+	}
+
+	deleted := 0
+	for _, issue := range issues {
 
 		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 		h.Queries.FailAutopilotRunsByIssue(r.Context(), issue.ID)
@@ -3279,7 +3315,7 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 			ID:          issue.ID,
 			WorkspaceID: issue.WorkspaceID,
 		}); err != nil {
-			slog.Warn("batch delete issue failed", "issue_id", issueID, "error", err)
+			slog.Warn("batch delete issue failed", "issue_id", uuidToString(issue.ID), "error", err)
 			continue
 		}
 

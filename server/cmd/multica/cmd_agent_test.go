@@ -1433,6 +1433,37 @@ func TestAgentUpdateSendsThinkingLevel(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateSendsIsValidator(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "Validator", "is_validator": true})
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+
+	cmd := &cobra.Command{Use: "update"}
+	cmd.Flags().Bool("is-validator", false, "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("profile", "", "")
+	if err := cmd.Flags().Set("is-validator", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runAgentUpdate(cmd, []string{"agent-123"}); err != nil {
+		t.Fatalf("runAgentUpdate: %v", err)
+	}
+	if got, ok := gotBody["is_validator"]; !ok || got != true {
+		t.Fatalf("is_validator body = %v, want true (body=%v)", got, gotBody)
+	}
+}
+
 // TestAgentCreateAndUpdateExposeThinkingLevelFlag guarantees the flag stays
 // wired on both write surfaces. The read side (`agent get`) already exposes
 // thinking_level; this is the matching write surface (#4170).
