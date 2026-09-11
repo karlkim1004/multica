@@ -549,6 +549,15 @@ export interface RuntimeHourlyActivity {
   count: number;
 }
 
+// Powers the office desk "time since last CEO request" indicator
+// (NEX-1121/NEX-1129). Agents the owner has never messaged in chat are
+// omitted by the server rather than returned with a null timestamp — a
+// missing entry for an agent_id means "never", not "unknown".
+export interface AgentLastOwnerMessage {
+  agent_id: string;
+  last_owner_message_at: string;
+}
+
 // One (agent, provider, model) row of the "Cost by agent" tab on the runtime
 // detail page. provider + model stay on the wire because cost is computed
 // client-side from a per-model pricing table (provider disambiguates bare

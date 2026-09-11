@@ -47,6 +47,10 @@
     "whip_cooldown_toast": "同じボットは5分に1回だけ鞭打てます",
     "whip_already_active_toast": "{{name}}はすでに実行中のため、鞭打ちをスキップしました",
     "whip_success_toast": "{{name}}に鞭打ちました — 新しい実行がキューに入りました",
-    "whip_error_toast": "鞭打ちリクエスト中にエラーが発生しました"
+    "whip_error_toast": "鞭打ちリクエスト中にエラーが発生しました",
+    "last_owner_request_value": "オーナー依頼から{{time}}経過",
+    "last_owner_request_never": "オーナー依頼の履歴なし",
+    "last_owner_request_loading": "オーナー依頼を確認中…",
+    "last_owner_request_error": "オーナー依頼の取得に失敗"
   }
 }

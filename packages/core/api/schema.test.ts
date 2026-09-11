@@ -206,6 +206,31 @@ describe("ApiClient schema fallback", () => {
     });
   });
 
+  describe("getWorkspaceAgentLastOwnerMessage", () => {
+    it("returns [] when the response is null", async () => {
+      stubFetchJson(null);
+      const client = new ApiClient("https://api.example.test");
+      const rows = await client.getWorkspaceAgentLastOwnerMessage();
+      expect(rows).toEqual([]);
+    });
+
+    it("returns [] when the response is not an array", async () => {
+      stubFetchJson({ wrong: "shape" });
+      const client = new ApiClient("https://api.example.test");
+      const rows = await client.getWorkspaceAgentLastOwnerMessage();
+      expect(rows).toEqual([]);
+    });
+
+    it("parses well-formed rows", async () => {
+      stubFetchJson([{ agent_id: "agent-1", last_owner_message_at: "2026-09-06T05:48:42+09:00" }]);
+      const client = new ApiClient("https://api.example.test");
+      const rows = await client.getWorkspaceAgentLastOwnerMessage();
+      expect(rows).toEqual([
+        { agent_id: "agent-1", last_owner_message_at: "2026-09-06T05:48:42+09:00" },
+      ]);
+    });
+  });
+
   describe("listChildIssues", () => {
     it("returns { issues: [] } when the issues field is missing", async () => {
       stubFetchJson({});

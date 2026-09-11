@@ -98,6 +98,8 @@ export async function fetchRecentDoneIssuesForOffice(): Promise<Issue[]> {
 export const officeKeys = {
   openIssues: (wsId: string) => ["workspaces", wsId, "office", "open-issues"] as const,
   recentDone: (wsId: string) => ["workspaces", wsId, "office", "recent-done"] as const,
+  lastOwnerMessage: (wsId: string) =>
+    ["workspaces", wsId, "office", "last-owner-message"] as const,
 };
 
 export function officeOpenIssuesOptions(wsId: string) {
@@ -111,5 +113,15 @@ export function officeRecentDoneOptions(wsId: string) {
   return queryOptions({
     queryKey: officeKeys.recentDone(wsId),
     queryFn: () => fetchRecentDoneIssuesForOffice(),
+  });
+}
+
+// NEX-1129: per-agent "time since last CEO request" indicator, sourced from
+// chat (see NEX-1121) rather than Issue data — a request the owner sends and
+// gets answered inline in chat never becomes an Issue.
+export function officeAgentLastOwnerMessageOptions(wsId: string) {
+  return queryOptions({
+    queryKey: officeKeys.lastOwnerMessage(wsId),
+    queryFn: () => api.getWorkspaceAgentLastOwnerMessage(),
   });
 }
