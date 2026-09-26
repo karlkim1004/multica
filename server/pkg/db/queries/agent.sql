@@ -193,6 +193,21 @@ SELECT * FROM agent_task_queue
 WHERE agent_id = $1
 ORDER BY created_at DESC;
 
+-- name: ListAgentRuntimeFailuresSinceSuccess :many
+-- Only a later completed task proves credentials recovered. Transient errors
+-- and cancellations must not hide an earlier authentication failure.
+SELECT q.* FROM agent_task_queue q
+JOIN agent a ON a.id = q.agent_id
+WHERE a.workspace_id = $1 AND q.agent_id = $2 AND q.runtime_id = $3
+  AND q.status = 'failed'
+  AND COALESCE(q.completed_at, q.created_at) >= COALESCE((
+    SELECT MAX(COALESCE(s.completed_at, s.created_at))
+    FROM agent_task_queue s
+    WHERE s.agent_id = q.agent_id AND s.runtime_id = q.runtime_id
+      AND s.status = 'completed'
+  ), '-infinity'::timestamptz)
+ORDER BY q.completed_at DESC NULLS LAST, q.created_at DESC, q.id DESC;
+
 -- name: CreateAgentTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,

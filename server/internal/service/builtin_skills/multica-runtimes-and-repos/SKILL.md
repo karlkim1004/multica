@@ -62,6 +62,14 @@ Check in this order:
 7. If repo checkout failed, classify it after checking whether repo context was
    present in the task/project context.
 
+The stale-assignment sweep suppresses automatic wakes when the same agent has
+an authentication/access failure on its current runtime since its last successful
+task completion. Legacy unknown OAuth-expiry errors are recognized too. A heartbeat,
+cancelled task, or later network error is not proof of recovered credentials. Re-authenticate, then use
+an explicit retry to verify recovery; a successful task clears the guard.
+Changing to a different runtime checks that runtime's own outcome history.
+This guard only governs the stale-assignment sweep, not explicit task requests.
+
 ## Repos
 
 The runtime brief lists repos available to this task. Treat that list as the authority for agent checkout unless the user explicitly asks to bind a new project resource.

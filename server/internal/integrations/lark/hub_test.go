@@ -1186,6 +1186,20 @@ func TestHubNoopReplierInlineNoGoroutine(t *testing.T) {
 	}
 }
 
+func TestHubWaitClosesSupervisorAdmission(t *testing.T) {
+	hub := NewHub(newFakeHubQueries(), nil, nil, HubConfig{Logger: newDiscardLogger()})
+	// Model a sweep that resumes after cancellation and after the final old
+	// supervisor exits: no successor may be admitted after Wait has started.
+	hub.Wait()
+	inst := db.LarkInstallation{ID: uuidFromString(t, "feedfeed-feed-feed-feed-feedfeedfeed")}
+	hub.startSupervisor(context.Background(), inst)
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if !hub.stopped || len(hub.supervisors) != 0 {
+		t.Fatal("shutdown allowed a late supervisor to escape joining")
+	}
+}
+
 // TestHubReplyTimeoutDefaultIsUnder3s pins the value the production
 // path uses — Lark requires ACK within 3 seconds, and the replier
 // runs ON TOP of the dispatch latency, so it must complete strictly

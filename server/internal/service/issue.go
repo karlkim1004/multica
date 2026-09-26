@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 // IssueService is the single service-layer entry point for creating issues.
@@ -86,6 +87,29 @@ func poolIssueMayDispatch(metadata []byte) bool {
 	return !ok || strings.HasPrefix(waitingOn, "agent:")
 }
 
+// poolOutcomeBlocksRecovery prevents the stale sweep from bypassing the
+// non-retryable authentication policy by creating fresh attempt=1 tasks.
+// Reclassify legacy unknown errors without rewriting historical records.
+func poolOutcomeBlocksRecovery(task db.AgentTaskQueue, agent db.Agent) bool {
+	if task.AgentID != agent.ID || task.RuntimeID != agent.RuntimeID || task.Status != "failed" {
+		return false
+	}
+	reason := task.FailureReason.String
+	if reason == "" || reason == "agent_error" || reason == taskfailure.ReasonAgentUnknown.String() {
+		reason = taskfailure.Classify(task.Error.String).String()
+	}
+	return reason == taskfailure.ReasonAgentProviderAuthOrAccess.String()
+}
+
+func poolFailuresBlockRecovery(tasks []db.AgentTaskQueue, agent db.Agent) bool {
+	for _, task := range tasks {
+		if poolOutcomeBlocksRecovery(task, agent) {
+			return true
+		}
+	}
+	return false
+}
+
 // claimPoolSweepSlot limits recovery scans per workspace. The dispatcher
 // visits every workspace in one pass, so a single global cooldown would let
 // the first row suppress every subsequent workspace.
@@ -146,6 +170,13 @@ func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtyp
 			// scan cannot be revived by this sweep.
 			issue, getErr := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: candidate.ID, WorkspaceID: workspaceID})
 			if getErr == nil && issue.Status == status && issue.AssigneeType.String == "agent" && issue.AssigneeID == agent.ID && issue.UpdatedAt.Valid && !issue.UpdatedAt.Time.After(cutoff) && poolIssueMayDispatch(issue.Metadata) {
+				failures, outcomeErr := s.Queries.ListAgentRuntimeFailuresSinceSuccess(ctx, db.ListAgentRuntimeFailuresSinceSuccessParams{
+					WorkspaceID: workspaceID, AgentID: agent.ID, RuntimeID: agent.RuntimeID,
+				})
+				if outcomeErr != nil || poolFailuresBlockRecovery(failures, agent) {
+					_ = s.WorkerPool.ReleaseIssueLock(ctx, workspaceID, candidate.ID, agent.ID)
+					continue
+				}
 				active, activeErr := s.Queries.HasActiveTaskForIssue(ctx, issue.ID)
 				if activeErr == nil && !active {
 					if _, enqueueErr := s.TaskService.EnqueueTaskForIssue(ctx, issue); enqueueErr == nil {
