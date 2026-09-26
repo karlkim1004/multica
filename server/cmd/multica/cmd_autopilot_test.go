@@ -16,6 +16,7 @@ import (
 func newAutopilotCreateTestCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "create"}
 	cmd.Flags().String("title", "", "")
+	cmd.Flags().String("delivery-chat-session", "", "")
 	cmd.Flags().String("description", "", "")
 	cmd.Flags().String("agent", "", "")
 	cmd.Flags().String("mode", "", "")
@@ -30,6 +31,7 @@ func newAutopilotCreateTestCmd() *cobra.Command {
 func newAutopilotUpdateTestCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "update"}
 	cmd.Flags().String("title", "", "")
+	cmd.Flags().String("delivery-chat-session", "", "")
 	cmd.Flags().String("description", "", "")
 	cmd.Flags().String("agent", "", "")
 	cmd.Flags().String("project", "", "")
@@ -421,5 +423,28 @@ func TestUUIDRegexp(t *testing.T) {
 		if got := uuidRegexp.MatchString(tt.in); got != tt.want {
 			t.Errorf("uuidRegexp.MatchString(%q) = %v, want %v", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestRunAutopilotCreateSendsChatDelivery(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&body)
+		json.NewEncoder(w).Encode(map[string]any{"id": "ap"})
+	}))
+	defer srv.Close()
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	cmd := newAutopilotCreateTestCmd()
+	cmd.Flags().Set("title", "report")
+	cmd.Flags().Set("agent", "11111111-1111-1111-1111-111111111111")
+	cmd.Flags().Set("mode", "run_only")
+	cmd.Flags().Set("delivery-chat-session", "22222222-2222-2222-2222-222222222222")
+	if err := runAutopilotCreate(cmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if body["delivery_chat_session_id"] != "22222222-2222-2222-2222-222222222222" {
+		t.Fatalf("missing destination: %v", body)
 	}
 }

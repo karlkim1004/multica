@@ -14,7 +14,7 @@ import (
 const createChatMessage = `-- name: CreateChatMessage :one
 INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms, sender_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id, autopilot_run_id
 `
 
 type CreateChatMessageParams struct {
@@ -52,6 +52,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		&i.FailureReason,
 		&i.ElapsedMs,
 		&i.SenderID,
+		&i.AutopilotRunID,
 	)
 	return i, err
 }
@@ -177,7 +178,7 @@ func (q *Queries) DeleteChatSession(ctx context.Context, arg DeleteChatSessionPa
 const deleteUserChatMessageByTask = `-- name: DeleteUserChatMessageByTask :one
 DELETE FROM chat_message
 WHERE task_id = $1 AND role = 'user'
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id, autopilot_run_id
 `
 
 func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype.UUID) (ChatMessage, error) {
@@ -193,12 +194,13 @@ func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype
 		&i.FailureReason,
 		&i.ElapsedMs,
 		&i.SenderID,
+		&i.AutopilotRunID,
 	)
 	return i, err
 }
 
 const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id, autopilot_run_id FROM chat_message
 WHERE id = $1
 `
 
@@ -215,6 +217,7 @@ func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessa
 		&i.FailureReason,
 		&i.ElapsedMs,
 		&i.SenderID,
+		&i.AutopilotRunID,
 	)
 	return i, err
 }
@@ -311,7 +314,7 @@ func (q *Queries) GetLastChatTaskSession(ctx context.Context, chatSessionID pgty
 }
 
 const getMostRecentUserChatMessage = `-- name: GetMostRecentUserChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id, autopilot_run_id FROM chat_message
 WHERE chat_session_id = $1 AND role = 'user'
 ORDER BY created_at DESC
 LIMIT 1
@@ -335,6 +338,7 @@ func (q *Queries) GetMostRecentUserChatMessage(ctx context.Context, chatSessionI
 		&i.FailureReason,
 		&i.ElapsedMs,
 		&i.SenderID,
+		&i.AutopilotRunID,
 	)
 	return i, err
 }
@@ -502,7 +506,7 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 }
 
 const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id, autopilot_run_id FROM chat_message
 WHERE chat_session_id = $1
 ORDER BY created_at ASC
 `
@@ -526,6 +530,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 			&i.FailureReason,
 			&i.ElapsedMs,
 			&i.SenderID,
+			&i.AutopilotRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -538,7 +543,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 }
 
 const listChatMessagesPage = `-- name: ListChatMessagesPage :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, sender_id, autopilot_run_id FROM chat_message
 WHERE chat_session_id = $1
   AND (
     $3::timestamptz IS NULL
@@ -579,6 +584,7 @@ func (q *Queries) ListChatMessagesPage(ctx context.Context, arg ListChatMessages
 			&i.FailureReason,
 			&i.ElapsedMs,
 			&i.SenderID,
+			&i.AutopilotRunID,
 		); err != nil {
 			return nil, err
 		}

@@ -13,6 +13,10 @@ type Event struct {
 	ActorID     string
 	Payload     any // JSON-serializable, same shape as current WS payloads
 
+	// RecipientUserID restricts realtime delivery to this user; it must never
+	// fall through to workspace or global fanout.
+	RecipientUserID string
+
 	// Optional scope hints used by the realtime fanout layer to route the
 	// event to a more specific scope than `workspace:{WorkspaceID}`. When set
 	// these tell the listener which Redis stream / Hub room to publish on

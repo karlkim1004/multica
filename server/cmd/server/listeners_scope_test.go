@@ -1,12 +1,45 @@
 package main
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func TestRegisterListeners_PrivateReportOnlyReachesRecipient(t *testing.T) {
+	bus := events.New()
+	fb := &fakeBroadcaster{}
+	registerListeners(bus, fb)
+	const report = "private financial report: account balance 12345"
+	bus.Publish(events.Event{
+		Type: protocol.EventChatMessage, WorkspaceID: "shared-workspace",
+		ActorType: "agent", ActorID: "report-agent", ChatSessionID: "private-chat",
+		RecipientUserID: "report-owner",
+		Payload:         protocol.ChatMessagePayload{ChatSessionID: "private-chat", MessageID: "report-message", Role: "assistant", Content: report},
+	})
+	if len(fb.workspaceCalls) != 0 || len(fb.scopeCalls) != 0 || fb.broadcastCalled != 0 {
+		t.Fatalf("private report escaped recipient routing: workspace=%d scope=%d global=%d", len(fb.workspaceCalls), len(fb.scopeCalls), fb.broadcastCalled)
+	}
+	if len(fb.userCalls) != 1 || fb.userCalls[0].userID != "report-owner" {
+		t.Fatalf("report must reach only its owner: %+v", fb.userCalls)
+	}
+	if len(fb.userCalls[0].exclude) != 0 {
+		t.Fatal("owner's active workspace connection must receive the report")
+	}
+	var received struct {
+		Type    string                      `json:"type"`
+		Payload protocol.ChatMessagePayload `json:"payload"`
+	}
+	if err := json.Unmarshal(fb.userCalls[0].msg, &received); err != nil {
+		t.Fatal(err)
+	}
+	if received.Type != protocol.EventChatMessage || received.Payload.Content != report || received.Payload.ChatSessionID != "private-chat" {
+		t.Fatalf("owner did not receive the complete report: %+v", received)
+	}
+}
 
 // fakeBroadcaster records every fanout call so tests can assert which scope a
 // given event landed on.

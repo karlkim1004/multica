@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { chatKeys } from "../chat/queries";
 import type { WSClient } from "../api/ws-client";
 import { useRealtimeSync, type RealtimeSyncStores } from "./use-realtime-sync";
 
@@ -193,5 +194,21 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(["chat", "messages-page"]);
     expect(calls).toContainEqual(["chat", "pending-task"]);
     expect(calls).toContainEqual(["task-messages"]);
+  });
+});
+
+
+describe("assistant report events", () => {
+  it("refreshes messages and unread sessions without clearing a running task", () => {
+    const qc = new QueryClient();
+    const ws = createMockWs();
+    qc.setQueryData(chatKeys.pendingTask("session-1"), { task_id: "running-user-task", status: "running" });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    const handler = vi.mocked(ws.on).mock.calls.find(([name]) => name === "chat:message")?.[1];
+    expect(handler).toBeDefined();
+    handler?.({ chat_session_id: "session-1", role: "assistant", content: "scheduled report" });
+    expect(qc.getQueryData(chatKeys.pendingTask("session-1"))).toEqual({ task_id: "running-user-task", status: "running" });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.sessions("ws-1") });
   });
 });

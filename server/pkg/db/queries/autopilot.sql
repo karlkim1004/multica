@@ -45,15 +45,16 @@ WHERE id = $1 AND workspace_id = $2;
 INSERT INTO autopilot (
     workspace_id, title, description, assignee_type, assignee_id,
     status, execution_mode, issue_title_template, project_id,
-    created_by_type, created_by_id
+    created_by_type, created_by_id, delivery_chat_session_id
 ) VALUES (
     $1, $2, sqlc.narg('description'), $3, $4,
     $5, $6, sqlc.narg('issue_title_template'), sqlc.narg('project_id'),
-    $7, $8
+    $7, $8, sqlc.narg('delivery_chat_session_id')
 ) RETURNING *;
 
 -- name: UpdateAutopilot :one
 UPDATE autopilot SET
+    delivery_chat_session_id = sqlc.narg('delivery_chat_session_id'),
     title = COALESCE(sqlc.narg('title'), title),
     description = COALESCE(sqlc.narg('description'), description),
     assignee_type = COALESCE(sqlc.narg('assignee_type'), assignee_type),
@@ -187,10 +188,10 @@ RETURNING *;
 -- agent_id on agent_task_queue still records who actually ran the work
 -- (the squad leader); squad_id lets reports group by squad without a join.
 INSERT INTO autopilot_run (
-    autopilot_id, trigger_id, source, status, trigger_payload, squad_id
+    autopilot_id, trigger_id, source, status, trigger_payload, squad_id, delivery_status
 ) VALUES (
     $1, sqlc.narg('trigger_id'), $2, $3, sqlc.narg('trigger_payload'),
-    sqlc.narg('squad_id')
+    sqlc.narg('squad_id'), CASE WHEN $3 <> 'skipped' AND EXISTS (SELECT 1 FROM autopilot WHERE id = $1 AND delivery_chat_session_id IS NOT NULL) THEN 'pending' ELSE 'not_requested' END
 ) RETURNING *;
 
 -- name: GetAutopilotRun :one
@@ -223,7 +224,8 @@ RETURNING *;
 
 -- name: UpdateAutopilotRunFailed :one
 UPDATE autopilot_run
-SET status = 'failed', completed_at = now(), failure_reason = $2
+SET status = 'failed', completed_at = now(), failure_reason = $2,
+    delivery_status = CASE WHEN task_id IS NULL AND delivery_status = 'pending' THEN 'blocked' ELSE delivery_status END
 WHERE id = $1
 RETURNING *;
 
@@ -235,13 +237,15 @@ RETURNING *;
 -- MUL-1899). Recording the skip + reason gives the UI / failure monitor / ops
 -- a paper trail without polluting the failure ratio.
 UPDATE autopilot_run
-SET status = 'skipped', completed_at = now(), failure_reason = $2
+SET status = 'skipped', completed_at = now(), failure_reason = $2,
+    delivery_status = CASE WHEN delivery_status = 'pending' THEN 'not_requested' ELSE delivery_status END
 WHERE id = $1
 RETURNING *;
 
 -- name: UpdateAutopilotRunSkippedWithResult :one
 UPDATE autopilot_run
 SET status = 'skipped',
+    delivery_status = CASE WHEN delivery_status = 'pending' THEN 'not_requested' ELSE delivery_status END,
     completed_at = now(),
     failure_reason = $2,
     result = sqlc.narg('result')
@@ -374,3 +378,39 @@ ON CONFLICT (autopilot_id, user_type, user_id) DO NOTHING;
 DELETE FROM autopilot_subscriber
 WHERE autopilot_id = $1;
 
+
+-- name: CanDeliverAutopilotToChat :one
+SELECT EXISTS (
+ SELECT 1 FROM chat_session cs
+ JOIN agent a ON a.id = cs.agent_id AND a.workspace_id = cs.workspace_id
+ JOIN member m ON m.workspace_id = cs.workspace_id AND m.user_id = cs.creator_id
+ WHERE cs.id = $1 AND cs.workspace_id = $2 AND cs.creator_id = $3 AND cs.agent_id = $4
+ AND cs.status = 'active' AND a.archived_at IS NULL
+ AND (a.visibility <> 'private' OR a.owner_id = m.user_id OR m.role IN ('owner', 'admin'))
+)::boolean;
+
+-- name: DeliverAutopilotToChat :one
+-- The unique run key makes concurrent completion callbacks idempotent.
+-- Recheck authorization in the same statement as the insert.
+INSERT INTO chat_message (chat_session_id, role, content, task_id, autopilot_run_id)
+SELECT cs.id, 'assistant', sqlc.arg('content')::text, t.id, r.id
+FROM autopilot_run r
+JOIN autopilot ap ON ap.id = r.autopilot_id
+JOIN agent_task_queue t ON t.id = r.task_id AND t.autopilot_run_id = r.id
+JOIN chat_session cs ON cs.id = ap.delivery_chat_session_id
+JOIN agent a ON a.id = cs.agent_id AND a.workspace_id = cs.workspace_id
+JOIN member m ON m.workspace_id = cs.workspace_id AND m.user_id = cs.creator_id
+WHERE r.id = sqlc.arg('run_id') AND ap.execution_mode = 'run_only'
+ AND ap.created_by_type = 'member' AND ap.created_by_id = cs.creator_id
+ AND ap.workspace_id = cs.workspace_id AND ap.assignee_type = 'agent'
+ AND ap.assignee_id = cs.agent_id AND t.agent_id = cs.agent_id
+ AND cs.status = 'active' AND a.archived_at IS NULL
+ AND t.status IN ('completed', 'failed', 'cancelled')
+ AND (a.visibility <> 'private' OR a.owner_id = m.user_id OR m.role IN ('owner', 'admin'))
+ON CONFLICT (autopilot_run_id) WHERE autopilot_run_id IS NOT NULL DO NOTHING
+RETURNING *;
+
+-- name: SetAutopilotDeliveryStatus :exec
+UPDATE autopilot_run SET delivery_status = CASE
+ WHEN EXISTS (SELECT 1 FROM chat_message WHERE autopilot_run_id = $1) THEN 'delivered'
+ ELSE sqlc.arg('status')::text END WHERE id = $1;
