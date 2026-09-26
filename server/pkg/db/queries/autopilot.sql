@@ -191,7 +191,7 @@ INSERT INTO autopilot_run (
     autopilot_id, trigger_id, source, status, trigger_payload, squad_id, delivery_status
 ) VALUES (
     $1, sqlc.narg('trigger_id'), $2, $3, sqlc.narg('trigger_payload'),
-    sqlc.narg('squad_id'), CASE WHEN EXISTS (SELECT 1 FROM autopilot WHERE id = $1 AND delivery_chat_session_id IS NOT NULL) THEN 'pending' ELSE 'not_requested' END
+    sqlc.narg('squad_id'), CASE WHEN $3 <> 'skipped' AND EXISTS (SELECT 1 FROM autopilot WHERE id = $1 AND delivery_chat_session_id IS NOT NULL) THEN 'pending' ELSE 'not_requested' END
 ) RETURNING *;
 
 -- name: GetAutopilotRun :one
@@ -224,7 +224,8 @@ RETURNING *;
 
 -- name: UpdateAutopilotRunFailed :one
 UPDATE autopilot_run
-SET status = 'failed', completed_at = now(), failure_reason = $2
+SET status = 'failed', completed_at = now(), failure_reason = $2,
+    delivery_status = CASE WHEN task_id IS NULL AND delivery_status = 'pending' THEN 'blocked' ELSE delivery_status END
 WHERE id = $1
 RETURNING *;
 
@@ -236,13 +237,15 @@ RETURNING *;
 -- MUL-1899). Recording the skip + reason gives the UI / failure monitor / ops
 -- a paper trail without polluting the failure ratio.
 UPDATE autopilot_run
-SET status = 'skipped', completed_at = now(), failure_reason = $2
+SET status = 'skipped', completed_at = now(), failure_reason = $2,
+    delivery_status = CASE WHEN delivery_status = 'pending' THEN 'not_requested' ELSE delivery_status END
 WHERE id = $1
 RETURNING *;
 
 -- name: UpdateAutopilotRunSkippedWithResult :one
 UPDATE autopilot_run
 SET status = 'skipped',
+    delivery_status = CASE WHEN delivery_status = 'pending' THEN 'not_requested' ELSE delivery_status END,
     completed_at = now(),
     failure_reason = $2,
     result = sqlc.narg('result')

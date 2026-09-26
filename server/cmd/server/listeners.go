@@ -153,6 +153,10 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 		if personalEvents[e.Type] {
 			return
 		}
+		if e.RecipientUserID != "" {
+			sendToRecipient(b, e, e.RecipientUserID)
+			return
+		}
 
 		msg := map[string]any{
 			"type":       e.Type,

@@ -30,7 +30,7 @@ func runChatRead(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-	path := "/api/chat-sessions"
+	path := "/api/chat/sessions"
 	if len(args) > 0 {
 		path += "/" + url.PathEscape(args[0])
 		if cmd.Name() == "messages" {

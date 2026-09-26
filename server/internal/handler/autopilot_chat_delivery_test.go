@@ -129,6 +129,23 @@ func TestAutopilotChatDeliveryAuthorizationAndIdempotence(t *testing.T) {
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("revoked delivery inserted: %v", err)
 	}
+
+	skipped, err := q.CreateAutopilotRun(ctx, db.CreateAutopilotRunParams{AutopilotID: apID, Source: "manual", Status: "skipped"})
+	must(err)
+	if skipped.DeliveryStatus != "not_requested" {
+		t.Fatalf("skipped delivery=%s", skipped.DeliveryStatus)
+	}
+	pending, err := q.CreateAutopilotRun(ctx, db.CreateAutopilotRunParams{AutopilotID: apID, Source: "manual", Status: "running"})
+	must(err)
+	if pending.DeliveryStatus != "pending" {
+		t.Fatalf("initial delivery=%s", pending.DeliveryStatus)
+	}
+	failed, err := q.UpdateAutopilotRunFailed(ctx, db.UpdateAutopilotRunFailedParams{ID: pending.ID, FailureReason: pgtype.Text{String: "admission failed", Valid: true}})
+	must(err)
+	if failed.DeliveryStatus != "blocked" {
+		t.Fatalf("dispatch failure delivery=%s", failed.DeliveryStatus)
+	}
+
 	var tasks int
 	must(tx.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE chat_session_id=$1`, sessionID).Scan(&tasks))
 	if tasks != 0 {

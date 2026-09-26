@@ -1308,6 +1308,6 @@ func (s *AutopilotService) DeliverRunToChat(ctx context.Context, ap db.Autopilot
 		slog.Warn("autopilot chat touch failed", "error", err)
 	}
 	if s.Bus != nil {
-		s.Bus.Publish(events.Event{Type: protocol.EventChatMessage, WorkspaceID: util.UUIDToString(ap.WorkspaceID), ActorType: "agent", ActorID: util.UUIDToString(task.AgentID), ChatSessionID: util.UUIDToString(msg.ChatSessionID), Payload: protocol.ChatMessagePayload{ChatSessionID: util.UUIDToString(msg.ChatSessionID), MessageID: util.UUIDToString(msg.ID), Role: "assistant", Content: msg.Content, CreatedAt: msg.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}})
+		s.Bus.Publish(events.Event{Type: protocol.EventChatMessage, RecipientUserID: util.UUIDToString(ap.CreatedByID), WorkspaceID: util.UUIDToString(ap.WorkspaceID), ActorType: "agent", ActorID: util.UUIDToString(task.AgentID), ChatSessionID: util.UUIDToString(msg.ChatSessionID), Payload: protocol.ChatMessagePayload{ChatSessionID: util.UUIDToString(msg.ChatSessionID), MessageID: util.UUIDToString(msg.ID), Role: "assistant", Content: msg.Content, CreatedAt: msg.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}})
 	}
 }
