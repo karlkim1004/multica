@@ -2419,6 +2419,79 @@ func (q *Queries) ListActiveTasksByIssue(ctx context.Context, issueID pgtype.UUI
 	return items, nil
 }
 
+const listAgentRuntimeFailuresSinceSuccess = `-- name: ListAgentRuntimeFailuresSinceSuccess :many
+SELECT q.id, q.agent_id, q.issue_id, q.status, q.priority, q.dispatched_at, q.started_at, q.completed_at, q.result, q.error, q.created_at, q.context, q.runtime_id, q.session_id, q.work_dir, q.trigger_comment_id, q.chat_session_id, q.autopilot_run_id, q.attempt, q.max_attempts, q.parent_task_id, q.failure_reason, q.trigger_summary, q.force_fresh_session, q.is_leader_task, q.wait_reason, q.initiator_user_id, q.handoff_note, q.prepare_lease_expires_at, q.running_lease_expires_at FROM agent_task_queue q
+JOIN agent a ON a.id = q.agent_id
+WHERE a.workspace_id = $1 AND q.agent_id = $2 AND q.runtime_id = $3
+  AND q.status = 'failed'
+  AND COALESCE(q.completed_at, q.created_at) >= COALESCE((
+    SELECT MAX(COALESCE(s.completed_at, s.created_at))
+    FROM agent_task_queue s
+    WHERE s.agent_id = q.agent_id AND s.runtime_id = q.runtime_id
+      AND s.status = 'completed'
+  ), '-infinity'::timestamptz)
+ORDER BY q.completed_at DESC NULLS LAST, q.created_at DESC, q.id DESC
+`
+
+type ListAgentRuntimeFailuresSinceSuccessParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+}
+
+// Only a later completed task proves credentials recovered. Transient errors
+// and cancellations must not hide an earlier authentication failure.
+func (q *Queries) ListAgentRuntimeFailuresSinceSuccess(ctx context.Context, arg ListAgentRuntimeFailuresSinceSuccessParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listAgentRuntimeFailuresSinceSuccess, arg.WorkspaceID, arg.AgentID, arg.RuntimeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.RunningLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentTasks = `-- name: ListAgentTasks :many
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, running_lease_expires_at FROM agent_task_queue
 WHERE agent_id = $1

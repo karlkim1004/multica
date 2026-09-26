@@ -9,3 +9,4 @@
 - `server/cmd/server/router.go` registers daemon APIs under `/api/daemon`, including workspace repos and task claim.
 - `server/internal/daemon/daemon.go` claims tasks, prepares workdirs, launches provider CLIs, and reports completion.
 - `server/internal/daemon/execenv/runtime_config.go` injects task/project/repo context into agent workdirs.
+- `server/internal/service/issue.go` gates stale assigned wakes using `ListAgentRuntimeFailuresSinceSuccess` in `server/pkg/db/queries/agent.sql`; `server/pkg/taskfailure/classify.go` recognizes provider authentication errors including expired OAuth tokens.
