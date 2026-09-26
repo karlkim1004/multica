@@ -33,6 +33,7 @@ export interface Autopilot {
   assignee_id: string;
   status: AutopilotStatus;
   execution_mode: AutopilotExecutionMode;
+  delivery_chat_session_id?: string | null;
   issue_title_template: string | null;
   created_by_type: string;
   created_by_id: string;

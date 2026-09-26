@@ -96,6 +96,10 @@ var autopilotTriggerRotateURLCmd = &cobra.Command{
 }
 
 func init() {
+	retry := &cobra.Command{Use: "retry-delivery <autopilot-id> <run-id>", Short: "Retry chat delivery of a stored result without running the agent", Args: exactArgs(2), RunE: runAutopilotRetryDelivery}
+	retry.Flags().String("output", "json", "Output format: json")
+	autopilotCmd.AddCommand(retry)
+
 	autopilotCmd.AddCommand(autopilotListCmd)
 	autopilotCmd.AddCommand(autopilotGetCmd)
 	autopilotCmd.AddCommand(autopilotCreateCmd)
@@ -117,6 +121,7 @@ func init() {
 	autopilotGetCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// create
+	autopilotCreateCmd.Flags().String("delivery-chat-session", "", "Deliver run_only results to your explicit chat session ID")
 	autopilotCreateCmd.Flags().String("title", "", "Autopilot title (required)")
 	autopilotCreateCmd.Flags().String("description", "", "Autopilot description (used as task prompt)")
 	autopilotCreateCmd.Flags().String("agent", "", "Assignee agent (name or ID) — required")
@@ -128,6 +133,7 @@ func init() {
 	autopilotCreateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// update
+	autopilotUpdateCmd.Flags().String("delivery-chat-session", "", "Chat session ID (empty clears delivery)")
 	autopilotUpdateCmd.Flags().String("title", "", "New title")
 	autopilotUpdateCmd.Flags().String("description", "", "New description")
 	autopilotUpdateCmd.Flags().String("agent", "", "New assignee agent (name or ID)")
@@ -299,6 +305,9 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 		"assignee_id":    agentID,
 		"execution_mode": mode,
 	}
+	if v, _ := cmd.Flags().GetString("delivery-chat-session"); v != "" {
+		body["delivery_chat_session_id"] = v
+	}
 	if v, _ := cmd.Flags().GetString("description"); v != "" {
 		body["description"] = v
 	}
@@ -352,6 +361,14 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{}
+	if cmd.Flags().Changed("delivery-chat-session") {
+		v, _ := cmd.Flags().GetString("delivery-chat-session")
+		if v == "" {
+			body["delivery_chat_session_id"] = nil
+		} else {
+			body["delivery_chat_session_id"] = v
+		}
+	}
 	if cmd.Flags().Changed("title") {
 		v, _ := cmd.Flags().GetString("title")
 		body["title"] = v
@@ -809,4 +826,22 @@ func resolveAgent(ctx context.Context, client *cli.APIClient, nameOrID string) (
 		}
 		return "", fmt.Errorf("ambiguous agent %q; matches:\n%s", nameOrID, strings.Join(parts, "\n"))
 	}
+}
+
+func runAutopilotRetryDelivery(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	ap, err := resolveAutopilotID(ctx, client, args[0])
+	if err != nil {
+		return err
+	}
+	var result map[string]any
+	if err := client.PostJSON(ctx, "/api/autopilots/"+ap.ID+"/runs/"+url.PathEscape(args[1])+"/retry-delivery", map[string]any{}, &result); err != nil {
+		return err
+	}
+	return cli.PrintJSON(os.Stdout, result)
 }

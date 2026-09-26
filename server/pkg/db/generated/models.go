@@ -122,21 +122,22 @@ type Attachment struct {
 }
 
 type Autopilot struct {
-	ID                 pgtype.UUID        `json:"id"`
-	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	Title              string             `json:"title"`
-	Description        pgtype.Text        `json:"description"`
-	AssigneeID         pgtype.UUID        `json:"assignee_id"`
-	Status             string             `json:"status"`
-	ExecutionMode      string             `json:"execution_mode"`
-	IssueTitleTemplate pgtype.Text        `json:"issue_title_template"`
-	CreatedByType      string             `json:"created_by_type"`
-	CreatedByID        pgtype.UUID        `json:"created_by_id"`
-	LastRunAt          pgtype.Timestamptz `json:"last_run_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-	AssigneeType       string             `json:"assignee_type"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	Title                 string             `json:"title"`
+	Description           pgtype.Text        `json:"description"`
+	AssigneeID            pgtype.UUID        `json:"assignee_id"`
+	Status                string             `json:"status"`
+	ExecutionMode         string             `json:"execution_mode"`
+	IssueTitleTemplate    pgtype.Text        `json:"issue_title_template"`
+	CreatedByType         string             `json:"created_by_type"`
+	CreatedByID           pgtype.UUID        `json:"created_by_id"`
+	LastRunAt             pgtype.Timestamptz `json:"last_run_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	AssigneeType          string             `json:"assignee_type"`
+	ProjectID             pgtype.UUID        `json:"project_id"`
+	DeliveryChatSessionID pgtype.UUID        `json:"delivery_chat_session_id"`
 }
 
 type AutopilotRun struct {
@@ -154,6 +155,7 @@ type AutopilotRun struct {
 	Result         []byte             `json:"result"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	SquadID        pgtype.UUID        `json:"squad_id"`
+	DeliveryStatus string             `json:"delivery_status"`
 }
 
 type AutopilotSubscriber struct {
@@ -182,15 +184,16 @@ type AutopilotTrigger struct {
 }
 
 type ChatMessage struct {
-	ID            pgtype.UUID        `json:"id"`
-	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
-	Role          string             `json:"role"`
-	Content       string             `json:"content"`
-	TaskID        pgtype.UUID        `json:"task_id"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	FailureReason pgtype.Text        `json:"failure_reason"`
-	ElapsedMs     pgtype.Int8        `json:"elapsed_ms"`
-	SenderID      pgtype.UUID        `json:"sender_id"`
+	ID             pgtype.UUID        `json:"id"`
+	ChatSessionID  pgtype.UUID        `json:"chat_session_id"`
+	Role           string             `json:"role"`
+	Content        string             `json:"content"`
+	TaskID         pgtype.UUID        `json:"task_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	FailureReason  pgtype.Text        `json:"failure_reason"`
+	ElapsedMs      pgtype.Int8        `json:"elapsed_ms"`
+	SenderID       pgtype.UUID        `json:"sender_id"`
+	AutopilotRunID pgtype.UUID        `json:"autopilot_run_id"`
 }
 
 type ChatSession struct {

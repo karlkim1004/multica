@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { ListAutopilotsResponseSchema } from "./schemas";
 import { ApiClient } from "./client";
 import { parseWithFallback } from "./schema";
 
@@ -429,4 +430,10 @@ describe("parseWithFallback", () => {
     const out = parseWithFallback(null, schema, fallback, opts);
     expect(out).toBe(fallback);
   });
+});
+
+
+it("ignores malformed optional autopilot chat delivery IDs", () => {
+  const parsed = ListAutopilotsResponseSchema.parse({ autopilots: [{ id: "a", workspace_id: "w", title: "t", assignee_id: "agent", status: "active", execution_mode: "run_only", created_by_type: "member", created_by_id: "u", created_at: "now", updated_at: "now", delivery_chat_session_id: 42 }] });
+  expect(parsed.autopilots[0]?.delivery_chat_session_id).toBeNull();
 });

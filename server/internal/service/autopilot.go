@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // TxStarter abstracts transaction creation (satisfied by pgxpool.Pool).
@@ -529,6 +530,7 @@ func (s *AutopilotService) SyncRunFromTask(ctx context.Context, task db.AgentTas
 		}
 		s.captureAutopilotRunCompleted(autopilot, updatedRun)
 		s.publishRunDone(wsID, updatedRun, "completed")
+		s.DeliverRunToChat(ctx, autopilot, updatedRun, task)
 	case "failed", "cancelled":
 		reason := "task " + task.Status
 		if task.Error.Valid {
@@ -544,6 +546,7 @@ func (s *AutopilotService) SyncRunFromTask(ctx context.Context, task db.AgentTas
 		}
 		s.captureAutopilotRunFailed(autopilot, updatedRun, updatedRun.Source, reason)
 		s.publishRunDone(wsID, updatedRun, "failed")
+		s.DeliverRunToChat(ctx, autopilot, updatedRun, task)
 	}
 }
 
@@ -1259,4 +1262,52 @@ func (s *AutopilotService) canCreatorAccessPrivateLeader(ctx context.Context, ap
 		return false
 	}
 	return member.Role == "owner" || member.Role == "admin"
+}
+
+func autopilotChatContent(task db.AgentTaskQueue) string {
+	if task.Status != "completed" {
+		return "자동 보고 작업이 완료되지 않았습니다. 실행 기록에서 실패 또는 취소 상태를 확인해 주세요."
+	}
+	var payload protocol.TaskCompletedPayload
+	if json.Unmarshal(task.Result, &payload) != nil || strings.TrimSpace(payload.Output) == "" {
+		return ""
+	}
+	return redact.Text(util.UnescapeBackslashEscapes(payload.Output))
+}
+
+func (s *AutopilotService) DeliverRunToChat(ctx context.Context, ap db.Autopilot, run db.AutopilotRun, task db.AgentTaskQueue) {
+	status := "blocked"
+	defer func() {
+		if err := s.Queries.SetAutopilotDeliveryStatus(ctx, db.SetAutopilotDeliveryStatusParams{AutopilotRunID: run.ID, Status: status}); err != nil {
+			slog.Error("autopilot delivery status update failed", "run_id", util.UUIDToString(run.ID), "error", err)
+		}
+	}()
+	if !ap.DeliveryChatSessionID.Valid {
+		status = "not_requested"
+		return
+	}
+	content := autopilotChatContent(task)
+	if content == "" {
+		status = "suppressed"
+		return
+	} // A successful no-op is intentionally silent.
+	msg, err := s.Queries.DeliverAutopilotToChat(ctx, db.DeliverAutopilotToChatParams{Content: content, RunID: run.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	} // Duplicate or authorization revoked.
+	if err != nil {
+		status = "failed"
+		slog.Error("autopilot chat delivery failed", "run_id", util.UUIDToString(run.ID), "error", err)
+		return
+	}
+	status = "delivered"
+	if err := s.Queries.SetUnreadSinceIfNull(ctx, msg.ChatSessionID); err != nil {
+		slog.Warn("autopilot chat unread failed", "error", err)
+	}
+	if err := s.Queries.TouchChatSession(ctx, msg.ChatSessionID); err != nil {
+		slog.Warn("autopilot chat touch failed", "error", err)
+	}
+	if s.Bus != nil {
+		s.Bus.Publish(events.Event{Type: protocol.EventChatMessage, WorkspaceID: util.UUIDToString(ap.WorkspaceID), ActorType: "agent", ActorID: util.UUIDToString(task.AgentID), ChatSessionID: util.UUIDToString(msg.ChatSessionID), Payload: protocol.ChatMessagePayload{ChatSessionID: util.UUIDToString(msg.ChatSessionID), MessageID: util.UUIDToString(msg.ID), Role: "assistant", Content: msg.Content, CreatedAt: msg.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}})
+	}
 }

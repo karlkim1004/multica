@@ -786,6 +786,7 @@ const AutopilotListItemSchema = z.object({
   assignee_id: z.string(),
   status: z.string(),
   execution_mode: z.string(),
+  delivery_chat_session_id: z.string().nullable().catch(null).optional(),
   issue_title_template: z.string().nullable().optional(),
   created_by_type: z.string(),
   created_by_id: z.string(),

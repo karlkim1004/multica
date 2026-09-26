@@ -27,11 +27,12 @@ func computeNextRun(cronExpr, timezone string) (time.Time, error) {
 // ── Response types ──────────────────────────────────────────────────────────
 
 type AutopilotResponse struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	Title       string  `json:"title"`
-	Description *string `json:"description"`
-	ProjectID   *string `json:"project_id"`
+	DeliveryChatSessionID *string `json:"delivery_chat_session_id"`
+	ID                    string  `json:"id"`
+	WorkspaceID           string  `json:"workspace_id"`
+	Title                 string  `json:"title"`
+	Description           *string `json:"description"`
+	ProjectID             *string `json:"project_id"`
 	// AssigneeType is "agent" or "squad". Path A from MUL-2429: when set
 	// to "squad", AssigneeID points at squad(id) rather than agent(id) and
 	// dispatch resolves to squad.leader_id at run time.
@@ -108,6 +109,7 @@ type AutopilotTriggerResponse struct {
 }
 
 type AutopilotRunResponse struct {
+	DeliveryStatus string  `json:"delivery_status"`
 	ID             string  `json:"id"`
 	AutopilotID    string  `json:"autopilot_id"`
 	TriggerID      *string `json:"trigger_id"`
@@ -142,22 +144,23 @@ func autopilotToResponse(a db.Autopilot, subscribers []db.AutopilotSubscriber) A
 		}
 	}
 	return AutopilotResponse{
-		ID:                 uuidToString(a.ID),
-		WorkspaceID:        uuidToString(a.WorkspaceID),
-		Title:              a.Title,
-		Description:        textToPtr(a.Description),
-		ProjectID:          uuidToPtr(a.ProjectID),
-		AssigneeType:       assigneeType,
-		AssigneeID:         uuidToString(a.AssigneeID),
-		Status:             a.Status,
-		ExecutionMode:      a.ExecutionMode,
-		IssueTitleTemplate: textToPtr(a.IssueTitleTemplate),
-		CreatedByType:      a.CreatedByType,
-		CreatedByID:        uuidToString(a.CreatedByID),
-		LastRunAt:          timestampToPtr(a.LastRunAt),
-		CreatedAt:          timestampToString(a.CreatedAt),
-		UpdatedAt:          timestampToString(a.UpdatedAt),
-		Subscribers:        subResp,
+		ID:                    uuidToString(a.ID),
+		WorkspaceID:           uuidToString(a.WorkspaceID),
+		Title:                 a.Title,
+		Description:           textToPtr(a.Description),
+		ProjectID:             uuidToPtr(a.ProjectID),
+		DeliveryChatSessionID: uuidToPtr(a.DeliveryChatSessionID),
+		AssigneeType:          assigneeType,
+		AssigneeID:            uuidToString(a.AssigneeID),
+		Status:                a.Status,
+		ExecutionMode:         a.ExecutionMode,
+		IssueTitleTemplate:    textToPtr(a.IssueTitleTemplate),
+		CreatedByType:         a.CreatedByType,
+		CreatedByID:           uuidToString(a.CreatedByID),
+		LastRunAt:             timestampToPtr(a.LastRunAt),
+		CreatedAt:             timestampToString(a.CreatedAt),
+		UpdatedAt:             timestampToString(a.UpdatedAt),
+		Subscribers:           subResp,
 	}
 }
 
@@ -235,6 +238,7 @@ func runToResponse(r db.AutopilotRun) AutopilotRunResponse {
 		json.Unmarshal(r.Result, &result)
 	}
 	return AutopilotRunResponse{
+		DeliveryStatus: r.DeliveryStatus,
 		ID:             uuidToString(r.ID),
 		AutopilotID:    uuidToString(r.AutopilotID),
 		TriggerID:      uuidToPtr(r.TriggerID),
@@ -265,9 +269,10 @@ func runToResponseSlim(r db.AutopilotRun) AutopilotRunResponse {
 // ── Request types ───────────────────────────────────────────────────────────
 
 type CreateAutopilotRequest struct {
-	Title       string  `json:"title"`
-	Description *string `json:"description"`
-	ProjectID   *string `json:"project_id"`
+	DeliveryChatSessionID *string `json:"delivery_chat_session_id"`
+	Title                 string  `json:"title"`
+	Description           *string `json:"description"`
+	ProjectID             *string `json:"project_id"`
 	// AssigneeType is optional and defaults to "agent" — preserves backward
 	// compatibility with desktop clients shipped before MUL-2429.
 	AssigneeType       *string           `json:"assignee_type"`
@@ -278,14 +283,15 @@ type CreateAutopilotRequest struct {
 }
 
 type UpdateAutopilotRequest struct {
-	Title              *string `json:"title"`
-	Description        *string `json:"description"`
-	ProjectID          *string `json:"project_id"`
-	AssigneeType       *string `json:"assignee_type"`
-	AssigneeID         *string `json:"assignee_id"`
-	Status             *string `json:"status"`
-	ExecutionMode      *string `json:"execution_mode"`
-	IssueTitleTemplate *string `json:"issue_title_template"`
+	DeliveryChatSessionID *string `json:"delivery_chat_session_id"`
+	Title                 *string `json:"title"`
+	Description           *string `json:"description"`
+	ProjectID             *string `json:"project_id"`
+	AssigneeType          *string `json:"assignee_type"`
+	AssigneeID            *string `json:"assignee_id"`
+	Status                *string `json:"status"`
+	ExecutionMode         *string `json:"execution_mode"`
+	IssueTitleTemplate    *string `json:"issue_title_template"`
 	// Wholesale replacement when present; omit to leave subscribers untouched.
 	Subscribers []SubscriberInput `json:"subscribers"`
 }
@@ -492,6 +498,11 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	deliveryID, valid := h.validateAutopilotChatDelivery(w, r, req.DeliveryChatSessionID, userID, wsUUID, assigneeType, assigneeUUID, req.ExecutionMode)
+	if !valid {
+		return
+	}
+
 	// Validate before insert so a bad payload doesn't half-create the row.
 	subscriberUUIDs, ok := h.validateAutopilotSubscribers(w, r, req.Subscribers, workspaceID)
 	if !ok {
@@ -507,17 +518,18 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 
 	autopilot, err := qtx.CreateAutopilot(r.Context(), db.CreateAutopilotParams{
-		WorkspaceID:        wsUUID,
-		Title:              req.Title,
-		AssigneeType:       assigneeType,
-		AssigneeID:         assigneeUUID,
-		Status:             "active",
-		ExecutionMode:      req.ExecutionMode,
-		CreatedByType:      "member",
-		CreatedByID:        parseUUID(userID),
-		Description:        ptrToText(req.Description),
-		IssueTitleTemplate: ptrToText(req.IssueTitleTemplate),
-		ProjectID:          projectID,
+		DeliveryChatSessionID: deliveryID,
+		WorkspaceID:           wsUUID,
+		Title:                 req.Title,
+		AssigneeType:          assigneeType,
+		AssigneeID:            assigneeUUID,
+		Status:                "active",
+		ExecutionMode:         req.ExecutionMode,
+		CreatedByType:         "member",
+		CreatedByID:           parseUUID(userID),
+		Description:           ptrToText(req.Description),
+		IssueTitleTemplate:    ptrToText(req.IssueTitleTemplate),
+		ProjectID:             projectID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
@@ -623,11 +635,12 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(bodyBytes, &rawFields)
 
 	params := db.UpdateAutopilotParams{
-		ID:                 prev.ID,
-		Description:        prev.Description,
-		AssigneeID:         prev.AssigneeID,
-		IssueTitleTemplate: prev.IssueTitleTemplate,
-		ProjectID:          prev.ProjectID,
+		ID:                    prev.ID,
+		DeliveryChatSessionID: prev.DeliveryChatSessionID,
+		Description:           prev.Description,
+		AssigneeID:            prev.AssigneeID,
+		IssueTitleTemplate:    prev.IssueTitleTemplate,
+		ProjectID:             prev.ProjectID,
 	}
 	if req.Title != nil {
 		params.Title = pgtype.Text{String: *req.Title, Valid: true}
@@ -702,6 +715,29 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			params.AssigneeID = nextID
 		}
 	}
+
+	if prev.DeliveryChatSessionID.Valid || req.DeliveryChatSessionID != nil {
+		if prev.CreatedByType != "member" || uuidToString(prev.CreatedByID) != userID {
+			writeError(w, http.StatusForbidden, "only the autopilot creator can edit chat delivery autopilots")
+			return
+		}
+	}
+	target := uuidToPtr(prev.DeliveryChatSessionID)
+	if _, sent := rawFields["delivery_chat_session_id"]; sent {
+		target = req.DeliveryChatSessionID
+	}
+	mode, kind := prev.ExecutionMode, prev.AssigneeType
+	if req.ExecutionMode != nil {
+		mode = *req.ExecutionMode
+	}
+	if params.AssigneeType.Valid {
+		kind = params.AssigneeType.String
+	}
+	deliveryID, valid := h.validateAutopilotChatDelivery(w, r, target, userID, prev.WorkspaceID, kind, params.AssigneeID, mode)
+	if !valid {
+		return
+	}
+	params.DeliveryChatSessionID = deliveryID
 
 	// Subscribers are validated up-front (before any write) so a bad payload
 	// doesn't leave the autopilot row updated but the template stale.
@@ -1517,4 +1553,69 @@ func (h *Handler) TriggerAutopilot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, runToResponse(*run))
+}
+
+// Chat delivery is deliberately limited to the creator's own agent session.
+func (h *Handler) validateAutopilotChatDelivery(w http.ResponseWriter, r *http.Request, target *string, userID string, workspaceID pgtype.UUID, kind string, agentID pgtype.UUID, mode string) (pgtype.UUID, bool) {
+	if target == nil || *target == "" {
+		return pgtype.UUID{}, true
+	}
+	if mode != "run_only" || kind != "agent" {
+		writeError(w, http.StatusBadRequest, "chat delivery requires run_only with an agent assignee")
+		return pgtype.UUID{}, false
+	}
+	id, ok := parseUUIDOrBadRequest(w, *target, "delivery_chat_session_id")
+	if !ok {
+		return pgtype.UUID{}, false
+	}
+	allowed, err := h.Queries.CanDeliverAutopilotToChat(r.Context(), db.CanDeliverAutopilotToChatParams{ID: id, WorkspaceID: workspaceID, CreatorID: parseUUID(userID), AgentID: agentID})
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "chat delivery target is not accessible or does not match the creator and agent")
+		return pgtype.UUID{}, false
+	}
+	return id, true
+}
+
+// RetryAutopilotDelivery replays only the stored result, never the agent task.
+func (h *Handler) RetryAutopilotDelivery(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	ap, ok := h.loadAutopilotInWorkspace(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
+	if !ok {
+		return
+	}
+	if ap.CreatedByType != "member" || uuidToString(ap.CreatedByID) != userID {
+		writeError(w, http.StatusForbidden, "only the autopilot creator can retry delivery")
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "runId"), "run id")
+	if !ok {
+		return
+	}
+	run, err := h.Queries.GetAutopilotRun(r.Context(), runID)
+	if err != nil || run.AutopilotID != ap.ID {
+		writeError(w, http.StatusNotFound, "run not found")
+		return
+	}
+	if run.Status != "completed" && run.Status != "failed" {
+		writeError(w, http.StatusConflict, "run is not terminal")
+		return
+	}
+	if _, ok := h.validateAutopilotChatDelivery(w, r, uuidToPtr(ap.DeliveryChatSessionID), userID, ap.WorkspaceID, ap.AssigneeType, ap.AssigneeID, ap.ExecutionMode); !ok {
+		return
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), run.TaskID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	h.AutopilotService.DeliverRunToChat(r.Context(), ap, run, task)
+	run, err = h.Queries.GetAutopilotRun(r.Context(), runID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delivery status unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, runToResponse(run))
 }
