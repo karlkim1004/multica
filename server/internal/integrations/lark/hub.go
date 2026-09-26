@@ -334,8 +334,8 @@ func (h *Hub) Run(ctx context.Context) {
 
 // Wait blocks until every supervisor goroutine AND every detached
 // reply goroutine the Hub started has exited. Call this AFTER
-// cancelling Run's context; calling it before returns immediately if
-// no goroutines are active.
+// cancelling Run's context. Wait also closes supervisor admission so an
+// in-flight sweep cannot start new work while shutdown is joining it.
 //
 // Prefer WaitWithTimeout in shutdown paths so a stuck supervisor
 // (typically a hung lease release on a frozen DB pool) cannot block
@@ -343,6 +343,10 @@ func (h *Hub) Run(ctx context.Context) {
 // bounded by ReplyTimeout, so even Wait() (unbounded) eventually
 // returns once those deadlines elapse.
 func (h *Hub) Wait() {
+	// Context cancellation does not synchronously stop Run's current sweep.
+	// Serialize admission closure with startSupervisor's wg.Add before Wait:
+	// a zero-counter Add concurrent with Wait is invalid and can escape joining.
+	h.cancelAll()
 	h.wg.Wait()
 	// Supervisors (and thus inbound delivery) have stopped, so no new
 	// run triggers can be scheduled. Drain the debounced pending triggers
