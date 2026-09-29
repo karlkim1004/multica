@@ -25,7 +25,10 @@
     "voice_audio_unavailable": "マイク入力を使用できません。ブラウザまたはデバイスを確認してください。",
     "voice_service_unavailable": "音声認識サービスを一時的に使用できません。もう一度お試しください。",
     "voice_permission_denied": "マイクの権限が拒否されました。",
-    "voice_unsupported": "このブラウザでは音声入力に対応していません。"
+    "voice_unsupported": "このブラウザでは音声入力に対応していません。",
+    "length_limit_exceeded": "メッセージが長すぎます（{{count}}/{{max}}文字）。短くしてから送信してください。",
+    "queued_notice": "予約済み — 現在の応答が完了すると自動的に送信されます。",
+    "queued_cancel": "キャンセル"
   },
   "message_list": {
     "show_details": "詳細を表示",

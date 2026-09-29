@@ -26,7 +26,10 @@
     "voice_audio_unavailable": "Microphone input is unavailable. Check the browser or device.",
     "voice_service_unavailable": "Voice recognition is temporarily unavailable. Try again.",
     "voice_permission_denied": "Microphone permission was denied.",
-    "voice_unsupported": "Voice input is not supported in this browser."
+    "voice_unsupported": "Voice input is not supported in this browser.",
+    "length_limit_exceeded": "Message is too long ({{count}}/{{max}} characters). Shorten it before sending.",
+    "queued_notice": "Queued — sends once the current response finishes.",
+    "queued_cancel": "Cancel"
   },
   "message_list": {
     "show_details": "Show details",
