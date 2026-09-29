@@ -25,7 +25,10 @@
     "voice_audio_unavailable": "麦克风输入不可用，请检查浏览器或设备。",
     "voice_service_unavailable": "语音识别服务暂时不可用，请重试。",
     "voice_permission_denied": "麦克风权限已被拒绝。",
-    "voice_unsupported": "此浏览器不支持语音输入。"
+    "voice_unsupported": "此浏览器不支持语音输入。",
+    "length_limit_exceeded": "消息过长（{{count}}/{{max}} 字符）。请缩短后再发送。",
+    "queued_notice": "已排队 — 当前回复完成后将自动发送。",
+    "queued_cancel": "取消"
   },
   "message_list": {
     "show_details": "查看详情",

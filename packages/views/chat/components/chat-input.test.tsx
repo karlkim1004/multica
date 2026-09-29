@@ -710,6 +710,120 @@ describe("ChatInput session-aware restore", () => {
   });
 });
 
+// Client-side guard against composing a message that will never reach the
+// server sanely — there is no server-side or DB length limit today (see
+// NEX-1258 investigation), so this is the only backstop before send.
+describe("ChatInput message length limit", () => {
+  it("disables send and surfaces the exceeded message past 20,000 characters", async () => {
+    const onSend = vi.fn();
+    renderInput({ onSend });
+
+    fireEvent.change(screen.getByTestId("editor"), {
+      target: { value: "a".repeat(20_001) },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Message is too long/)).toBeInTheDocument();
+    });
+
+    const buttons = screen.getAllByRole("button");
+    const sendButton = buttons[buttons.length - 1]!;
+    expect(sendButton).toBeDisabled();
+
+    fireEvent.click(sendButton);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("sends a 5,000 character message through with no warning shown", async () => {
+    const onSend = vi.fn<ChatInputOnSend>((_content, _ids, commitInput) => {
+      commitInput();
+      return true;
+    });
+    renderInput({ onSend });
+
+    const text = "a".repeat(5_000);
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: text } });
+
+    let sendButton: HTMLElement;
+    await waitFor(() => {
+      const buttons = screen.getAllByRole("button");
+      sendButton = buttons[buttons.length - 1]!;
+      expect(sendButton).not.toBeDisabled();
+    });
+    expect(screen.queryByText(/Message is too long/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/20,000/)).not.toBeInTheDocument();
+
+    fireEvent.click(sendButton!);
+    expect(onSend).toHaveBeenCalledWith(text, undefined, expect.any(Function), []);
+  });
+});
+
+// Before this fix, clicking Send while a response was streaming hit a silent
+// isRunning guard: the click was swallowed with no visible feedback and the
+// draft was never sent (not even after the run finished). These tests pin
+// the fixed contract — SubmitButton's `allowSubmitWhileRunning` now means
+// what its doc comment says.
+describe("ChatInput follow-up queue while a response is running", () => {
+  function element(props: Partial<React.ComponentProps<typeof ChatInput>>) {
+    return (
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatInput onSend={vi.fn()} onUploadFile={vi.fn()} agentName="Multica" {...props} />
+      </I18nProvider>
+    );
+  }
+
+  it("queues a message sent while running and auto-sends it once the run finishes", async () => {
+    const onSend = vi.fn<ChatInputOnSend>((_content, _ids, commitInput) => {
+      commitInput();
+      return true;
+    });
+    const { rerender } = render(element({ onSend, isRunning: true }));
+
+    fireEvent.change(screen.getByTestId("editor"), {
+      target: { value: "follow-up question" },
+    });
+
+    const buttons = screen.getAllByRole("button");
+    const sendButton = buttons[buttons.length - 1]!;
+    expect(sendButton).not.toBeDisabled();
+
+    fireEvent.click(sendButton);
+
+    // Not sent yet — queued, with visible feedback instead of a silent no-op.
+    expect(onSend).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("Queued — sends once the current response finishes."),
+    ).toBeInTheDocument();
+
+    // The run finishes — the queued message fires automatically.
+    rerender(element({ onSend, isRunning: false }));
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend.mock.calls[0]![0]).toBe("follow-up question");
+  });
+
+  it("cancelling a queued message keeps it from auto-sending", async () => {
+    const onSend = vi.fn();
+    const { rerender } = render(element({ onSend, isRunning: true }));
+
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "never mind" } });
+    const buttons = screen.getAllByRole("button");
+    fireEvent.click(buttons[buttons.length - 1]!);
+    expect(screen.getByText("Queued — sends once the current response finishes.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(
+      screen.queryByText("Queued — sends once the current response finishes."),
+    ).not.toBeInTheDocument();
+
+    rerender(element({ onSend, isRunning: false }));
+    await Promise.resolve();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
 // commitInput is the handoff: the owner (ChatWindow) decides WHEN and HOW to
 // clear the input. clearEditor:false is the fire-and-forget case — the user
 // navigated away, so the shared editor now shows another session's draft and
