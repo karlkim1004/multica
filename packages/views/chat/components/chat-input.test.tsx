@@ -822,6 +822,24 @@ describe("ChatInput follow-up queue while a response is running", () => {
     await Promise.resolve();
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  it("does not send a queued message after switching to another session", async () => {
+    const onSend = vi.fn<ChatInputOnSend>();
+    const state = useChatStore.getState() as unknown as { activeSessionId: string | null };
+    const { rerender } = render(element({ onSend, isRunning: true }));
+
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "session A follow-up" } });
+    fireEvent.click(screen.getAllByRole("button").at(-1)!);
+    expect(screen.getByText("Queued — sends once the current response finishes.")).toBeInTheDocument();
+
+    state.activeSessionId = "session-b";
+    rerender(element({ onSend, isRunning: false }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Queued — sends once the current response finishes.")).not.toBeInTheDocument();
+    });
+    expect(onSend).not.toHaveBeenCalled();
+  });
 });
 
 // commitInput is the handoff: the owner (ChatWindow) decides WHEN and HOW to

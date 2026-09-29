@@ -187,6 +187,7 @@ export function ChatInput({
   // — see the allowSubmitWhileRunning wiring on SubmitButton down in the JSX
   // for why the Send button stays clickable during a run in the first place.
   const [isQueued, setIsQueued] = useState(false);
+  const queuedTargetRef = useRef<{ draftKey: string; sessionId: string | null } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editorRestore, setEditorRestore] = useState<{
     id: string;
@@ -461,6 +462,7 @@ export function ChatInput({
     // path again the instant `isRunning` clears, sending whatever is
     // currently in the editor at that time.
     if (isRunning) {
+      queuedTargetRef.current = { draftKey, sessionId: activeSessionId };
       setIsQueued(true);
       logger.debug("input.send queued: response in progress");
       return;
@@ -546,9 +548,20 @@ export function ChatInput({
 
   useEffect(() => {
     if (isRunning || !isQueued) return;
+    const queuedTarget = queuedTargetRef.current;
+    if (
+      !queuedTarget ||
+      queuedTarget.draftKey !== draftKey ||
+      queuedTarget.sessionId !== activeSessionId
+    ) {
+      queuedTargetRef.current = null;
+      setIsQueued(false);
+      return;
+    }
+    queuedTargetRef.current = null;
     setIsQueued(false);
     void handleSendRef.current();
-  }, [isRunning, isQueued]);
+  }, [activeSessionId, draftKey, isRunning, isQueued]);
 
   const placeholder = noAgent
     ? t(($) => $.input.placeholder_no_agent)
@@ -642,7 +655,10 @@ export function ChatInput({
               <button
                 type="button"
                 className="underline underline-offset-2 hover:text-foreground"
-                onClick={() => setIsQueued(false)}
+                onClick={() => {
+                  queuedTargetRef.current = null;
+                  setIsQueued(false);
+                }}
                 data-acceptance="chat-input-queued-cancel"
               >
                 {t(($) => $.input.queued_cancel)}
