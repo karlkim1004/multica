@@ -210,7 +210,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		LocalSkillListStore:   NewInMemoryLocalSkillListStore(),
 		LocalSkillImportStore: NewInMemoryLocalSkillImportStore(),
 		LivenessStore:         NewNoopLivenessStore(),
-		HeartbeatScheduler:    NewPassthroughHeartbeatScheduler(queries),
+		HeartbeatScheduler:    NewPassthroughHeartbeatScheduler(queries, bus),
 		Storage:               store,
 		CFSigner:              cfSigner,
 		Analytics:             analyticsClient,
