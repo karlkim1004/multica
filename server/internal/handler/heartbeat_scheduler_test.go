@@ -3,10 +3,13 @@ package handler
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // TestBatchedHeartbeatScheduler_CoalescesAndFlushes confirms the core P1 win:
@@ -24,7 +27,7 @@ func TestBatchedHeartbeatScheduler_CoalescesAndFlushes(t *testing.T) {
 	setRuntimeLastSeenAt(t, runtimeID, stale)
 	rt := loadRuntime(t, runtimeID)
 
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0, testHandler.Bus)
 
 	// Hammer Schedule with the same id from many goroutines.
 	const callers = 50
@@ -80,7 +83,7 @@ func TestBatchedHeartbeatScheduler_OfflineFallsBackSync(t *testing.T) {
 		t.Fatalf("setup: status=%q want offline", rt.Status)
 	}
 
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0, testHandler.Bus)
 	if err := sched.Schedule(context.Background(), rt); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
@@ -108,7 +111,7 @@ func TestBatchedHeartbeatScheduler_StopDrains(t *testing.T) {
 
 	// Long tick so the natural ticker can't fire during the test — only
 	// the Stop drain can flush.
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, time.Hour)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, time.Hour, testHandler.Bus)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -147,7 +150,7 @@ func TestBatchedHeartbeatScheduler_StopFlushesLateSchedule(t *testing.T) {
 	setRuntimeLastSeenAt(t, runtimeID, stale)
 	rt := loadRuntime(t, runtimeID)
 
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, time.Hour)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, time.Hour, testHandler.Bus)
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	go sched.Run(runCtx)
@@ -186,7 +189,7 @@ func TestBatchedHeartbeatScheduler_FlushIgnoresEmpty(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0, testHandler.Bus)
 	// Just calling FlushNow with nothing queued should not panic or error.
 	sched.FlushNow(context.Background())
 	if got := sched.PendingCount(); got != 0 {
@@ -206,7 +209,7 @@ func TestBatchedHeartbeatScheduler_RaceToOfflineSelfHeals(t *testing.T) {
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 	rt := loadRuntime(t, runtimeID)
 
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0, testHandler.Bus)
 	if err := sched.Schedule(context.Background(), rt); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
@@ -247,7 +250,7 @@ func TestPassthroughHeartbeatScheduler_TouchAndRaceRecovery(t *testing.T) {
 	setRuntimeLastSeenAt(t, runtimeID, stale)
 	rt := loadRuntime(t, runtimeID)
 
-	sched := NewPassthroughHeartbeatScheduler(testHandler.Queries)
+	sched := NewPassthroughHeartbeatScheduler(testHandler.Queries, testHandler.Bus)
 
 	if err := sched.Schedule(context.Background(), rt); err != nil {
 		t.Fatalf("Schedule: %v", err)
@@ -266,6 +269,92 @@ func TestPassthroughHeartbeatScheduler_TouchAndRaceRecovery(t *testing.T) {
 	status, _, _ := readRuntimeRow(t, runtimeID)
 	if status != "online" {
 		t.Fatalf("expected race recovery via MarkAgentRuntimeOnline, got %q", status)
+	}
+}
+
+// TestPassthroughHeartbeatScheduler_PublishesOnOfflineToOnline confirms
+// NEX-1283's fix: a heartbeat that flips an offline row back online must
+// publish a daemon:register("online") event so open workspace screens
+// re-fetch runtime state instead of being stuck showing the stale offline
+// banner until some unrelated daemon:* event happens to fire.
+func TestPassthroughHeartbeatScheduler_PublishesOnOfflineToOnline(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	setRuntimeStatus(t, runtimeID, "offline")
+	rt := loadRuntime(t, runtimeID)
+	if rt.Status != "offline" {
+		t.Fatalf("setup: status=%q want offline", rt.Status)
+	}
+
+	var publishes int32
+	var lastWorkspaceID, lastAction string
+	testHandler.Bus.Subscribe(protocol.EventDaemonRegister, func(e events.Event) {
+		atomic.AddInt32(&publishes, 1)
+		lastWorkspaceID = e.WorkspaceID
+		if payload, ok := e.Payload.(map[string]any); ok {
+			lastAction, _ = payload["action"].(string)
+		}
+	})
+
+	sched := NewPassthroughHeartbeatScheduler(testHandler.Queries, testHandler.Bus)
+	if err := sched.Schedule(context.Background(), rt); err != nil {
+		t.Fatalf("Schedule: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&publishes); got != 1 {
+		t.Fatalf("expected 1 publish on offline->online, got %d", got)
+	}
+	if lastWorkspaceID != testWorkspaceID {
+		t.Fatalf("expected workspace_id=%q, got %q", testWorkspaceID, lastWorkspaceID)
+	}
+	if lastAction != "online" {
+		t.Fatalf("expected action=%q, got %q", "online", lastAction)
+	}
+	status, _, _ := readRuntimeRow(t, runtimeID)
+	if status != "online" {
+		t.Fatalf("expected status=online after flip, got %q", status)
+	}
+}
+
+// TestPassthroughHeartbeatScheduler_NoPublishOnOnlineToOnline confirms the
+// anti-spam half of the fix: a heartbeat that finds the row already online
+// must not publish anything, on both the hot Touch path and the
+// never-seen/MarkAgentRuntimeOnline path when the row happened to already be
+// online (e.g. first heartbeat right after registration).
+func TestPassthroughHeartbeatScheduler_NoPublishOnOnlineToOnline(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	rt := loadRuntime(t, runtimeID)
+	if rt.Status != "online" {
+		t.Fatalf("setup: status=%q want online", rt.Status)
+	}
+
+	var publishes int32
+	testHandler.Bus.Subscribe(protocol.EventDaemonRegister, func(e events.Event) {
+		atomic.AddInt32(&publishes, 1)
+	})
+
+	sched := NewPassthroughHeartbeatScheduler(testHandler.Queries, testHandler.Bus)
+
+	// Hot path: already online with a valid last_seen_at -> Touch, no publish.
+	if err := sched.Schedule(context.Background(), rt); err != nil {
+		t.Fatalf("Schedule (touch path): %v", err)
+	}
+
+	// Never-seen path with status already online (e.g. row created online,
+	// last_seen_at not yet set) must also not publish: MarkAgentRuntimeOnline
+	// runs, but previous_status was already "online", so it's a no-op flip.
+	rt.LastSeenAt = pgtype.Timestamptz{}
+	if err := sched.Schedule(context.Background(), rt); err != nil {
+		t.Fatalf("Schedule (never-seen, already online): %v", err)
+	}
+
+	if got := atomic.LoadInt32(&publishes); got != 0 {
+		t.Fatalf("expected 0 publishes on online->online, got %d", got)
 	}
 }
 

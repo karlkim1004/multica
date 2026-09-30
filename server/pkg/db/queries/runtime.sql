@@ -141,10 +141,20 @@ WHERE id = ANY(@ids::uuid[]) AND status = 'online';
 -- Used on the offline→online transition (and on first heartbeat after
 -- registration). Writes status, last_seen_at, and updated_at because the
 -- status flip is a real state change and we want updated_at to reflect it.
+--
+-- Also returns the pre-update status via a read-only CTE. The CTE and the
+-- UPDATE share the same statement snapshot, so `previous_status` reflects
+-- the row as it was before this UPDATE applied, not the new 'online' value.
+-- Callers use this to tell a genuine offline→online flip (publish a realtime
+-- event) apart from a no-op online→online call (must not spam publishes).
+WITH previous AS (
+    SELECT status FROM agent_runtime WHERE id = $1
+)
 UPDATE agent_runtime
 SET status = 'online', last_seen_at = now(), updated_at = now()
-WHERE id = $1
-RETURNING *;
+FROM previous
+WHERE agent_runtime.id = $1
+RETURNING agent_runtime.*, previous.status AS previous_status;
 
 -- name: SetAgentRuntimeOffline :exec
 UPDATE agent_runtime

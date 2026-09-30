@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // HeartbeatScheduler decides how a "this runtime is alive, bump its
@@ -43,10 +46,11 @@ type HeartbeatScheduler interface {
 // must commit before returning (offline→online flip, never-seen runtime).
 type PassthroughHeartbeatScheduler struct {
 	queries *db.Queries
+	bus     *events.Bus
 }
 
-func NewPassthroughHeartbeatScheduler(queries *db.Queries) *PassthroughHeartbeatScheduler {
-	return &PassthroughHeartbeatScheduler{queries: queries}
+func NewPassthroughHeartbeatScheduler(queries *db.Queries, bus *events.Bus) *PassthroughHeartbeatScheduler {
+	return &PassthroughHeartbeatScheduler{queries: queries, bus: bus}
 }
 
 func (p *PassthroughHeartbeatScheduler) Schedule(ctx context.Context, rt db.AgentRuntime) error {
@@ -61,8 +65,37 @@ func (p *PassthroughHeartbeatScheduler) Schedule(ctx context.Context, rt db.Agen
 		// Sweeper raced us to offline between the SELECT and this UPDATE.
 		// Fall through to MarkAgentRuntimeOnline to flip the row back.
 	}
-	_, err := p.queries.MarkAgentRuntimeOnline(ctx, rt.ID)
-	return err
+	row, err := p.queries.MarkAgentRuntimeOnline(ctx, rt.ID)
+	if err != nil {
+		return err
+	}
+	// Only a genuine offline→online flip warrants a realtime notice — an
+	// already-online row (first-heartbeat-after-register edge case) must not
+	// re-publish, or every beat would spam workspace listeners.
+	if row.PreviousStatus != "online" {
+		p.publishOnline(row)
+	}
+	return nil
+}
+
+// publishOnline notifies open workspace screens that a runtime came back
+// online, mirroring the daemon:register events already published on
+// register/deregister/sweep elsewhere (see runtime_sweeper.go, daemon.go).
+// The frontend ignores daemon:heartbeat, so without this, a runtime flipped
+// offline by a stale sweep/deregister race stays shown offline until some
+// unrelated daemon:* event or a manual refresh.
+func (p *PassthroughHeartbeatScheduler) publishOnline(row db.MarkAgentRuntimeOnlineRow) {
+	if p.bus == nil {
+		return
+	}
+	p.bus.Publish(events.Event{
+		Type:        protocol.EventDaemonRegister,
+		WorkspaceID: util.UUIDToString(row.WorkspaceID),
+		ActorType:   "system",
+		Payload: map[string]any{
+			"action": "online",
+		},
+	})
 }
 
 // BatchedHeartbeatScheduler coalesces same-id Schedule calls within a tick
@@ -100,13 +133,13 @@ type BatchedHeartbeatScheduler struct {
 // this requires bumping staleThresholdSeconds in lockstep.
 const DefaultHeartbeatBatchInterval = 30 * time.Second
 
-func NewBatchedHeartbeatScheduler(queries *db.Queries, tickInterval time.Duration) *BatchedHeartbeatScheduler {
+func NewBatchedHeartbeatScheduler(queries *db.Queries, tickInterval time.Duration, bus *events.Bus) *BatchedHeartbeatScheduler {
 	if tickInterval <= 0 {
 		tickInterval = DefaultHeartbeatBatchInterval
 	}
 	return &BatchedHeartbeatScheduler{
 		queries:      queries,
-		fallback:     NewPassthroughHeartbeatScheduler(queries),
+		fallback:     NewPassthroughHeartbeatScheduler(queries, bus),
 		tickInterval: tickInterval,
 		pending:      make(map[pgtype.UUID]struct{}),
 		stopCh:       make(chan struct{}),
