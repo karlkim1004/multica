@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 let snapshotDir: string | undefined;
 
 afterEach(async () => {
+	delete process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH;
 	delete process.env.NEXAI_TOKEN_SNAPSHOT_PATH;
 	delete process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH;
 	if (snapshotDir) {
@@ -19,6 +20,7 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 		snapshotDir = await mkdtemp(path.join(tmpdir(), "llm-limit-status-"));
 		const snapshotPath = path.join(snapshotDir, "token_snapshot.json");
 		const codexStatusPath = path.join(snapshotDir, "codex_status_snapshot.json");
+		process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH = path.join(snapshotDir, "runtime.json");
 		process.env.NEXAI_TOKEN_SNAPSHOT_PATH = snapshotPath;
 		process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH = codexStatusPath;
 
@@ -32,12 +34,13 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 				seven_day_resets_at: "2026-06-18T15:00:00+00:00",
 				seven_day_sonnet_resets_at: "2026-06-18T15:00:00+00:00",
 				weekly_progress_pct: 10,
-				updated_at: "2026-06-16T00:00:00.000Z",
+				updated_at: new Date().toISOString(),
 			}),
 		);
 		await writeFile(
 			codexStatusPath,
 			JSON.stringify({
+				recorded_at: new Date().toISOString(),
 				five_hour_left_pct: 64,
 				seven_day_left_pct: 94,
 				five_hour_reset_label: "resets 10:45 PM",
@@ -61,7 +64,7 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 			sonnet_reset_label: "(금) 오전 12:00에 재설정",
 			gpt_five_reset_label: "resets 10:45 PM",
 			gpt_seven_reset_label: "resets May 17",
-			updated_at: "2026-06-16T00:00:00.000Z",
+			claude_status: "available",
 		});
 		expect(data.week_day_index).toBeTypeOf("number");
 		expect(data.reset_label).toBeTypeOf("string");
@@ -71,6 +74,7 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 		snapshotDir = await mkdtemp(path.join(tmpdir(), "llm-limit-status-"));
 		const snapshotPath = path.join(snapshotDir, "token_snapshot.json");
 		const codexStatusPath = path.join(snapshotDir, "codex_status_snapshot.json");
+		process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH = path.join(snapshotDir, "runtime.json");
 		process.env.NEXAI_TOKEN_SNAPSHOT_PATH = snapshotPath;
 		process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH = codexStatusPath;
 
@@ -80,7 +84,7 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 				five_hour_utilization: 40,
 				seven_day_utilization: 86,
 				sonnet_pct: 52,
-				updated_at: "2026-06-18T07:13:01.694959+09:00",
+				updated_at: new Date().toISOString(),
 			}),
 		);
 		await writeFile(
@@ -111,5 +115,38 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 		});
 		expect(JSON.stringify(data)).not.toContain("May 17");
 		expect(JSON.stringify(data)).not.toContain("10:45 PM");
+	});
+});
+
+
+describe("NEX-1332 freshness contract", () => {
+	it.each([
+		{ invalid: true, timestamp: new Date().toISOString() },
+		{ healthy: false, timestamp: new Date().toISOString() },
+		{ timestamp: new Date(Date.now() - 31 * 60_000).toISOString() },
+		{},
+	])("never turns invalid or stale data into zero usage: %j", async (flags) => {
+		snapshotDir = await mkdtemp(path.join(tmpdir(), "llm-limit-status-"));
+		process.env.NEXAI_TOKEN_SNAPSHOT_PATH = path.join(snapshotDir, "token.json");
+		process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH = path.join(snapshotDir, "missing.json");
+		process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH = path.join(snapshotDir, "runtime.json");
+		await writeFile(process.env.NEXAI_TOKEN_SNAPSHOT_PATH, JSON.stringify({five_hour_utilization: 0, seven_day_utilization: 4, gpt_five_hour_pct: 0, ...flags}));
+		const { GET } = await import("./route");
+		const data = await (await GET()).json();
+		expect(data.five_hour_pct).toBeNull();
+		expect(data.seven_day_pct).toBeNull();
+		expect(data.gpt_five_hour_pct).toBeNull();
+		expect(data.claude_status).not.toBe("available");
+	});
+	it("preserves the last observation and rejects unhealthy runtime even with a fresh legacy file", async () => {
+		snapshotDir = await mkdtemp(path.join(tmpdir(), "llm-limit-status-"));
+		process.env.NEXAI_TOKEN_SNAPSHOT_PATH = path.join(snapshotDir, "token.json");
+		process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH = path.join(snapshotDir, "codex.json");
+		process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH = path.join(snapshotDir, "runtime.json");
+		await writeFile(process.env.NEXAI_TOKEN_SNAPSHOT_PATH, JSON.stringify({five_hour_utilization: 0, seven_day_utilization: 0, timestamp: new Date().toISOString()}));
+		await writeFile(process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH, JSON.stringify({healthy: false, produced_at: 1790879277, five_hour_left_pct: 100, seven_day_left_pct: 96}));
+		await writeFile(process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH, JSON.stringify({recorded_at: new Date().toISOString(), five_hour_used_pct: 0, seven_day_used_pct: 10}));
+		const { GET } = await import("./route");
+		expect(await (await GET()).json()).toMatchObject({five_hour_pct: null, seven_day_pct: null, claude_status: "unavailable", claude_last_observed_at: "2026-10-01T18:27:57.000Z", gpt_five_hour_pct: 0, gpt_seven_day_pct: 10});
 	});
 });
