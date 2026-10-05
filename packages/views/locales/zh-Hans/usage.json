@@ -54,5 +54,6 @@
   },
   "duration": {
     "less_than_minute": "<1分钟"
-  }
+  },
+  "quotaLastObservation": "Claude 暂不可用 · 最后观测 {{time}}"
 }
