@@ -1,5 +1,9 @@
 "use client";
 
+import { parseWithFallback } from "@multica/core/api/schema";
+import { llmLimitStatusSchema, unavailableLlmLimitStatus, type LlmLimitStatus } from "@multica/core/api/schemas";
+
+
 import { useMemo, useState } from "react";
 import { BarChart3, FolderKanban, RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -100,33 +104,6 @@ const EMPTY_DAILY: import("@multica/core/types").DashboardUsageDaily[] = [];
 const EMPTY_BY_AGENT: import("@multica/core/types").DashboardUsageByAgent[] = [];
 const EMPTY_RUNTIME: import("@multica/core/types").DashboardAgentRunTime[] = [];
 const EMPTY_RUNTIME_DAILY: import("@multica/core/types").DashboardRunTimeDaily[] = [];
-
-type LlmLimitStatus = {
-  five_hour_pct: number;
-  seven_day_pct: number;
-  sonnet_pct: number;
-  gpt_five_hour_pct: number | null;
-  gpt_seven_day_pct: number | null;
-  weekly_progress_pct: number;
-  week_day_index?: number;
-  reset_label?: string;
-  five_hour_reset_label?: string;
-  seven_day_reset_label?: string;
-  sonnet_reset_label?: string;
-  gpt_five_reset_label?: string;
-  gpt_seven_reset_label?: string;
-  gpt_status_source?: string;
-  updated_at?: string;
-};
-
-const FALLBACK_LLM_LIMIT_STATUS: LlmLimitStatus = {
-  five_hour_pct: 0,
-  seven_day_pct: 0,
-  sonnet_pct: 0,
-  gpt_five_hour_pct: 0,
-  gpt_seven_day_pct: 0,
-  weekly_progress_pct: 0,
-};
 
 const LLM_GAUGE_TITLE = "LLM 잔량 게이지";
 const LLM_GAUGE_LAST_UPDATED_LABEL = "마지막 갱신";
@@ -247,7 +224,7 @@ export function DashboardPage() {
         credentials: "include",
       });
       if (!response.ok) throw new Error("failed to load LLM limit status");
-      return response.json() as Promise<LlmLimitStatus>;
+      return parseWithFallback(await response.json(), llmLimitStatusSchema, unavailableLlmLimitStatus, { endpoint: "/api/dashboard/llm-limit-status" });
     },
     enabled: !!wsId,
     staleTime: 60 * 1000,
@@ -403,7 +380,7 @@ export function DashboardPage() {
           <p className="text-xs text-muted-foreground">{t(($) => $.subtitle)}</p>
 
           <LlmLimitGauge
-            data={llmLimitQuery.data ?? FALLBACK_LLM_LIMIT_STATUS}
+            data={llmLimitQuery.isError ? unavailableLlmLimitStatus : llmLimitQuery.data ?? unavailableLlmLimitStatus}
             isFetching={llmLimitQuery.isFetching}
             onRefresh={() => void llmLimitQuery.refetch()}
           />
@@ -544,6 +521,13 @@ function LlmLimitGauge({
           <RefreshCw className={isFetching ? "animate-spin" : ""} />
         </Button>
       </div>
+      {data.claude_status !== "available" && data.claude_last_observed_at && (
+        <p className="mb-3 text-xs text-muted-foreground">
+          Claude 확인 불가 · 마지막 관측 {new Date(data.claude_last_observed_at).toLocaleString()}
+          {data.claude_last_five_hour_pct != null && data.claude_last_seven_day_pct != null &&
+            ` (잔여 ${100 - data.claude_last_five_hour_pct}%/${100 - data.claude_last_seven_day_pct}%)`}
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {cards.map((card) => {
           const rawPct = card.pct;

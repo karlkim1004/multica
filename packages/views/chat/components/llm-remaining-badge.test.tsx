@@ -100,7 +100,7 @@ describe("LlmRemainingBadge", () => {
     renderBadge();
 
     await waitFor(() => {
-      expect(screen.getByTestId("chat-llm-gauge-compact")).toHaveTextContent("C: 5h 75%/7d 40% · G: 5h --/7d --");
+      expect(screen.getByTestId("chat-llm-gauge-compact")).toHaveTextContent("C: 5h 75%/7d 40% · G: 5h 확인 불가/7d 확인 불가");
     });
     expect(document.querySelector("[data-acceptance='chat-gpt-token-remaining-badge']")).toHaveAttribute(
       "aria-label",
@@ -108,4 +108,12 @@ describe("LlmRemainingBadge", () => {
     );
     expect(screen.queryByText("100%")).not.toBeInTheDocument();
   });
+});
+
+
+it("does not invent quota for malformed API data", async () => {
+ vi.stubGlobal("fetch", vi.fn(async () => ({ok: true, json: async () => ({five_hour_pct: "broken"})})));
+ renderBadge();
+ await waitFor(() => expect(screen.getByTestId("chat-llm-gauge-compact")).toHaveTextContent("C: 5h 확인 불가/7d 확인 불가"));
+ vi.unstubAllGlobals();
 });
