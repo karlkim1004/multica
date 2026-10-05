@@ -524,7 +524,7 @@ function LlmLimitGauge({
       </div>
       {data.claude_status !== "available" && data.claude_last_observed_at && (
         <p className="mb-3 text-xs text-muted-foreground">
-          {t("quotaLastObservation", { time: new Date(data.claude_last_observed_at).toLocaleString() })}
+          {t(($) => $.quotaLastObservation, { time: new Date(data.claude_last_observed_at).toLocaleString() })}
           {data.claude_last_five_hour_pct != null && data.claude_last_seven_day_pct != null &&
             ` (잔여 ${100 - data.claude_last_five_hour_pct}%/${100 - data.claude_last_seven_day_pct}%)`}
         </p>
