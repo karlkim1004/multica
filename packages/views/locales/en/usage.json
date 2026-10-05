@@ -54,5 +54,6 @@
   },
   "duration": {
     "less_than_minute": "<1m"
-  }
+  },
+  "quotaLastObservation": "Claude unavailable · Last observed {{time}}"
 }
