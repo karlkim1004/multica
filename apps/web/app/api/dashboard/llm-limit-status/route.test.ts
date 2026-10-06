@@ -4,10 +4,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 let snapshotDir: string | undefined;
+const now = () => new Date().toISOString();
 
 afterEach(async () => {
 	delete process.env.NEXAI_TOKEN_SNAPSHOT_PATH;
 	delete process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH;
+	delete process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH;
 	if (snapshotDir) {
 		await rm(snapshotDir, { recursive: true, force: true });
 		snapshotDir = undefined;
@@ -19,8 +21,10 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 		snapshotDir = await mkdtemp(path.join(tmpdir(), "llm-limit-status-"));
 		const snapshotPath = path.join(snapshotDir, "token_snapshot.json");
 		const codexStatusPath = path.join(snapshotDir, "codex_status_snapshot.json");
+		const runtimePath = path.join(snapshotDir, "runtime_snapshot_claude.json");
 		process.env.NEXAI_TOKEN_SNAPSHOT_PATH = snapshotPath;
 		process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH = codexStatusPath;
+		process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH = runtimePath;
 
 		await writeFile(
 			snapshotPath,
@@ -32,8 +36,12 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 				seven_day_resets_at: "2026-06-18T15:00:00+00:00",
 				seven_day_sonnet_resets_at: "2026-06-18T15:00:00+00:00",
 				weekly_progress_pct: 10,
-				updated_at: "2026-06-16T00:00:00.000Z",
+				updated_at: now(),
 			}),
+		);
+		await writeFile(
+			runtimePath,
+			JSON.stringify({ healthy: true, produced_at: now() }),
 		);
 		await writeFile(
 			codexStatusPath,
@@ -61,8 +69,8 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 			sonnet_reset_label: "(금) 오전 12:00에 재설정",
 			gpt_five_reset_label: "resets 10:45 PM",
 			gpt_seven_reset_label: "resets May 17",
-			updated_at: "2026-06-16T00:00:00.000Z",
 		});
+		expect(data.updated_at).toBeTypeOf("string");
 		expect(data.week_day_index).toBeTypeOf("number");
 		expect(data.reset_label).toBeTypeOf("string");
 	});
@@ -108,6 +116,8 @@ describe("GET /api/dashboard/llm-limit-status", () => {
 			gpt_five_reset_label: "—",
 			gpt_seven_reset_label: "—",
 			gpt_status_source: "unavailable",
+			claude_status: "unavailable",
+			claude_updated_at: "2026-06-18T07:13:01.694959+09:00",
 		});
 		expect(JSON.stringify(data)).not.toContain("May 17");
 		expect(JSON.stringify(data)).not.toContain("10:45 PM");

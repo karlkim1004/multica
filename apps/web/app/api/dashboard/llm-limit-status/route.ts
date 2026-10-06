@@ -6,7 +6,9 @@ export const runtime = "nodejs";
 
 const DEFAULT_TOKEN_SNAPSHOT_PATH = "/home/iaas/nexai/state/token_snapshot.json";
 const DEFAULT_CODEX_STATUS_SNAPSHOT_PATH = "/home/iaas/nexai/state/codex_status_snapshot.json";
+const DEFAULT_CLAUDE_RUNTIME_SNAPSHOT_PATH = "/home/iaas/nexai/state/runtime_snapshot_claude.json";
 const DEFAULT_CODEX_STATUS_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const DEFAULT_CLAUDE_STATUS_MAX_AGE_MS = 30 * 60 * 1000;
 
 type TokenSnapshot = Record<string, unknown>;
 const KST_TIME_ZONE = "Asia/Seoul";
@@ -65,8 +67,21 @@ function codexStatusMaxAgeMs() {
 	return Number.isFinite(configured) && configured > 0 ? configured * 1000 : DEFAULT_CODEX_STATUS_MAX_AGE_MS;
 }
 
+function claudeStatusMaxAgeMs() {
+ const configured = Number.parseInt(process.env.NEXAI_CLAUDE_STATUS_MAX_AGE_SECONDS ?? "", 10);
+ return Number.isFinite(configured) && configured > 0 ? configured * 1000 : DEFAULT_CLAUDE_STATUS_MAX_AGE_MS;
+}
+
 function isFreshSnapshot(mtimeMs: number | undefined) {
 	return typeof mtimeMs === "number" && Date.now() - mtimeMs <= codexStatusMaxAgeMs();
+}
+
+function isFreshClaudeSnapshot(snapshot: TokenSnapshot, mtimeMs: number | undefined) {
+ if (snapshot.invalid === true || snapshot.healthy === false) return false;
+ const producedAt = optionalStringFrom(snapshot, ["produced_at", "timestamp", "updated_at"]);
+ const producedMs = producedAt ? Date.parse(producedAt) : Number.NaN;
+ const observedMs = Number.isFinite(producedMs) ? producedMs : mtimeMs;
+ return typeof observedMs === "number" && Number.isFinite(observedMs) && Date.now() - observedMs <= claudeStatusMaxAgeMs();
 }
 
 function formatResetAt(value: string | undefined) {
@@ -121,6 +136,8 @@ export async function GET() {
 	let snapshot: TokenSnapshot = {};
 	let codexStatus: TokenSnapshot = {};
 	let codexStatusFresh = false;
+	let claudeRuntime: TokenSnapshot = {};
+	let claudeRuntimeMtimeMs: number | undefined;
 	try {
 		snapshot = (await readJsonSnapshot(process.env.NEXAI_TOKEN_SNAPSHOT_PATH ?? DEFAULT_TOKEN_SNAPSHOT_PATH)).data;
 	} catch {
@@ -133,15 +150,29 @@ export async function GET() {
 	} catch {
 		codexStatus = {};
 	}
+	try {
+		const runtimeSnapshot = await readJsonSnapshot(
+			process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH ?? DEFAULT_CLAUDE_RUNTIME_SNAPSHOT_PATH,
+		);
+		claudeRuntime = runtimeSnapshot.data;
+		claudeRuntimeMtimeMs = runtimeSnapshot.mtimeMs;
+	} catch {
+		claudeRuntime = {};
+	}
+	const claudeCombined = { ...snapshot, ...claudeRuntime };
+	const claudeFresh = isFreshClaudeSnapshot(claudeCombined, claudeRuntimeMtimeMs);
+	const claudeUpdatedAt = optionalStringFrom(claudeCombined, ["produced_at", "timestamp", "updated_at"]);
 	const fiveHourResetsAt = optionalStringFrom(snapshot, ["five_hour_resets_at"]);
 	const sevenDayResetsAt = optionalStringFrom(snapshot, ["seven_day_resets_at"]);
 	const sonnetResetsAt = optionalStringFrom(snapshot, ["seven_day_sonnet_resets_at"]);
 	const weekly = weeklyResetStatus(sevenDayResetsAt);
 
 	return NextResponse.json({
-		five_hour_pct: numberFrom(snapshot, ["usage_5h_pct", "five_hour_pct", "five_hour_utilization"]),
-		seven_day_pct: numberFrom(snapshot, ["usage_7d_pct", "seven_day_pct", "seven_day_utilization"]),
-		sonnet_pct: numberFrom(snapshot, ["sonnet_pct", "seven_day_sonnet_utilization"]),
+		five_hour_pct: claudeFresh ? nullableNumberFrom(snapshot, ["usage_5h_pct", "five_hour_pct", "five_hour_utilization"]) : null,
+		seven_day_pct: claudeFresh ? nullableNumberFrom(snapshot, ["usage_7d_pct", "seven_day_pct", "seven_day_utilization"]) : null,
+		sonnet_pct: claudeFresh ? nullableNumberFrom(snapshot, ["sonnet_pct", "seven_day_sonnet_utilization"]) : null,
+		claude_status: claudeFresh ? "available" : "unavailable",
+		claude_updated_at: claudeUpdatedAt ?? null,
 		gpt_five_hour_pct: nullableNumberFrom(snapshot, ["gpt_five_hour_pct", "gpt_five_used_pct"])
 			?? (codexStatusFresh ? usageFromFreshCodexStatus(codexStatus, ["five_hour_used_pct"], ["five_hour_left_pct"]) : null),
 		gpt_seven_day_pct: nullableNumberFrom(snapshot, ["gpt_seven_day_pct", "gpt_seven_used_pct"])
