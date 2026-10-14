@@ -54,5 +54,6 @@
   },
   "duration": {
     "less_than_minute": "1분 미만"
-  }
+  },
+  "quotaLastObservation": "Claude 확인 불가 · 마지막 관측 {{time}}"
 }
