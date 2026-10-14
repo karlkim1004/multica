@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const DEFAULT_TOKEN_SNAPSHOT_PATH = "/home/iaas/nexai/state/token_snapshot.json";
 const DEFAULT_CODEX_STATUS_SNAPSHOT_PATH = "/home/iaas/nexai/state/codex_status_snapshot.json";
-const DEFAULT_CODEX_STATUS_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const MAX_AGE_MS = 30 * 60 * 1000;
+const DEFAULT_CLAUDE_RUNTIME_PATH = "/home/iaas/nexai/state/runtime_snapshot_claude.json";
 
 type TokenSnapshot = Record<string, unknown>;
 const KST_TIME_ZONE = "Asia/Seoul";
@@ -26,16 +27,6 @@ function numberFrom(snapshot: TokenSnapshot, keys: string[], fallback = 0) {
 		}
 	}
 	return fallback;
-}
-
-function stringFrom(snapshot: TokenSnapshot, keys: string[]) {
-	for (const key of keys) {
-		const value = snapshot[key];
-		if (typeof value === "string" && value.length > 0) {
-			return value;
-		}
-	}
-	return new Date().toISOString();
 }
 
 function optionalStringFrom(snapshot: TokenSnapshot, keys: string[]) {
@@ -60,13 +51,16 @@ function usageFromFreshCodexStatus(snapshot: TokenSnapshot, usedKeys: string[], 
 	return remaining === null ? null : Math.max(0, Math.min(100, 100 - remaining));
 }
 
-function codexStatusMaxAgeMs() {
-	const configured = Number.parseInt(process.env.NEXAI_CODEX_STATUS_MAX_AGE_SECONDS ?? "", 10);
-	return Number.isFinite(configured) && configured > 0 ? configured * 1000 : DEFAULT_CODEX_STATUS_MAX_AGE_MS;
+function observedAt(snapshot: TokenSnapshot) {
+	const raw = snapshot.produced_at ?? snapshot.last_observed_at ?? snapshot.recorded_at ?? snapshot.updated_at ?? snapshot.timestamp;
+	const ms = typeof raw === "number" ? raw * 1000 : typeof raw === "string" ? Date.parse(raw) : Number.NaN;
+	return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
-function isFreshSnapshot(mtimeMs: number | undefined) {
-	return typeof mtimeMs === "number" && Date.now() - mtimeMs <= codexStatusMaxAgeMs();
+function snapshotState(snapshot: TokenSnapshot, observed: string | null) {
+	if (snapshot.invalid === true || snapshot.healthy === false || !observed) return "unavailable";
+	const age = Date.now() - Date.parse(observed);
+	return age < -60_000 || age > MAX_AGE_MS ? "stale" : "available";
 }
 
 function formatResetAt(value: string | undefined) {
@@ -111,41 +105,50 @@ function weeklyResetStatus(sevenDayResetsAt: string | undefined) {
 	};
 }
 
-async function readJsonSnapshot(pathname: string) {
-	const raw = await readFile(pathname, "utf8");
-	const metadata = await stat(pathname);
-	return { data: JSON.parse(raw) as TokenSnapshot, mtimeMs: metadata.mtimeMs };
+async function readJsonSnapshot(pathname: string): Promise<TokenSnapshot> {
+	try {
+		const parsed: unknown = JSON.parse(await readFile(pathname, "utf8"));
+		return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as TokenSnapshot : {};
+	} catch { return {}; }
 }
 
 export async function GET() {
-	let snapshot: TokenSnapshot = {};
-	let codexStatus: TokenSnapshot = {};
-	let codexStatusFresh = false;
-	try {
-		snapshot = (await readJsonSnapshot(process.env.NEXAI_TOKEN_SNAPSHOT_PATH ?? DEFAULT_TOKEN_SNAPSHOT_PATH)).data;
-	} catch {
-		snapshot = {};
-	}
-	try {
-		const codexSnapshot = await readJsonSnapshot(process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH ?? DEFAULT_CODEX_STATUS_SNAPSHOT_PATH);
-		codexStatus = codexSnapshot.data;
-		codexStatusFresh = isFreshSnapshot(codexSnapshot.mtimeMs);
-	} catch {
-		codexStatus = {};
-	}
+	const [snapshot, codexStatus, claudeRuntime] = await Promise.all([
+		readJsonSnapshot(process.env.NEXAI_TOKEN_SNAPSHOT_PATH ?? DEFAULT_TOKEN_SNAPSHOT_PATH),
+		readJsonSnapshot(process.env.NEXAI_CODEX_STATUS_SNAPSHOT_PATH ?? DEFAULT_CODEX_STATUS_SNAPSHOT_PATH),
+		readJsonSnapshot(process.env.NEXAI_CLAUDE_RUNTIME_SNAPSHOT_PATH ?? DEFAULT_CLAUDE_RUNTIME_PATH),
+	]);
+	const hasRuntime = Object.keys(claudeRuntime).length > 0;
+	const claudeObserved = observedAt(hasRuntime ? claudeRuntime : snapshot);
+	const claudeFive = nullableNumberFrom(snapshot, ["usage_5h_pct", "five_hour_pct", "five_hour_utilization"]);
+	const claudeSeven = nullableNumberFrom(snapshot, ["usage_7d_pct", "seven_day_pct", "seven_day_utilization"]);
+	const legacyState = snapshotState(snapshot, observedAt(snapshot));
+	const runtimeState = hasRuntime ? snapshotState(claudeRuntime, claudeObserved) : legacyState;
+	const claudeState = legacyState === "unavailable" || runtimeState === "unavailable" || claudeFive === null || claudeSeven === null
+		? "unavailable" : legacyState === "stale" || runtimeState === "stale" ? "stale" : "available";
+	const claudeAvailable = claudeState === "available";
+	const codexObserved = observedAt(codexStatus);
+	const codexFive = usageFromFreshCodexStatus(codexStatus, ["five_hour_used_pct"], ["five_hour_left_pct"]);
+	const codexSeven = usageFromFreshCodexStatus(codexStatus, ["seven_day_used_pct"], ["seven_day_left_pct"]);
+	const codexState = codexFive === null || codexSeven === null ? "unavailable" : snapshotState(codexStatus, codexObserved);
+	const codexStatusFresh = codexState === "available";
 	const fiveHourResetsAt = optionalStringFrom(snapshot, ["five_hour_resets_at"]);
 	const sevenDayResetsAt = optionalStringFrom(snapshot, ["seven_day_resets_at"]);
 	const sonnetResetsAt = optionalStringFrom(snapshot, ["seven_day_sonnet_resets_at"]);
 	const weekly = weeklyResetStatus(sevenDayResetsAt);
 
 	return NextResponse.json({
-		five_hour_pct: numberFrom(snapshot, ["usage_5h_pct", "five_hour_pct", "five_hour_utilization"]),
-		seven_day_pct: numberFrom(snapshot, ["usage_7d_pct", "seven_day_pct", "seven_day_utilization"]),
-		sonnet_pct: numberFrom(snapshot, ["sonnet_pct", "seven_day_sonnet_utilization"]),
-		gpt_five_hour_pct: nullableNumberFrom(snapshot, ["gpt_five_hour_pct", "gpt_five_used_pct"])
-			?? (codexStatusFresh ? usageFromFreshCodexStatus(codexStatus, ["five_hour_used_pct"], ["five_hour_left_pct"]) : null),
-		gpt_seven_day_pct: nullableNumberFrom(snapshot, ["gpt_seven_day_pct", "gpt_seven_used_pct"])
-			?? (codexStatusFresh ? usageFromFreshCodexStatus(codexStatus, ["seven_day_used_pct"], ["seven_day_left_pct"]) : null),
+		five_hour_pct: claudeAvailable ? claudeFive : null,
+		seven_day_pct: claudeAvailable ? claudeSeven : null,
+		sonnet_pct: claudeAvailable ? nullableNumberFrom(snapshot, ["sonnet_pct", "seven_day_sonnet_utilization"]) : null,
+		claude_status: claudeState,
+		claude_last_observed_at: claudeObserved,
+		claude_last_five_hour_pct: hasRuntime ? usageFromFreshCodexStatus(claudeRuntime, [], ["five_hour_left_pct"]) : claudeFive,
+		claude_last_seven_day_pct: hasRuntime ? usageFromFreshCodexStatus(claudeRuntime, [], ["seven_day_left_pct"]) : claudeSeven,
+		gpt_status: codexState,
+		gpt_last_observed_at: codexObserved,
+		gpt_five_hour_pct: codexStatusFresh ? codexFive : null,
+		gpt_seven_day_pct: codexStatusFresh ? codexSeven : null,
 		weekly_progress_pct: numberFrom(snapshot, ["weekly_progress_pct"], weekly.weeklyProgressPct),
 		week_day_index: weekly.weekDayIndex,
 		reset_label: weekly.resetLabel,
@@ -155,6 +158,6 @@ export async function GET() {
 		gpt_five_reset_label: codexStatusFresh ? optionalStringFrom(codexStatus, ["five_hour_reset_label"]) ?? "—" : "—",
 		gpt_seven_reset_label: codexStatusFresh ? optionalStringFrom(codexStatus, ["seven_day_reset_label"]) ?? "—" : "—",
 		gpt_status_source: codexStatusFresh ? "codex_status_snapshot" : "unavailable",
-		updated_at: stringFrom(snapshot, ["updated_at", "timestamp"]),
-	});
+		updated_at: observedAt(snapshot),
+	}, { headers: { "Cache-Control": "no-store" } });
 }

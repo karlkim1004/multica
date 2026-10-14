@@ -1,22 +1,13 @@
 "use client";
 
+import { parseWithFallback } from "@multica/core/api/schema";
+import { llmLimitStatusSchema, unavailableLlmLimitStatus, type LlmLimitStatus } from "@multica/core/api/schemas";
+
+
 import { RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
-
-interface LlmLimitStatus {
-  five_hour_pct: number;
-  seven_day_pct: number;
-  sonnet_pct: number;
-  gpt_five_hour_pct: number | null;
-  gpt_seven_day_pct: number | null;
-  five_hour_reset_label?: string;
-  seven_day_reset_label?: string;
-  sonnet_reset_label?: string;
-  gpt_five_reset_label?: string;
-  gpt_seven_reset_label?: string;
-}
 
 async function fetchLlmLimitStatus(): Promise<LlmLimitStatus> {
   const response = await fetch("/api/dashboard/llm-limit-status", {
@@ -26,7 +17,7 @@ async function fetchLlmLimitStatus(): Promise<LlmLimitStatus> {
   if (!response.ok) {
     throw new Error("Failed to load LLM limit status");
   }
-  return response.json() as Promise<LlmLimitStatus>;
+  return parseWithFallback(await response.json(), llmLimitStatusSchema, unavailableLlmLimitStatus, { endpoint: "/api/dashboard/llm-limit-status" });
 }
 
 function remainingFromUsage(value: number | null | undefined): number | null {
@@ -58,17 +49,18 @@ function limitingClaudeSevenDayResetLabel(data: LlmLimitStatus): string | undefi
 }
 
 function compactRemainingLabel(value: number | null): string {
-  return value === null ? "--" : `${value}%`;
+  return value === null ? "확인 불가" : `${value}%`;
 }
 
 export function LlmRemainingBadge({ className }: { className?: string }) {
-  const { data, isFetching, refetch } = useQuery({
+  const { data: fetchedData, isError, isFetching, refetch } = useQuery({
     queryKey: ["chat-llm-limit-status"],
     queryFn: fetchLlmLimitStatus,
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
 
+  const data = isError ? unavailableLlmLimitStatus : fetchedData;
   if (!data) return null;
 
   const claudeFiveHourRemaining = remainingFromUsage(data.five_hour_pct);
@@ -81,8 +73,8 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
   const gptSevenDayReset = compactResetLabel(data.gpt_seven_reset_label);
 
   const ariaLabel = [
-    `채팅 LLM 잔량: Claude 5시간 ${claudeFiveHourRemaining}%, 리셋 ${claudeFiveHourReset}`,
-    `Claude 1주 ${claudeSevenDayRemaining}%, 리셋 ${claudeSevenDayReset}`,
+    `채팅 LLM 잔량: Claude 5시간 ${compactRemainingLabel(claudeFiveHourRemaining)}, 리셋 ${claudeFiveHourReset}`,
+    `Claude 1주 ${compactRemainingLabel(claudeSevenDayRemaining)}, 리셋 ${claudeSevenDayReset}`,
     `GPT 5시간 ${gptFiveHourRemaining === null ? "확인 불가" : `${gptFiveHourRemaining}%`}, 리셋 ${gptFiveHourReset}`,
     `GPT 1주 ${gptSevenDayRemaining === null ? "확인 불가" : `${gptSevenDayRemaining}%`}, 리셋 ${gptSevenDayReset}`,
   ].join(", ");
@@ -99,6 +91,7 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
         "hidden h-7 min-w-[18rem] items-center gap-1.5 rounded-md border px-2 text-[10px] leading-none text-muted-foreground sm:flex",
         className,
       )}
+      title={data.claude_last_observed_at ? `Claude 마지막 관측 ${new Date(data.claude_last_observed_at).toLocaleString()}` : undefined}
       aria-label={ariaLabel}
     >
       <span
@@ -111,7 +104,7 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
       <span
         data-acceptance="chat-claude-token-remaining-badge"
         data-testid="chat-llm-gauge-claude"
-        aria-label={`Claude 5시간 잔량 ${claudeFiveHourRemaining}%, 리셋 ${claudeFiveHourReset}; Claude 1주 잔량 ${claudeSevenDayRemaining}%, 리셋 ${claudeSevenDayReset}`}
+        aria-label={`Claude 5시간 잔량 ${compactRemainingLabel(claudeFiveHourRemaining)}, 리셋 ${claudeFiveHourReset}; Claude 1주 잔량 ${compactRemainingLabel(claudeSevenDayRemaining)}, 리셋 ${claudeSevenDayReset}`}
         className="sr-only"
       />
       <span

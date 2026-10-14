@@ -1,4 +1,39 @@
 import { z } from "zod";
+
+const quotaPct = z.number().min(0).max(100).nullable().optional().default(null);
+export const llmLimitStatusSchema = z.object({
+  five_hour_pct: quotaPct,
+  seven_day_pct: quotaPct,
+  sonnet_pct: quotaPct,
+  gpt_five_hour_pct: quotaPct,
+  gpt_seven_day_pct: quotaPct,
+  weekly_progress_pct: z.number().optional().default(0),
+  week_day_index: z.number().optional(),
+  reset_label: z.string().optional(),
+  five_hour_reset_label: z.string().optional(),
+  seven_day_reset_label: z.string().optional(),
+  sonnet_reset_label: z.string().optional(),
+  gpt_five_reset_label: z.string().optional(),
+  gpt_seven_reset_label: z.string().optional(),
+  gpt_status_source: z.string().optional(),
+  updated_at: z.string().nullable().optional(),
+  claude_status: z.string().optional(),
+  gpt_status: z.string().optional(),
+  claude_last_observed_at: z.string().nullable().optional(),
+  gpt_last_observed_at: z.string().nullable().optional(),
+  claude_last_five_hour_pct: quotaPct,
+  claude_last_seven_day_pct: quotaPct,
+}).transform((data) => {
+  if (data.claude_status && data.claude_status !== "available") {
+    data.five_hour_pct = data.seven_day_pct = data.sonnet_pct = null;
+  }
+  if (data.gpt_status && data.gpt_status !== "available") {
+    data.gpt_five_hour_pct = data.gpt_seven_day_pct = null;
+  }
+  return data;
+});
+export type LlmLimitStatus = z.infer<typeof llmLimitStatusSchema>;
+export const unavailableLlmLimitStatus = llmLimitStatusSchema.parse({});
 import type {
   Agent,
   AgentTemplate,
