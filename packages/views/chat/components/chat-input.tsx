@@ -30,6 +30,14 @@ const logger = createLogger("chat.ui");
 const EMPTY_ATTACHMENTS: Attachment[] = [];
 const VOICE_SILENCE_TIMEOUT_MS = 3_500;
 const VOICE_RESTART_DELAY_MS = 250;
+// No server-side or DB-level cap exists on chat_message.content today (plain
+// TEXT column, empty-string-only validation in SendChatMessage) — this is a
+// client-side guard so a message that will never render sanely doesn't get
+// composed in the first place. Keep in sync with any future backend limit.
+const CHAT_MESSAGE_MAX_LENGTH = 20_000;
+// Counter only surfaces once the user is actually approaching the limit —
+// showing "12/20,000" on every short chat message would be noise.
+const CHAT_MESSAGE_LENGTH_WARN_RATIO = 0.9;
 
 function attachmentReferenceUrls(attachment: Attachment): string[] {
   const withUploadFields = attachment as Attachment & {
@@ -173,6 +181,13 @@ export function ChatInput({
   const addInputDraftAttachment = useChatStore((s) => s.addInputDraftAttachment);
   const clearInputDraft = useChatStore((s) => s.clearInputDraft);
   const [isEmpty, setIsEmpty] = useState(!inputDraft.trim());
+  const [contentLength, setContentLength] = useState(inputDraft.length);
+  // Set when the user hits Send while a response is still running. Consumed
+  // by the effect below, which fires the actual send once `isRunning` clears
+  // — see the allowSubmitWhileRunning wiring on SubmitButton down in the JSX
+  // for why the Send button stays clickable during a run in the first place.
+  const [isQueued, setIsQueued] = useState(false);
+  const queuedTargetRef = useRef<{ draftKey: string; sessionId: string | null } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editorRestore, setEditorRestore] = useState<{
     id: string;
@@ -273,6 +288,7 @@ export function ChatInput({
     setInputDraft(draftKey, restoreDraftRequest.content);
     setInputDraftAttachments(draftKey, restoreDraftRequest.attachments ?? []);
     setIsEmpty(!restoreDraftRequest.content.trim());
+    setContentLength(restoreDraftRequest.content.length);
     setEditorRestore({
       id: restoreDraftRequest.id,
       content: restoreDraftRequest.content,
@@ -318,6 +334,7 @@ export function ChatInput({
     (content: string) => {
       setInputDraft(draftKey, content);
       setIsEmpty(!content.trim());
+      setContentLength(content.length);
       setEditorRestore({
         id: `voice-${Date.now()}`,
         content,
@@ -412,13 +429,19 @@ export function ChatInput({
 
   const handleSend = async () => {
     const content = editorRef.current?.getMarkdown()?.replace(/(\n\s*)+$/, "").trim();
-    if (!content || isRunning || isSubmitting || disabled || noAgent) {
+    if (
+      !content ||
+      isSubmitting ||
+      disabled ||
+      noAgent ||
+      content.length > CHAT_MESSAGE_MAX_LENGTH
+    ) {
       logger.debug("input.send skipped", {
         emptyContent: !content,
-        isRunning,
         isSubmitting,
         disabled,
         noAgent,
+        overLimit: content ? content.length > CHAT_MESSAGE_MAX_LENGTH : false,
       });
       return;
     }
@@ -431,6 +454,17 @@ export function ChatInput({
     // still gate here.
     if (editorRef.current?.hasActiveUploads()) {
       logger.debug("input.send skipped: uploads in flight");
+      return;
+    }
+    // A response is still streaming: don't fire the request now (there's
+    // nowhere to bind the send-in-flight state to a second task), but don't
+    // silently drop it either. Queue it — the effect below fires this exact
+    // path again the instant `isRunning` clears, sending whatever is
+    // currently in the editor at that time.
+    if (isRunning) {
+      queuedTargetRef.current = { draftKey, sessionId: activeSessionId };
+      setIsQueued(true);
+      logger.debug("input.send queued: response in progress");
       return;
     }
     // Only send attachment IDs for uploads still present in the content.
@@ -468,6 +502,7 @@ export function ChatInput({
         // a fair price for not stealing focus mid-action.
         editorRef.current?.blur();
         setIsEmpty(true);
+        setContentLength(0);
       }
       // The sent draft's data is cleared regardless — the message is on its
       // way, so its persisted draft must not resurface.
@@ -504,6 +539,30 @@ export function ChatInput({
     if (!committed) commitInput();
   };
 
+  // Ref mirror so the effect below always calls the latest `handleSend`
+  // closure without needing it in its dependency array (handleSend is
+  // recreated every render, which would otherwise fire the effect on every
+  // render instead of only on the isRunning/isQueued transition).
+  const handleSendRef = useRef(handleSend);
+  handleSendRef.current = handleSend;
+
+  useEffect(() => {
+    if (isRunning || !isQueued) return;
+    const queuedTarget = queuedTargetRef.current;
+    if (
+      !queuedTarget ||
+      queuedTarget.draftKey !== draftKey ||
+      queuedTarget.sessionId !== activeSessionId
+    ) {
+      queuedTargetRef.current = null;
+      setIsQueued(false);
+      return;
+    }
+    queuedTargetRef.current = null;
+    setIsQueued(false);
+    void handleSendRef.current();
+  }, [activeSessionId, draftKey, isRunning, isQueued]);
+
   const placeholder = noAgent
     ? t(($) => $.input.placeholder_no_agent)
     : disabled
@@ -513,6 +572,9 @@ export function ChatInput({
         : t(($) => $.input.placeholder_default);
 
   const uploadEnabled = !!onUploadFile && !disabled && !noAgent;
+  const isOverLimit = contentLength > CHAT_MESSAGE_MAX_LENGTH;
+  const showLengthCounter =
+    contentLength > CHAT_MESSAGE_MAX_LENGTH * CHAT_MESSAGE_LENGTH_WARN_RATIO;
 
   return (
     <div
@@ -550,6 +612,7 @@ export function ChatInput({
             dataAcceptance="chat-input"
             onUpdate={(md) => {
               setIsEmpty(!md.trim());
+              setContentLength(md.length);
               setInputDraft(draftKey, md);
               if (draftAttachments.length > 0) {
                 const referenced = draftAttachments.filter((attachment) =>
@@ -583,6 +646,42 @@ export function ChatInput({
           </div>
         )}
         <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
+          {isQueued && (
+            <span
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              data-acceptance="chat-input-queued-notice"
+            >
+              {t(($) => $.input.queued_notice)}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-foreground"
+                onClick={() => {
+                  queuedTargetRef.current = null;
+                  setIsQueued(false);
+                }}
+                data-acceptance="chat-input-queued-cancel"
+              >
+                {t(($) => $.input.queued_cancel)}
+              </button>
+            </span>
+          )}
+          {showLengthCounter && (
+            <span
+              className={cn(
+                "text-xs tabular-nums",
+                isOverLimit ? "text-destructive" : "text-muted-foreground",
+              )}
+              role={isOverLimit ? "alert" : undefined}
+              data-acceptance="chat-input-length-counter"
+            >
+              {isOverLimit
+                ? t(($) => $.input.length_limit_exceeded, {
+                    count: contentLength,
+                    max: CHAT_MESSAGE_MAX_LENGTH,
+                  })
+                : `${contentLength.toLocaleString()}/${CHAT_MESSAGE_MAX_LENGTH.toLocaleString()}`}
+            </span>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -622,7 +721,14 @@ export function ChatInput({
           )}
           <SubmitButton
             onClick={handleSend}
-            disabled={isEmpty || isSubmitting || !!disabled || !!noAgent || pendingUploads > 0}
+            disabled={
+              isEmpty ||
+              isSubmitting ||
+              !!disabled ||
+              !!noAgent ||
+              pendingUploads > 0 ||
+              isOverLimit
+            }
             loading={isSubmitting}
             running={isRunning}
             allowSubmitWhileRunning
