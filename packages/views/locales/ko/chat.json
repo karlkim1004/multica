@@ -26,7 +26,10 @@
     "voice_audio_unavailable": "마이크 입력을 사용할 수 없습니다. 브라우저나 장치를 확인해 주세요.",
     "voice_service_unavailable": "음성 인식 서비스를 일시적으로 사용할 수 없습니다. 다시 시도해 주세요.",
     "voice_permission_denied": "마이크 권한이 거부되었습니다.",
-    "voice_unsupported": "이 브라우저에서는 음성 입력을 지원하지 않습니다."
+    "voice_unsupported": "이 브라우저에서는 음성 입력을 지원하지 않습니다.",
+    "length_limit_exceeded": "메시지가 너무 깁니다 ({{count}}/{{max}}자). 줄인 후 다시 보내주세요.",
+    "queued_notice": "예약됨 — 현재 응답이 끝나면 자동으로 전송됩니다.",
+    "queued_cancel": "취소"
   },
   "message_list": {
     "show_details": "세부 정보 보기",
