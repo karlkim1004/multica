@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -283,6 +284,38 @@ func TestSendChatMessage_InvalidAttachmentIDs(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected 0 chat_message rows after rejected send, got %d", count)
+	}
+}
+
+func TestSendChatMessage_ContentLength(t *testing.T) {
+	tests := []struct {
+		name       string
+		content    string
+		wantStatus int
+	}{
+		{name: "5000 ASCII runes", content: strings.Repeat("a", 5000), wantStatus: http.StatusCreated},
+		{name: "20000 ASCII runes", content: strings.Repeat("a", MaxChatMessageRunes), wantStatus: http.StatusCreated},
+		{name: "20001 ASCII runes", content: strings.Repeat("a", MaxChatMessageRunes+1), wantStatus: http.StatusBadRequest},
+		{name: "20000 Korean runes", content: strings.Repeat("한", MaxChatMessageRunes), wantStatus: http.StatusCreated},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agentID := createHandlerTestAgent(t, "ChatLengthAgent-"+strings.ReplaceAll(tt.name, " ", "-"), []byte("[]"))
+			sessionID := createHandlerTestChatSession(t, agentID)
+			req := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
+				"content": tt.content,
+			})
+			req = withURLParam(req, "sessionId", sessionID)
+			req = withChatTestWorkspaceCtx(t, req)
+			w := httptest.NewRecorder()
+
+			testHandler.SendChatMessage(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Fatalf("SendChatMessage content length: expected %d, got %d: %s", tt.wantStatus, w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

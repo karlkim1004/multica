@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -378,6 +379,10 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 // Chat Messages
 // ---------------------------------------------------------------------------
 
+// MaxChatMessageRunes is the server-side limit for a single user chat message.
+// It matches the client limit while protecting direct API callers as well.
+const MaxChatMessageRunes = 20000
+
 type SendChatMessageRequest struct {
 	Content       string   `json:"content"`
 	AttachmentIDs []string `json:"attachment_ids"`
@@ -419,6 +424,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Content == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+	if utf8.RuneCountInString(req.Content) > MaxChatMessageRunes {
+		writeError(w, http.StatusBadRequest, "content exceeds the maximum length of "+strconv.Itoa(MaxChatMessageRunes)+" characters")
 		return
 	}
 
