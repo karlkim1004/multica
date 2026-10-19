@@ -94,6 +94,9 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 			logger.Warn("execenv: codex-home sync failed", "file", name, "error", err)
 		}
 	}
+	if err := syncCodexHooksAndTrust(sharedHome, codexHome); err != nil {
+		logger.Warn("execenv: codex-home hooks sync failed", "error", err)
+	}
 
 	// Drop `[[skills.config]]` entries inherited from the user's
 	// ~/.codex/config.toml. Codex Desktop writes plugin-backed skills with a
