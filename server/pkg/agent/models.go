@@ -321,6 +321,8 @@ func discoveryCacheKey(providerType, executablePath string) string {
 // the everyday workhorse (Opus is reserved for advisor-style flows).
 func claudeStaticModels() []Model {
 	return []Model{
+		{ID: "claude-sonnet-5-5", Label: "Claude Sonnet 5.5", Provider: "anthropic"},
+		{ID: "claude-opus-5-5", Label: "Claude Opus 5.5", Provider: "anthropic"},
 		{ID: "claude-opus-5", Label: "Claude Opus 5", Provider: "anthropic"},
 		{ID: "claude-sonnet-5", Label: "Claude Sonnet 5", Provider: "anthropic", Default: true},
 		{ID: "claude-sonnet-4-6", Label: "Claude Sonnet 4.6", Provider: "anthropic"},
@@ -336,6 +338,9 @@ func claudeStaticModels() []Model {
 
 func codexStaticModels() []Model {
 	return []Model{
+		{ID: "gpt-6-astra", Label: "GPT-6 Astra", Provider: "openai"},
+		{ID: "gpt-6-luna", Label: "GPT-6 Luna", Provider: "openai"},
+		{ID: "gpt-6-sol", Label: "GPT-6 Sol", Provider: "openai"},
 		{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol", Provider: "openai"},
 		{ID: "gpt-5.4-mini", Label: "GPT-5.4 mini", Provider: "openai"},
 		{ID: "gpt-5.6-luna", Label: "GPT-5.6 Luna", Provider: "openai"},
