@@ -362,6 +362,19 @@
     "remove_action": "从工作区移除",
     "cannot_demote_last_owner_title": "请先把另一位成员升级为所有者——工作区必须至少保留一位所有者。",
     "cannot_demote_last_owner": "不能降级最后一位所有者",
+    "join_requests_title": "加入申请 ({{count}})",
+    "approve_join_request": "批准",
+    "reject_join_request": "拒绝",
+    "reject_reason_prompt": "拒绝原因",
+    "toast_join_request_approved": "已批准加入申请",
+    "toast_join_request_rejected": "已拒绝加入申请",
+    "join_request_title": "加入工作区",
+    "join_request_description": "请输入管理员提供的加入代码或链接。",
+    "join_code_label": "加入代码或链接",
+    "join_request_submit": "申请加入",
+    "join_request_submit_failed": "无法提交加入申请。",
+    "join_request_pending_title": "申请待处理",
+    "join_request_pending_description": "工作区管理员批准后才能访问。",
     "roles": {
       "owner": {
         "label": "所有者",
@@ -374,6 +387,14 @@
       "member": {
         "label": "成员",
         "description": "创建并处理 issue"
+      },
+      "super_user": {
+        "label": "超级用户",
+        "description": "可以管理自己创建的资源"
+      },
+      "general_user": {
+        "label": "普通用户",
+        "description": "只能创建 issue"
       }
     }
   }

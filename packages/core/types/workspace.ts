@@ -1,4 +1,14 @@
-export type MemberRole = "owner" | "admin" | "member";
+/** `member` is retained for existing workspaces and is policy-equivalent to super_user. */
+export type MemberRole = "owner" | "admin" | "member" | "super_user" | "general_user";
+
+export interface WorkspaceJoinRequest {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  status: "pending" | "approved" | "rejected";
+  requested_at: string;
+  reviewed_at: string | null;
+}
 
 export interface WorkspaceRepo {
   url: string;

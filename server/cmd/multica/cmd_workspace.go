@@ -46,6 +46,12 @@ var workspaceMemberListCmd = &cobra.Command{
 	RunE:  runWorkspaceMembers,
 }
 
+var workspaceJoinRequestCmd = &cobra.Command{Use: "join-request", Short: "Request or review workspace access"}
+var workspaceJoinRequestCreateCmd = &cobra.Command{Use: "create <join-code-or-link>", Short: "Request to join a workspace", Args: exactArgs(1), RunE: runWorkspaceJoinRequestCreate}
+var workspaceJoinRequestListCmd = &cobra.Command{Use: "list", Short: "List pending join requests", RunE: runWorkspaceJoinRequestList}
+var workspaceJoinRequestApproveCmd = &cobra.Command{Use: "approve <request-id>", Short: "Approve a join request", Args: exactArgs(1), RunE: runWorkspaceJoinRequestApprove}
+var workspaceJoinRequestRejectCmd = &cobra.Command{Use: "reject <request-id>", Short: "Reject a join request", Args: exactArgs(1), RunE: runWorkspaceJoinRequestReject}
+
 var workspaceUpdateCmd = &cobra.Command{
 	Use:   "update [workspace-id|slug|prefix]",
 	Short: "Update workspace metadata (admin/owner only)",
@@ -74,6 +80,8 @@ func init() {
 	workspaceCmd.AddCommand(workspaceGetCmd)
 	workspaceCmd.AddCommand(workspaceMemberCmd)
 	workspaceMemberCmd.AddCommand(workspaceMemberListCmd)
+	workspaceCmd.AddCommand(workspaceJoinRequestCmd)
+	workspaceJoinRequestCmd.AddCommand(workspaceJoinRequestCreateCmd, workspaceJoinRequestListCmd, workspaceJoinRequestApproveCmd, workspaceJoinRequestRejectCmd)
 	workspaceCmd.AddCommand(workspaceUpdateCmd)
 	workspaceCmd.AddCommand(workspaceSwitchCmd)
 
@@ -81,6 +89,8 @@ func init() {
 	workspaceListCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
 	workspaceGetCmd.Flags().String("output", "json", "Output format: table or json")
 	workspaceMemberListCmd.Flags().String("output", "table", "Output format: table or json")
+	workspaceJoinRequestListCmd.Flags().String("output", "table", "Output format: table or json")
+	workspaceJoinRequestRejectCmd.Flags().String("reason", "", "Reason shown to the applicant")
 
 	workspaceUpdateCmd.Flags().String("name", "", "New workspace name")
 	workspaceUpdateCmd.Flags().String("description", "", "New description (decodes \\n, \\r, \\t, \\\\; pipe via --description-stdin to preserve literal backslashes)")
@@ -469,4 +479,61 @@ func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
 	return nil
+}
+
+func runWorkspaceJoinRequestCreate(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var result map[string]any
+	if err := client.PostJSON(ctx, "/api/workspace-join-requests", map[string]string{"join_code": args[0]}, &result); err != nil {
+		return fmt.Errorf("request workspace access: %w", err)
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+
+func runWorkspaceJoinRequestList(cmd *cobra.Command, _ []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var requests []map[string]any
+	if err := client.GetJSON(ctx, "/api/workspaces/"+client.WorkspaceID+"/join-requests", &requests); err != nil {
+		return fmt.Errorf("list join requests: %w", err)
+	}
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(os.Stdout, requests)
+	}
+	rows := make([][]string, 0, len(requests))
+	for _, r := range requests {
+		rows = append(rows, []string{strVal(r, "id"), strVal(r, "user_id"), strVal(r, "requested_at")})
+	}
+	cli.PrintTable(os.Stdout, []string{"ID", "USER ID", "REQUESTED AT"}, rows)
+	return nil
+}
+
+func runWorkspaceJoinRequestApprove(cmd *cobra.Command, args []string) error {
+	return runWorkspaceJoinRequestReview(cmd, args[0], "approve", "")
+}
+func runWorkspaceJoinRequestReject(cmd *cobra.Command, args []string) error {
+	reason, _ := cmd.Flags().GetString("reason")
+	return runWorkspaceJoinRequestReview(cmd, args[0], "reject", reason)
+}
+func runWorkspaceJoinRequestReview(cmd *cobra.Command, requestID, action, reason string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var result map[string]any
+	if err := client.PostJSON(ctx, "/api/workspaces/"+client.WorkspaceID+"/join-requests/"+requestID+"/"+action, map[string]string{"reason": reason}, &result); err != nil {
+		return fmt.Errorf("%s join request: %w", action, err)
+	}
+	return cli.PrintJSON(os.Stdout, result)
 }

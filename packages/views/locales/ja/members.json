@@ -2,7 +2,9 @@
   "role": {
     "owner": "オーナー",
     "admin": "管理者",
-    "member": "メンバー"
+    "member": "スーパー ユーザー",
+    "super_user": "スーパー ユーザー",
+    "general_user": "一般ユーザー"
   },
   "card": {
     "unavailable": "メンバーを利用できません",

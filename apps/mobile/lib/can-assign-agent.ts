@@ -16,7 +16,7 @@
  */
 import type { Agent } from "@multica/core/types";
 
-type MemberRoleLike = "owner" | "admin" | "member" | null | undefined;
+type MemberRoleLike = "owner" | "admin" | "member" | "super_user" | "general_user" | null | undefined;
 
 export function canAssignAgent(
   agent: Agent,
@@ -26,7 +26,7 @@ export function canAssignAgent(
   if (!userId) return false;
 
   const role: MemberRoleLike =
-    memberRole === "owner" || memberRole === "admin" || memberRole === "member"
+    memberRole === "owner" || memberRole === "admin" || memberRole === "member" || memberRole === "super_user" || memberRole === "general_user"
       ? memberRole
       : null;
 

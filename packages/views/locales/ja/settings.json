@@ -362,6 +362,19 @@
     "remove_action": "ワークスペースから削除",
     "cannot_demote_last_owner_title": "先に別のメンバーを owner に昇格させてください。ワークスペースには少なくとも 1 人の owner が必要です。",
     "cannot_demote_last_owner": "最後の owner は降格できません",
+    "join_requests_title": "参加リクエスト ({{count}})",
+    "approve_join_request": "承認",
+    "reject_join_request": "拒否",
+    "reject_reason_prompt": "拒否理由",
+    "toast_join_request_approved": "参加リクエストを承認しました",
+    "toast_join_request_rejected": "参加リクエストを拒否しました",
+    "join_request_title": "ワークスペースに参加",
+    "join_request_description": "管理者から受け取った参加コードまたはリンクを入力してください。",
+    "join_code_label": "参加コードまたはリンク",
+    "join_request_submit": "参加をリクエスト",
+    "join_request_submit_failed": "参加リクエストを送信できませんでした。",
+    "join_request_pending_title": "リクエストは保留中です",
+    "join_request_pending_description": "アクセスするにはワークスペース管理者の承認が必要です。",
     "roles": {
       "owner": {
         "label": "オーナー",
@@ -374,6 +387,14 @@
       "member": {
         "label": "メンバー",
         "description": "イシューの作成と作業"
+      },
+      "super_user": {
+        "label": "スーパー ユーザー",
+        "description": "自分で作成したリソースを管理できます"
+      },
+      "general_user": {
+        "label": "一般ユーザー",
+        "description": "イシューのみ作成できます"
       }
     }
   }

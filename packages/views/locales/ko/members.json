@@ -2,7 +2,9 @@
   "role": {
     "owner": "소유자",
     "admin": "관리자",
-    "member": "멤버"
+    "member": "슈퍼 유저",
+    "super_user": "슈퍼 유저",
+    "general_user": "일반 유저"
   },
   "card": {
     "unavailable": "멤버를 사용할 수 없습니다",
