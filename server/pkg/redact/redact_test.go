@@ -282,6 +282,25 @@ func TestRedactUserEnteredPasswordsAndCompactJWT(t *testing.T) {
 	}
 }
 
+func TestReplaceSecretsPreservesReferencesAndRejectsMissingStore(t *testing.T) {
+	inputs := []string{"비밀번호가 Abc1234야", "pw는 X", "password: X", "sk-abcdefghijklmnopqrstuvwxyz123456", "ghp_abcdefghijklmnopqrstuvwxyz1234567890", "eyJabcdefghijklmnopqrstuvwxyz1234567890", "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n-----END PRIVATE KEY-----"}
+	for _, input := range inputs {
+		got, err := ReplaceSecrets(input, func(string) (string, error) { return "ref-1", nil })
+		if err != nil || !strings.Contains(got, "[secret:ref-1]") {
+			t.Errorf("secret not referenced: %q -> %q, err=%v", input, got, err)
+		}
+		if strings.Contains(got, "Abc1234") || strings.Contains(got, "private-material") {
+			t.Errorf("raw secret survived: %q", got)
+		}
+	}
+	if got, err := ReplaceSecrets("일반적인 문장입니다", func(string) (string, error) { t.Fatal("store called for ordinary text"); return "", nil }); err != nil || got != "일반적인 문장입니다" {
+		t.Fatalf("ordinary sentence changed: %q err=%v", got, err)
+	}
+	if got, err := ReplaceSecrets("pw는 X", nil); err == nil || strings.Contains(got, "X") {
+		t.Fatalf("missing store must fail closed: %q err=%v", got, err)
+	}
+}
+
 func TestInputMap(t *testing.T) {
 	t.Parallel()
 	m := map[string]any{

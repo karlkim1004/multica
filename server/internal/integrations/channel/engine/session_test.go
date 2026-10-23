@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/channelmedia"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -87,6 +89,7 @@ type fakeSessionQueries struct {
 	messages              []string
 	messageID             pgtype.UUID
 	lastCreate            db.CreateChatMessageParams
+	secretRows            []db.CreateChatSecretParams
 	touched               int
 	replyTargets          int
 	lastReplyTarget       db.UpdateChannelChatSessionBindingReplyTargetParams
@@ -129,6 +132,26 @@ type fakeSessionQueries struct {
 
 func newFake() *fakeSessionQueries {
 	return &fakeSessionQueries{bindings: map[string]pgtype.UUID{}, markRows: 1, messageID: uid(42), updateMediaRows: 1, contextRevision: 1}
+}
+
+func TestSecureContentStoresAndReferencesCredential(t *testing.T) {
+	box, err := secretbox.New([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFake()
+	s := &ChatSession{q: f, secretBox: box}
+	clean, err := s.secureContent(context.Background(), f, db.ChatSession{ID: uid(2), WorkspaceID: uid(1)}, "비밀번호가 Abc1234야")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.secretRows) != 1 || strings.Contains(clean, "Abc1234") || !strings.Contains(clean, "[secret:") {
+		t.Fatalf("secret was not safely stored (rows=%d, contains_raw=%t, has_ref=%t)", len(f.secretRows), strings.Contains(clean, "Abc1234"), strings.Contains(clean, "[secret:"))
+	}
+	plain, err := box.Open(f.secretRows[0].Ciphertext)
+	if err != nil || string(plain) != "Abc1234야" {
+		t.Fatalf("secret round-trip failed (matched=%t, err=%v)", string(plain) == "Abc1234야", err)
+	}
 }
 
 func bindKey(inst pgtype.UUID, chat string) string { return fmt.Sprintf("%x|%s", inst.Bytes, chat) }
@@ -249,6 +272,11 @@ func (f *fakeSessionQueries) CreateChatMessage(_ context.Context, arg db.CreateC
 		f.hasPublicUserMessage = true
 	}
 	return db.ChatMessage{ID: f.messageID}, nil
+}
+
+func (f *fakeSessionQueries) CreateChatSecret(_ context.Context, arg db.CreateChatSecretParams) error {
+	f.secretRows = append(f.secretRows, arg)
+	return nil
 }
 
 func (f *fakeSessionQueries) ListUnownedChannelChatContextRevisions(context.Context, pgtype.UUID) ([]PendingContext, error) {

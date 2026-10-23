@@ -89,7 +89,18 @@ func TestSendChatMessage_RedactsPasswordBeforeStorageAndPrompt(t *testing.T) {
 		t.Fatalf("list chat messages: %v", err)
 	}
 	if len(messages) != 1 || strings.Contains(messages[0].Content, "Abc1234") {
-		t.Fatalf("stored chat content leaked password: %+v", messages)
+		t.Fatalf("stored chat content leaked password (count=%d)", len(messages))
+	}
+	if !strings.Contains(messages[0].Content, "[secret:") {
+		t.Fatalf("stored message lacks secret reference: %q", messages[0].Content)
+	}
+	secrets, err := testHandler.Queries.ListChatSecretsForSession(ctx, db.ListChatSecretsForSessionParams{WorkspaceID: parseUUID(testWorkspaceID), ChatSessionID: parseUUID(sessionID)})
+	if err != nil || len(secrets) != 1 {
+		t.Fatalf("encrypted secret count=%d err=%v", len(secrets), err)
+	}
+	plain, err := testHandler.TaskService.ChatSecretBox.Open(secrets[0].Ciphertext)
+	if err != nil || string(plain) != "Abc1234야" {
+		t.Fatalf("encrypted secret did not round-trip (match=%t err=%v)", string(plain) == "Abc1234야", err)
 	}
 	if prompt := daemon.BuildPrompt(daemon.Task{ChatSessionID: sessionID, ChatMessage: messages[0].Content}, "claude"); strings.Contains(prompt, "Abc1234") {
 		t.Fatalf("daemon chat history leaked password: %s", prompt)

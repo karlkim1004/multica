@@ -15,6 +15,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/channelmedia"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -60,6 +61,7 @@ type SessionQueries interface {
 	ReplaceImplicitChatSessionTitle(ctx context.Context, arg db.ReplaceImplicitChatSessionTitleParams) (db.ChatSession, error)
 	InitializeChatSessionMediaTitle(ctx context.Context, arg db.InitializeChatSessionMediaTitleParams) (db.ChatSession, error)
 	CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error)
+	CreateChatSecret(ctx context.Context, arg db.CreateChatSecretParams) error
 	ListUnownedChannelChatContextRevisions(ctx context.Context, chatSessionID pgtype.UUID) ([]PendingContext, error)
 	ClearChatMessageChannelMediaPending(ctx context.Context, arg db.ClearChatMessageChannelMediaPendingParams) error
 	LockIssueForChannelMediaBind(ctx context.Context, arg db.LockIssueForChannelMediaBindParams) (pgtype.UUID, error)
@@ -149,6 +151,9 @@ func (a dbSessionQueries) InitializeChatSessionMediaTitle(ctx context.Context, a
 }
 func (a dbSessionQueries) CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
 	return a.q.CreateChatMessage(ctx, arg)
+}
+func (a dbSessionQueries) CreateChatSecret(ctx context.Context, arg db.CreateChatSecretParams) error {
+	return a.q.CreateChatSecret(ctx, arg)
 }
 func (a dbSessionQueries) ListUnownedChannelChatContextRevisions(ctx context.Context, chatSessionID pgtype.UUID) ([]PendingContext, error) {
 	rows, err := a.q.ListUnownedChannelChatContextRevisions(ctx, chatSessionID)
@@ -244,13 +249,18 @@ type ChatSession struct {
 	tx          TxStarter
 	channelType channel.Type
 	titles      SessionTitles
+	secretBox   *secretbox.Box
 }
 
 // NewChatSession builds the shared service over the generated queries. tx is
 // required: AppendUserMessage runs the dedup Mark inside the chat_message
 // transaction so the durable write and the Mark commit (or roll back) together.
-func NewChatSession(q *db.Queries, tx TxStarter, channelType channel.Type, titles SessionTitles) *ChatSession {
-	return &ChatSession{q: dbSessionQueries{q: q}, tx: tx, channelType: channelType, titles: titles}
+func NewChatSession(q *db.Queries, tx TxStarter, channelType channel.Type, titles SessionTitles, boxes ...*secretbox.Box) *ChatSession {
+	s := &ChatSession{q: dbSessionQueries{q: q}, tx: tx, channelType: channelType, titles: titles}
+	if len(boxes) > 0 {
+		s.secretBox = boxes[0]
+	}
+	return s
 }
 
 // newChatSessionWith is the test seam: it accepts a SessionQueries directly so
@@ -435,6 +445,27 @@ type StartSessionInput struct {
 	BeforeCommit func(context.Context, pgx.Tx, db.ChatSession) error
 }
 
+func (s *ChatSession) secureContent(ctx context.Context, qtx SessionQueries, session db.ChatSession, content string) (string, error) {
+	clean, err := redact.ReplaceSecrets(content, func(value string) (string, error) {
+		if s.secretBox == nil {
+			return "", redact.ErrSecretStoreUnavailable
+		}
+		ciphertext, sealErr := s.secretBox.Seal([]byte(value))
+		if sealErr != nil {
+			return "", errors.New("encrypt chat secret")
+		}
+		ref := dbid.NewV7()
+		if storeErr := qtx.CreateChatSecret(ctx, db.CreateChatSecretParams{SecretRef: ref, WorkspaceID: session.WorkspaceID, ChatSessionID: session.ID, Ciphertext: ciphertext}); storeErr != nil {
+			return "", errors.New("store encrypted chat secret")
+		}
+		return uuid.UUID(ref.Bytes).String(), nil
+	})
+	if err != nil {
+		return "", errors.New("secure chat secret storage is unavailable")
+	}
+	return clean, nil
+}
+
 // StartSession atomically retires the current route generation, creates an
 // explicitly visible Chat, installs the next generation, and optionally writes
 // the command body as its first ordinary user message.
@@ -536,8 +567,12 @@ func (s *ChatSession) StartSession(ctx context.Context, in StartSessionInput) (S
 		}); err != nil {
 			return StartSessionResult{}, fmt.Errorf("snapshot started chat initiator: %w", err)
 		}
+		safeBody, err := s.secureContent(ctx, qtx, session, in.Body)
+		if err != nil {
+			return StartSessionResult{}, err
+		}
 		msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
-			ID: dbid.NewV7(), ChatSessionID: session.ID, Role: "user", Content: redact.Text(in.Body),
+			ID: dbid.NewV7(), ChatSessionID: session.ID, Role: "user", Content: safeBody,
 			ChannelMediaPendingSecs: pgtype.Float8{Float64: in.MediaPendingSeconds, Valid: in.MediaPendingSeconds > 0},
 			ChannelIngested:         pgtype.Bool{Bool: true, Valid: true},
 			ChannelContextRevision:  pgtype.Int8{Int64: 1, Valid: true},
@@ -677,6 +712,10 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("reload chat session for append: %w", err)
 	}
+	safeBody, err := s.secureContent(ctx, qtx, currentSession, in.Body)
+	if err != nil {
+		return AppendResult{}, err
+	}
 	hadPublicUserMessage, err := qtx.ChatSessionHasPublicUserMessage(ctx, in.SessionID)
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("check public chat history: %w", err)
@@ -752,7 +791,7 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		ID:                      dbid.NewV7(),
 		ChatSessionID:           in.SessionID,
 		Role:                    "user",
-		Content:                 redact.Text(in.Body),
+		Content:                 safeBody,
 		MessageKind:             textOrNullIf(cmd != nil, channelCommandMessageKind),
 		ChannelMediaPendingSecs: pgtype.Float8{Float64: in.MediaPendingSeconds, Valid: in.MediaPendingSeconds > 0},
 		ChannelIngested:         pgtype.Bool{Bool: true, Valid: true},

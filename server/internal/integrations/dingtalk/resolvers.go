@@ -13,6 +13,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
@@ -34,7 +35,7 @@ const originDingTalkChat = "dingtalk_chat"
 // per-message reaction, so the ack notifier stands in for a typing indicator (a
 // "working on it" message on ingest); pass nil to disable it. Media is optional:
 // when configured it uses the shared MediaResolver and intent-ledger pipeline.
-func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, ack *ackNotifier, media engine.MediaResolver, botNames *BotNameResolver) engine.ResolverSet {
+func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, ack *ackNotifier, media engine.MediaResolver, botNames *BotNameResolver, boxes ...*secretbox.Box) engine.ResolverSet {
 	groupPresence := &groupPresenceObserver{
 		q:        q,
 		botNames: botNames,
@@ -48,7 +49,7 @@ func NewDingTalkResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 			Group:    "DingTalk group",
 			Direct:   "DingTalk direct message",
 			Fallback: "DingTalk chat",
-		}), groupPresence: groupPresence, replies: replyClient(ack)},
+		}, boxes...), groupPresence: groupPresence, replies: replyClient(ack)},
 		Audit:      &auditor{q: q},
 		Replier:    replier,
 		OriginType: originDingTalkChat,

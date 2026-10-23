@@ -7655,6 +7655,22 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.WorkspaceID == "" {
 		return TaskResult{}, fmt.Errorf("refusing to spawn agent: task has no workspace_id (task_id=%s)", task.ID)
 	}
+	if len(task.ChatSecrets) > 0 {
+		if runtime.GOOS != "darwin" {
+			return TaskResult{}, errors.New("chat secret keychain sync requires macOS")
+		}
+		for i := range task.ChatSecrets {
+			cmd := exec.CommandContext(ctx, "security", "add-generic-password", "-U", "-a", task.ChatSecrets[i].Ref, "-s", "MulticaChat", "-w", task.ChatSecrets[i].Value)
+			if err := cmd.Run(); err != nil {
+				for j := range task.ChatSecrets {
+					task.ChatSecrets[j].Value = ""
+				}
+				return TaskResult{}, errors.New("chat secret keychain sync failed")
+			}
+			task.ChatSecrets[i].Value = ""
+		}
+		task.ChatSecrets = nil
+	}
 
 	prepareTimeout := d.effectiveTaskPrepareTimeout()
 	prepareCtx, cancelPrepare := context.WithTimeoutCause(ctx, prepareTimeout, errTaskPrepareTimeout)

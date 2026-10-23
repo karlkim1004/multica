@@ -75,6 +75,7 @@ type ProjectWorkflowData struct {
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
+	ChatSecrets []ChatSecretValue `json:"chat_secrets,omitempty"`
 	// StartClaimSupported gates retries when talking to older servers.
 	StartClaimSupported  bool                   `json:"start_claim_supported,omitempty"`
 	DispatchedAt         string                 `json:"dispatched_at,omitempty"`
@@ -186,6 +187,11 @@ type Task struct {
 	// Empty or non-task-scoped values are fatal for writable agent tasks; the
 	// daemon must not fall back to its own token. See MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
+}
+
+type ChatSecretValue struct {
+	Ref   string `json:"ref"`
+	Value string `json:"value"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon

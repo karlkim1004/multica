@@ -4,7 +4,9 @@ package redact
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
+	"strings"
 )
 
 var ErrSecretStoreUnavailable = errors.New("secret store unavailable")
@@ -83,6 +85,7 @@ var (
 	chatPasswordPattern = regexp.MustCompile(`(?i)((?:비밀번호|비번|password|passwd|pw)\s*(?:가|은|는|is|[:=])\s*)([^\s,;]+)`)
 	chatPrivateKey      = regexp.MustCompile(`(?s)-----BEGIN[A-Z\s]*PRIVATE KEY-----.*?-----END[A-Z\s]*PRIVATE KEY-----`)
 	chatToken           = regexp.MustCompile(`(?i)(?:AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|sk-[A-Za-z0-9_-]{15,}|glpat-[A-Za-z0-9_-]{15,}|eyJ[A-Za-z0-9_-]{30,}|xox[bporase]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._~+/=-]{20,})`)
+	secretRefPattern    = regexp.MustCompile(`\[secret:[^\]]+\]`)
 )
 
 // ReplaceSecrets stores detected values through store and replaces them with
@@ -107,10 +110,19 @@ func ReplaceSecrets(input string, store func(string) (string, error)) (string, e
 	}
 	input = chatPasswordPattern.ReplaceAllStringFunc(input, func(match string) string {
 		parts := chatPasswordPattern.FindStringSubmatch(match)
-		return parts[1] + storeValue(parts[2])
+		return storeValue(parts[2])
 	})
 	input = chatToken.ReplaceAllStringFunc(input, storeValue)
+	refs := make([]string, 0)
+	input = secretRefPattern.ReplaceAllStringFunc(input, func(ref string) string {
+		token := fmt.Sprintf("ZZREF%dZZ", len(refs))
+		refs = append(refs, ref)
+		return token
+	})
 	input = Text(input)
+	for i, ref := range refs {
+		input = strings.ReplaceAll(input, fmt.Sprintf("ZZREF%dZZ", i), ref)
+	}
 	return input, storeErr
 }
 

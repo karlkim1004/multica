@@ -2808,6 +2808,23 @@ func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, issueSnapshot []byte, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
+	if task.ChatSessionID.Valid && h.TaskService.ChatSecretBox != nil {
+		session, sessionErr := h.Queries.GetChatSession(r.Context(), task.ChatSessionID)
+		if sessionErr != nil {
+			return resp, nil, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, sessionErr, "chat_secret_session", "")
+		}
+		rows, secretErr := h.Queries.ListChatSecretsForSession(r.Context(), db.ListChatSecretsForSessionParams{WorkspaceID: session.WorkspaceID, ChatSessionID: task.ChatSessionID})
+		if secretErr != nil {
+			return resp, nil, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, secretErr, "chat_secret", "")
+		}
+		for _, row := range rows {
+			value, openErr := h.TaskService.ChatSecretBox.Open(row.Ciphertext)
+			if openErr != nil {
+				return resp, nil, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, errors.New("chat secret decryption failed"), "chat_secret", "")
+			}
+			resp.ChatSecrets = append(resp.ChatSecrets, ChatSecretForDaemon{Ref: uuidToString(row.SecretRef), Value: string(value)})
+		}
+	}
 	if err := (&service.IssueWakeupService{Tasks: h.TaskService}).CheckClaim(r.Context(), *task); err != nil {
 		if !errors.Is(err, service.ErrWakeupForbidden) {
 			return resp, nil, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, err, "wakeup", resp.WakeupID)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
@@ -31,7 +32,7 @@ const originTelegramChat = "telegram_chat"
 // replier to disable outbound verdict notices; typing (sendChatAction) is
 // enabled when deps carry a decrypter. A nil media resolver (no object
 // storage) ingests photos and files as their placeholder text only.
-func NewTelegramResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, media engine.MediaResolver) engine.ResolverSet {
+func NewTelegramResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing engine.TypingNotifier, media engine.MediaResolver, boxes ...*secretbox.Box) engine.ResolverSet {
 	return engine.ResolverSet{
 		Installation: &installationResolver{q: q},
 		Identity:     &identityResolver{q: q},
@@ -40,7 +41,7 @@ func NewTelegramResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.O
 			Group:    "Telegram group",
 			Direct:   "Telegram direct message",
 			Fallback: "Telegram chat",
-		})},
+		}, boxes...)},
 		Media:      media,
 		Audit:      &auditor{q: q},
 		Replier:    replier,

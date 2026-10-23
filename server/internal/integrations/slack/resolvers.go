@@ -11,6 +11,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
@@ -29,7 +30,7 @@ const originSlackChat = "slack_chat"
 // the processing reaction, and media stores inbound attachments. Each optional
 // dependency may be nil to disable only that capability while preserving normal
 // Slack message ingestion.
-func NewSlackResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing *TypingIndicatorManager, media engine.MediaResolver) engine.ResolverSet {
+func NewSlackResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.OutboundReplier, typing *TypingIndicatorManager, media engine.MediaResolver, boxes ...*secretbox.Box) engine.ResolverSet {
 	set := engine.ResolverSet{
 		Installation: &installationResolver{q: q},
 		Identity:     &identityResolver{q: q},
@@ -38,7 +39,7 @@ func NewSlackResolverSet(q *db.Queries, tx engine.TxStarter, replier engine.Outb
 			Group:    "Slack channel",
 			Direct:   "Slack direct message",
 			Fallback: "Slack chat",
-		})},
+		}, boxes...)},
 		Audit:      &auditor{q: q},
 		Media:      media,
 		Replier:    replier,

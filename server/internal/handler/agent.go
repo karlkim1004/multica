@@ -368,6 +368,7 @@ type TaskCancellationActor struct {
 }
 
 type AgentTaskResponse struct {
+	ChatSecrets              []ChatSecretForDaemon  `json:"chat_secrets,omitempty"`
 	StartClaimSupported      bool                   `json:"start_claim_supported,omitempty"`
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`
 	CancelledBy              *TaskCancellationActor `json:"cancelled_by,omitempty"`
@@ -577,6 +578,13 @@ type AgentTaskResponse struct {
 	// owning user; the daemon must not fall back to its own credential. See
 	// MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
+}
+
+// ChatSecretForDaemon is claim-only transport for synchronizing encrypted-at-rest
+// chat secrets into the runtime host keychain. It is cleared before prompt build.
+type ChatSecretForDaemon struct {
+	Ref   string `json:"ref"`
+	Value string `json:"value"`
 }
 
 // TaskAttribution is the wire shape of a run's accountable-human provenance
