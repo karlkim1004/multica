@@ -17,6 +17,9 @@ type secretPattern struct {
 
 // Patterns are checked in order; first match wins per position.
 var patterns = []secretPattern{
+	// Human-entered passwords are commonly labeled in Korean or English.
+	{regexp.MustCompile(`(?i)(?:비밀번호|비번|password|passwd|pw)\s*(?:가|은|는|[:=])\s*[^\s,;]+`), "[REDACTED CREDENTIAL]"},
+
 	// AWS access key IDs (always start with AKIA)
 	{regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`), "[REDACTED AWS KEY]"},
 
@@ -40,6 +43,8 @@ var patterns = []secretPattern{
 
 	// JWT tokens (three base64url segments)
 	{regexp.MustCompile(`\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`), "[REDACTED JWT]"},
+	// JWT-like tokens are also sometimes pasted without separators.
+	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{30,}\b`), "[REDACTED JWT]"},
 
 	// Generic "Bearer <token>" in output
 	{regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9\-._~+/]+=*\b`), "Bearer [REDACTED]"},

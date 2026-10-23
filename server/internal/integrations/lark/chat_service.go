@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // pgSQLStateUniqueViolation is the Postgres SQLSTATE for unique
@@ -213,6 +214,7 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	if commandSource == "" {
 		commandSource = p.Body
 	}
+	commandSource = redact.Text(commandSource)
 	cmd, _ := parseIssueCommand(commandSource)
 	if cmd != nil && cmd.Title == "" {
 		prev, err := qtx.GetMostRecentUserChatMessage(ctx, p.ChatSessionID)
@@ -226,7 +228,7 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	if _, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
 		ChatSessionID: p.ChatSessionID,
 		Role:          "user",
-		Content:       p.Body,
+		Content:       redact.Text(p.Body),
 		SenderID:      p.Sender,
 	}); err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)

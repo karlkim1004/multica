@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // chatSessionTitleMaxLen caps the rename input. Long enough to fit a
@@ -426,6 +427,8 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
+	// Persist only redacted content so DB rows and daemon prompts share a safe source.
+	req.Content = redact.Text(req.Content)
 	if utf8.RuneCountInString(req.Content) > MaxChatMessageRunes {
 		writeError(w, http.StatusBadRequest, "content exceeds the maximum length of "+strconv.Itoa(MaxChatMessageRunes)+" characters")
 		return
