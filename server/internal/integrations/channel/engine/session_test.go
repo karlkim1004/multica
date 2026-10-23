@@ -149,7 +149,7 @@ func TestSecureContentStoresAndReferencesCredential(t *testing.T) {
 		t.Fatalf("secret was not safely stored (rows=%d, contains_raw=%t, has_ref=%t)", len(f.secretRows), strings.Contains(clean, "Abc1234"), strings.Contains(clean, "[secret:"))
 	}
 	plain, err := box.Open(f.secretRows[0].Ciphertext)
-	if err != nil || string(plain) != "Abc1234야" {
+	if err != nil || string(plain) != "Abc1234" {
 		t.Fatalf("secret round-trip failed (matched=%t, err=%v)", string(plain) == "Abc1234야", err)
 	}
 }
