@@ -301,6 +301,22 @@ func TestReplaceSecretsPreservesReferencesAndRejectsMissingStore(t *testing.T) {
 	}
 }
 
+func TestReplaceSecretsKeepsLabelsAndKoreanSentenceBoundary(t *testing.T) {
+	cases := []struct{ input, want, secret string }{
+		{"비밀번호가 Abc1234야", "비밀번호가 [secret:ref-1]야", "Abc1234"},
+		{"비번은 X", "비번은 [secret:ref-1]", "X"},
+		{"pw는 X", "pw는 [secret:ref-1]", "X"},
+		{"password: X", "password: [secret:ref-1]", "X"},
+	}
+	for _, tc := range cases {
+		var stored string
+		got, err := ReplaceSecrets(tc.input, func(value string) (string, error) { stored = value; return "ref-1", nil })
+		if err != nil || got != tc.want || stored != tc.secret {
+			t.Errorf("ReplaceSecrets(%q)=(%q,%q,err=%v), want (%q,%q)", tc.input, got, stored, err, tc.want, tc.secret)
+		}
+	}
+}
+
 func TestInputMap(t *testing.T) {
 	t.Parallel()
 	m := map[string]any{

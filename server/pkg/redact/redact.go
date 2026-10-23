@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 var ErrSecretStoreUnavailable = errors.New("secret store unavailable")
@@ -88,6 +89,41 @@ var (
 	secretRefPattern    = regexp.MustCompile(`\[secret:[^\]]+\]`)
 )
 
+// Korean sentence endings sometimes attach directly to a pasted password.
+var koreanPasswordTails = []string{"이라고요", "이라네요", "입니다", "이에요", "예요", "에요", "이야", "라고요", "라고", "이네", "네요", "임", "야", "요", "다"}
+
+func splitPasswordValue(raw string) (value, suffix string) {
+	end := len(raw)
+	for end > 0 {
+		r, size := utf8.DecodeLastRuneInString(raw[:end])
+		if strings.ContainsRune(".!?。！？)]}>", r) {
+			end -= size
+			continue
+		}
+		break
+	}
+	punctuation := raw[end:]
+	core := raw[:end]
+	for _, tail := range koreanPasswordTails {
+		if strings.HasSuffix(core, tail) {
+			candidate := strings.TrimSuffix(core, tail)
+			if hasCredentialRune(candidate) {
+				return candidate, tail + punctuation
+			}
+		}
+	}
+	return core, punctuation
+}
+
+func hasCredentialRune(s string) bool {
+	for _, r := range s {
+		if r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' {
+			return true
+		}
+	}
+	return false
+}
+
 // ReplaceSecrets stores detected values through store and replaces them with
 // [secret:<ref>]. When storage fails, values are still masked and an error
 // prevents callers from persisting a broken reference or original input.
@@ -110,14 +146,25 @@ func ReplaceSecrets(input string, store func(string) (string, error)) (string, e
 	}
 	input = chatPasswordPattern.ReplaceAllStringFunc(input, func(match string) string {
 		parts := chatPasswordPattern.FindStringSubmatch(match)
-		return storeValue(parts[2])
+		value, suffix := splitPasswordValue(parts[2])
+		return parts[1] + storeValue(value) + suffix
 	})
 	input = chatToken.ReplaceAllStringFunc(input, storeValue)
 	refs := make([]string, 0)
-	input = secretRefPattern.ReplaceAllStringFunc(input, func(ref string) string {
+	protect := func(value string) string {
 		token := fmt.Sprintf("ZZREF%dZZ", len(refs))
-		refs = append(refs, ref)
+		refs = append(refs, value)
 		return token
+	}
+	input = chatPasswordPattern.ReplaceAllStringFunc(input, func(match string) string {
+		parts := chatPasswordPattern.FindStringSubmatch(match)
+		if secretRefPattern.MatchString(parts[2]) {
+			return protect(parts[1] + parts[2])
+		}
+		return match
+	})
+	input = secretRefPattern.ReplaceAllStringFunc(input, func(ref string) string {
+		return protect(ref)
 	})
 	input = Text(input)
 	for i, ref := range refs {

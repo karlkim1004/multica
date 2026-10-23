@@ -99,8 +99,8 @@ func TestSendChatMessage_RedactsPasswordBeforeStorageAndPrompt(t *testing.T) {
 		t.Fatalf("encrypted secret count=%d err=%v", len(secrets), err)
 	}
 	plain, err := testHandler.TaskService.ChatSecretBox.Open(secrets[0].Ciphertext)
-	if err != nil || string(plain) != "Abc1234야" {
-		t.Fatalf("encrypted secret did not round-trip (match=%t err=%v)", string(plain) == "Abc1234야", err)
+	if err != nil || string(plain) != "Abc1234" {
+		t.Fatalf("encrypted secret did not round-trip (match=%t err=%v)", string(plain) == "Abc1234", err)
 	}
 	if prompt := daemon.BuildPrompt(daemon.Task{ChatSessionID: sessionID, ChatMessage: messages[0].Content}, "claude"); strings.Contains(prompt, "Abc1234") {
 		t.Fatalf("daemon chat history leaked password: %s", prompt)
