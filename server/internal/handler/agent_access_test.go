@@ -157,16 +157,15 @@ func TestGetAgent_PrivateAgentForbidsPlainMember(t *testing.T) {
 	}
 }
 
-// TestListAgents_ForbidsSuperUser verifies the RBAC rule that a legacy
-// member (effective super_user) cannot list agents. Agent ownership is only
-// discoverable to its owner via the single-resource endpoint; a workspace-wide
-// list would disclose other members' agents.
-func TestListAgents_ForbidsSuperUser(t *testing.T) {
+// TestListAgents_FiltersPrivateForSuperUser verifies that a legacy member can
+// list workspace agents while private agents remain hidden.
+func TestListAgents_FiltersPrivateForSuperUser(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 
 	agentID, _, memberID := privateAgentTestFixture(t)
+	workspaceAgentID := seedForeignAgent(t, "workspace-visible-for-member")
 
 	// Workspace owner sees the agent.
 	w := httptest.NewRecorder()
@@ -178,13 +177,61 @@ func TestListAgents_ForbidsSuperUser(t *testing.T) {
 		t.Fatalf("ListAgents as owner did not include private agent %s", agentID)
 	}
 
-	// Legacy member is policy-equivalent to super_user and receives a raw 403,
-	// rather than a filtered list that still confirms the resource category.
+	// Legacy member is policy-equivalent to super_user: workspace agents are
+	// visible but another member's private agent is filtered out.
 	w = httptest.NewRecorder()
 	testHandler.ListAgents(w, newRequestAs(memberID, "GET", "/api/agents", nil))
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("ListAgents as super_user: expected 403, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListAgents as super_user: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	if !listContainsAgent(t, w.Body.Bytes(), workspaceAgentID) {
+		t.Fatalf("ListAgents as super_user did not include workspace agent %s", workspaceAgentID)
+	}
+	if listContainsAgent(t, w.Body.Bytes(), agentID) {
+		t.Fatalf("ListAgents as super_user exposed another member's private agent %s", agentID)
+	}
+}
+
+func TestListSquads_FiltersPrivateAgentPreviewForSuperUser(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	privateID, _, memberID := privateAgentTestFixture(t)
+	workspaceAgentID := seedForeignAgent(t, "workspace-visible-squad-leader")
+	var squadID string
+	if err := testPool.QueryRow(context.Background(),
+		`INSERT INTO squad (workspace_id, name, leader_id, creator_id) VALUES ($1,'member-preview-filter',$2,$3) RETURNING id`,
+		testWorkspaceID, workspaceAgentID, testUserID).Scan(&squadID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id=$1`, squadID) })
+	for _, id := range []string{workspaceAgentID, privateID} {
+		if _, err := testPool.Exec(context.Background(),
+			`INSERT INTO squad_member (squad_id, member_type, member_id, role) VALUES ($1,'agent',$2,'member')`, squadID, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	testHandler.ListSquads(w, withURLParam(newRequestAs(memberID, "GET", "/api/squads", nil), "workspaceId", testWorkspaceID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListSquads as super_user: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var squads []SquadResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &squads); err != nil {
+		t.Fatal(err)
+	}
+	for _, squad := range squads {
+		if squad.ID != squadID {
+			continue
+		}
+		if squad.MemberCount != 1 || len(squad.MemberPreview) != 1 || squad.MemberPreview[0].MemberID != workspaceAgentID {
+			t.Fatalf("private agent leaked or visible count is wrong: %+v", squad)
+		}
+		return
+	}
+	t.Fatalf("ListSquads omitted fixture squad %s", squadID)
 }
 
 func listContainsAgent(t *testing.T, body []byte, agentID string) bool {
