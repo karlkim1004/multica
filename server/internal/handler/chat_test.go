@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/daemon"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -61,6 +63,36 @@ func TestSendChatMessage_ReportsPositionInsteadOfQueuedStatus(t *testing.T) {
 	}
 	if second := send("second"); !second.Queued {
 		t.Fatal("second task behind an in-flight head must be reported as queued")
+	}
+}
+
+func TestSendChatMessage_RedactsPasswordBeforeStorageAndPrompt(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "ChatSecretRedactionAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	req := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
+		"content": "비밀번호가 Abc1234야",
+	})
+	req = withURLParam(req, "sessionId", sessionID)
+	req = withChatTestWorkspaceCtx(t, req)
+	w := httptest.NewRecorder()
+	testHandler.SendChatMessage(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("SendChatMessage: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	messages, err := testHandler.Queries.ListChatMessages(ctx, parseUUID(sessionID))
+	if err != nil {
+		t.Fatalf("list chat messages: %v", err)
+	}
+	if len(messages) != 1 || strings.Contains(messages[0].Content, "Abc1234") {
+		t.Fatalf("stored chat content leaked password: %+v", messages)
+	}
+	if prompt := daemon.BuildPrompt(daemon.Task{ChatSessionID: sessionID, ChatMessage: messages[0].Content}, "claude"); strings.Contains(prompt, "Abc1234") {
+		t.Fatalf("daemon chat history leaked password: %s", prompt)
 	}
 }
 
