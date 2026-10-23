@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/chatprivacy"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -68,13 +71,18 @@ type TxStarter interface {
 type chatSessionService struct {
 	queries   *db.Queries
 	txStarter TxStarter
+	secretBox *secretbox.Box
 }
 
 // NewChatSessionService constructs a ChatSessionService backed by the
 // supplied queries and tx starter. The tx starter is required;
 // without it, AppendUserMessage cannot run dedup + insert atomically.
-func NewChatSessionService(queries *db.Queries, tx TxStarter) ChatSessionService {
-	return &chatSessionService{queries: queries, txStarter: tx}
+func NewChatSessionService(queries *db.Queries, tx TxStarter, secretBoxes ...*secretbox.Box) ChatSessionService {
+	var box *secretbox.Box
+	if len(secretBoxes) > 0 {
+		box = secretBoxes[0]
+	}
+	return &chatSessionService{queries: queries, txStarter: tx, secretBox: box}
 }
 
 // EnsureChatSession returns the chat_session.id bound to the given
@@ -197,6 +205,15 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.queries.WithTx(tx)
+	var workspaceID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT workspace_id FROM chat_session WHERE id = $1`, p.ChatSessionID).Scan(&workspaceID); err != nil {
+		return AppendResult{}, fmt.Errorf("load chat workspace: %w", err)
+	}
+	vault := chatprivacy.NewVault(s.secretBox)
+	safeBody, err := vault.Sanitize(ctx, tx, workspaceID, uuid.UUID(p.ChatSessionID.Bytes), p.Body)
+	if err != nil {
+		return AppendResult{}, errors.New("secure chat secret storage is unavailable")
+	}
 
 	// Parse the command from the user's OWN typed text (CommandBody),
 	// not the stored Body: the enricher prepends quoted / forwarded
@@ -211,7 +228,12 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	// previous-message lookup would self-reference.
 	commandSource := p.CommandBody
 	if commandSource == "" {
-		commandSource = p.Body
+		commandSource = safeBody
+	} else {
+		commandSource, err = vault.Sanitize(ctx, tx, workspaceID, uuid.UUID(p.ChatSessionID.Bytes), commandSource)
+		if err != nil {
+			return AppendResult{}, errors.New("secure chat secret storage is unavailable")
+		}
 	}
 	cmd, _ := parseIssueCommand(commandSource)
 	if cmd != nil && cmd.Title == "" {
@@ -226,7 +248,7 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	if _, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
 		ChatSessionID: p.ChatSessionID,
 		Role:          "user",
-		Content:       p.Body,
+		Content:       safeBody,
 		SenderID:      p.Sender,
 	}); err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)

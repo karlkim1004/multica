@@ -1569,6 +1569,38 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			resp.WorkspaceID = uuidToString(cs.WorkspaceID)
 			resp.ChatSessionID = uuidToString(cs.ID)
 			resp.ThreadName = cs.Title
+			if h.TaskService.ChatSecretBox != nil {
+				rows, err := h.DB.Query(r.Context(), `SELECT secret_ref, ciphertext FROM chat_secret WHERE workspace_id = $1 AND chat_session_id = $2 ORDER BY created_at, secret_ref`, cs.WorkspaceID, cs.ID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to load chat secrets")
+					return
+				}
+				for rows.Next() {
+					var ref pgtype.UUID
+					var ciphertext []byte
+					if err := rows.Scan(&ref, &ciphertext); err != nil {
+						rows.Close()
+						writeError(w, http.StatusInternalServerError, "failed to load chat secrets")
+						return
+					}
+					value, err := h.TaskService.ChatSecretBox.Open(ciphertext)
+					if err != nil {
+						rows.Close()
+						writeError(w, http.StatusInternalServerError, "failed to decrypt chat secrets")
+						return
+					}
+					resp.ChatSecrets = append(resp.ChatSecrets, ChatSecretPayload{Reference: uuidToString(ref), Value: string(value)})
+					for i := range value {
+						value[i] = 0
+					}
+				}
+				if err := rows.Err(); err != nil {
+					rows.Close()
+					writeError(w, http.StatusInternalServerError, "failed to load chat secrets")
+					return
+				}
+				rows.Close()
+			}
 			if ws, err := h.Queries.GetWorkspace(r.Context(), cs.WorkspaceID); err == nil && ws.Repos != nil {
 				var repos []RepoData
 				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
@@ -1922,6 +1954,9 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	payloadBytes, _ = writeMeasuredJSON(w, http.StatusOK, map[string]any{"task": resp})
+	for i := range resp.ChatSecrets {
+		resp.ChatSecrets[i].Value = ""
+	}
 }
 
 type resolveSkillBundlesRequest struct {

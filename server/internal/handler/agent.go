@@ -280,6 +280,7 @@ type AgentTaskResponse struct {
 	ChatSessionID          string               `json:"chat_session_id,omitempty"`          // non-empty for chat tasks
 	ChatMessage            string               `json:"chat_message,omitempty"`             // user message for chat tasks
 	ChatMessageAttachments []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"` // attachments on the user message — agent calls `multica attachment download <id>` per entry
+	ChatSecrets            []ChatSecretPayload  `json:"chat_secrets,omitempty"`
 	// ChatHistory is a provider-neutral transcript of this chat session's
 	// prior turns, populated only when PriorSessionID is empty (no native
 	// session to resume). See daemon.Task.ChatHistory (NEX-964).
@@ -332,6 +333,14 @@ type AgentTaskResponse struct {
 	// owning user; the daemon must not fall back to its own credential. See
 	// MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
+}
+
+// ChatSecretPayload is daemon-only claim data used to synchronize an encrypted
+// server secret into the runtime owner's local keychain. It is never injected
+// into the agent prompt.
+type ChatSecretPayload struct {
+	Reference string `json:"reference"`
+	Value     string `json:"value"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata embedded in

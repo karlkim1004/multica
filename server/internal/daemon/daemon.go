@@ -3301,6 +3301,10 @@ func skillRefFromBundle(bundle SkillData) SkillRefData {
 }
 
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (TaskResult, error) {
+	secrets := task.ChatSecrets
+	defer func() {
+		for i := range secrets { secrets[i].Value = "" }
+	}()
 	// Refuse to spawn an agent without a workspace. An empty workspace_id
 	// here would make MULTICA_WORKSPACE_ID empty in the agent env, and the
 	// CLI would otherwise silently fall back to the user-global config — a
@@ -3493,6 +3497,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		stopPrepareLease()
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
+	}
+	if len(task.ChatSecrets) > 0 {
+		if err := syncChatSecretsToKeychain(ctx, task.ChatSecrets); err != nil {
+			return TaskResult{}, errors.New("secure chat secret synchronization failed")
+		}
+		task.ChatSecrets = nil
 	}
 	stopPrepareLease()
 	// The running-phase lease (NEX-1032) takes over from here until runTask

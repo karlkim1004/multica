@@ -10,10 +10,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/chatprivacy"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -458,14 +461,31 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the user message first so the daemon can always find it.
-	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start chat transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	safeContent, err := chatprivacy.NewVault(h.TaskService.ChatSecretBox).Sanitize(r.Context(), tx,
+		uuid.MustParse(uuidToString(session.WorkspaceID)), uuid.MustParse(uuidToString(session.ID)), req.Content)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "secure chat secret storage is unavailable")
+		return
+	}
+	msg, err := qtx.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 		ChatSessionID: session.ID,
 		Role:          "user",
-		Content:       req.Content,
+		Content:       safeContent,
 		SenderID:      parseUUID(userID),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create chat message")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save chat message")
 		return
 	}
 
@@ -541,7 +561,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		ChatSessionID: resolvedSessionID,
 		MessageID:     uuidToString(msg.ID),
 		Role:          "user",
-		Content:       req.Content,
+		Content:       msg.Content,
 		TaskID:        uuidToString(task.ID),
 		CreatedAt:     timestampToString(msg.CreatedAt),
 	})
