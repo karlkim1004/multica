@@ -3,11 +3,85 @@
 package redact
 
 import (
+	"errors"
 	"os"
 	"os/user"
 	"regexp"
+	"strconv"
 	"strings"
 )
+
+var ErrSecretStoreUnavailable = errors.New("secret store unavailable")
+
+var chatPasswordPattern = regexp.MustCompile(`(?i)((?:비밀번호|비번|패스워드|암호|password|passwd|pw)\s*(?:(?:가|은|는|이|is)\s*|[:=]\s*|\s+))([A-Za-z0-9][^\s,;]*)`)
+var chatPrivateKey = regexp.MustCompile(`(?s)-----BEGIN[A-Z\s]*PRIVATE KEY-----.*?-----END[A-Z\s]*PRIVATE KEY-----`)
+var chatToken = regexp.MustCompile(`(?i)(?:AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|sk-[A-Za-z0-9_-]{15,}|glpat-[A-Za-z0-9_-]{15,}|eyJ[A-Za-z0-9_-]{30,}|xox[bporase]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._~+/=-]{20,})`)
+var secretReference = regexp.MustCompile(`\[secret:[^\]\r\n]+\]`)
+var secretLabelWithReference = regexp.MustCompile(`(?i)(?:비밀번호|비번|패스워드|암호|password|passwd|pw)\s*(?:(?:가|은|는|이|is)\s*|[:=]\s*|\s+)?\x00SECRETREF[^\x00]+\x00`)
+
+var koreanPasswordTails = []string{"입니다", "이에요", "예요", "이야", "야"}
+
+// splitPasswordValue separates common Korean sentence endings that can be
+// attached directly to an ASCII password (for example, "Abc1234야").
+func splitPasswordValue(value string) (secret, tail string) {
+	trimmed := strings.TrimRight(value, ".!?")
+	punctuation := value[len(trimmed):]
+	for _, ending := range koreanPasswordTails {
+		if strings.HasSuffix(trimmed, ending) && len(trimmed) > len(ending) {
+			return trimmed[:len(trimmed)-len(ending)], trimmed[len(trimmed)-len(ending):] + punctuation
+		}
+	}
+	return value, ""
+}
+
+func secretMarker(i int) string { return "\x00SECRETREF" + strconv.Itoa(i) + "\x00" }
+
+// ReplaceSecrets encrypts detected credential values through store and leaves
+// only opaque references in persisted chat text. Existing references are
+// protected from being parsed as credential values again.
+func ReplaceSecrets(input string, store func(string) (string, error)) (string, error) {
+	refs := make([]string, 0)
+	input = secretReference.ReplaceAllStringFunc(input, func(ref string) string {
+		refs = append(refs, ref)
+		return secretMarker(len(refs) - 1)
+	})
+	var storeErr error
+	put := func(value string) string {
+		if store == nil {
+			storeErr = ErrSecretStoreUnavailable
+			return "***"
+		}
+		ref, err := store(value)
+		if err != nil {
+			storeErr = err
+			return "***"
+		}
+		refs = append(refs, "[secret:"+ref+"]")
+		return secretMarker(len(refs) - 1)
+	}
+	if loc := chatPrivateKey.FindStringIndex(input); loc != nil {
+		input = input[:loc[0]] + put(input[loc[0]:loc[1]]) + input[loc[1]:]
+	}
+	input = chatPasswordPattern.ReplaceAllStringFunc(input, func(match string) string {
+		parts := chatPasswordPattern.FindStringSubmatch(match)
+		secret, tail := splitPasswordValue(parts[2])
+		return parts[1] + put(secret) + tail
+	})
+	input = chatToken.ReplaceAllStringFunc(input, put)
+	input = secretLabelWithReference.ReplaceAllStringFunc(input, func(labelRef string) string {
+		refs = append(refs, labelRef)
+		return secretMarker(len(refs) - 1)
+	})
+	input = secretReference.ReplaceAllStringFunc(input, func(ref string) string {
+		refs = append(refs, ref)
+		return secretMarker(len(refs) - 1)
+	})
+	input = Text(input)
+	for i := len(refs) - 1; i >= 0; i-- {
+		input = strings.ReplaceAll(input, secretMarker(i), refs[i])
+	}
+	return input, storeErr
+}
 
 // secretPattern pairs a compiled regex with its replacement text.
 type secretPattern struct {

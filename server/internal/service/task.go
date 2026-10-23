@@ -19,6 +19,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -28,13 +29,14 @@ import (
 )
 
 type TaskService struct {
-	Queries   *db.Queries
-	TxStarter TxStarter
-	Hub       *realtime.Hub
-	Bus       *events.Bus
-	Analytics analytics.Client
-	Metrics   *obsmetrics.BusinessMetrics
-	Wakeup    TaskWakeupNotifier
+	Queries       *db.Queries
+	TxStarter     TxStarter
+	Hub           *realtime.Hub
+	Bus           *events.Bus
+	Analytics     analytics.Client
+	Metrics       *obsmetrics.BusinessMetrics
+	ChatSecretBox *secretbox.Box
+	Wakeup        TaskWakeupNotifier
 	// EmptyClaim caches "this runtime has no queued task" so the daemon
 	// poll path can skip a Postgres scan on the steady-state empty case.
 	// Optional — a nil cache disables the fast path and every claim

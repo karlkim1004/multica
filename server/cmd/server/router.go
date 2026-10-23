@@ -155,6 +155,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	var chatSecretBox *secretbox.Box
+	if key, err := secretbox.LoadKey("MULTICA_CHAT_SECRET_KEY"); err == nil {
+		chatSecretBox, _ = secretbox.New(key)
+		h.TaskService.ChatSecretBox = chatSecretBox
+	}
 	h.Metrics = opts.BusinessMetrics
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
@@ -242,7 +247,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// guard, project boundary, broadcast, analytics and
 				// agent-enqueue with the rest of the product.
 				auditLogger := lark.NewAuditLogger(queries)
-				chatSvc := lark.NewChatSessionService(queries, pool)
+				chatSvc := lark.NewChatSessionService(queries, pool, chatSecretBox)
 				dispatcher := &lark.Dispatcher{
 					Queries:      queries,
 					Chat:         chatSvc,
