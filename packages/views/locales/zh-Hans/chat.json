@@ -4,6 +4,7 @@
     "unread_other": "{{count}} 条未读对话",
     "default": "问 AIDO"
   },
+  "session_inaccessible": "此对话已无法使用。请开始新聊天。",
   "input": {
     "placeholder_no_agent": "创建一个智能体后才能开始对话",
     "placeholder_archived": "此会话已归档",

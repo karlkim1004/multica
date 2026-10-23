@@ -4,6 +4,7 @@
     "unread_other": "未読のチャット {{count}}件",
     "default": "AIDO に質問"
   },
+  "session_inaccessible": "この会話は利用できなくなりました。新しいチャットを開始してください。",
   "input": {
     "placeholder_no_agent": "チャットを始めるにはエージェントを作成してください",
     "placeholder_archived": "このセッションはアーカイブされています",

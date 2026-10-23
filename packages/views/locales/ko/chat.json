@@ -5,6 +5,7 @@
     "unread_other": "읽지 않은 채팅 {{count}}개",
     "default": "AIDO에 묻기"
   },
+  "session_inaccessible": "이 대화는 더 이상 사용할 수 없어요. 새 채팅을 시작하세요.",
   "input": {
     "placeholder_no_agent": "채팅을 시작하려면 에이전트를 만드세요",
     "placeholder_archived": "보관된 세션입니다",
