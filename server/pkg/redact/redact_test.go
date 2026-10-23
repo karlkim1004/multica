@@ -9,7 +9,7 @@ func TestReplaceSecretsAndProtectExistingReferences(t *testing.T) {
 	cases := []struct{ input, want string }{
 		{"네이버웍스 비밀번호 Abc1234 입니다", "네이버웍스 비밀번호 [secret:test-ref] 입니다"},
 		{"패스워드는 Abc1234", "패스워드는 [secret:test-ref]"},
-		{"암호는 Abc1234야", "암호는 [secret:test-ref]"},
+		{"암호는 Abc1234야", "암호는 [secret:test-ref]야"},
 		{"비밀번호 변경 방법을 알려줘", "비밀번호 변경 방법을 알려줘"},
 		{"password: [secret:123]", "password: [secret:123]"},
 		{"pw는 X", "pw는 [secret:test-ref]"},
@@ -28,6 +28,33 @@ func TestReplaceSecretsAndProtectExistingReferences(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReplaceSecretsSeparatesKoreanPasswordSentenceEndings(t *testing.T) {
+	cases := []struct {
+		input, want, stored string
+	}{
+		{"비밀번호가 Abc1234야", "비밀번호가 [secret:test-ref]야", "Abc1234"},
+		{"비밀번호가 Abc1234입니다.", "비밀번호가 [secret:test-ref]입니다.", "Abc1234"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			var stored string
+			got, err := ReplaceSecrets(tc.input, func(value string) (string, error) {
+				stored = value
+				return "test-ref", nil
+			})
+			if err != nil {
+				t.Fatalf("ReplaceSecrets: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			if stored != tc.stored {
+				t.Errorf("stored %q, want %q", stored, tc.stored)
 			}
 		})
 	}

@@ -19,6 +19,21 @@ var chatToken = regexp.MustCompile(`(?i)(?:AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|g
 var secretReference = regexp.MustCompile(`\[secret:[^\]\r\n]+\]`)
 var secretLabelWithReference = regexp.MustCompile(`(?i)(?:비밀번호|비번|패스워드|암호|password|passwd|pw)\s*(?:(?:가|은|는|이|is)\s*|[:=]\s*|\s+)?\x00SECRETREF[^\x00]+\x00`)
 
+var koreanPasswordTails = []string{"입니다", "이에요", "예요", "이야", "야"}
+
+// splitPasswordValue separates common Korean sentence endings that can be
+// attached directly to an ASCII password (for example, "Abc1234야").
+func splitPasswordValue(value string) (secret, tail string) {
+	trimmed := strings.TrimRight(value, ".!?")
+	punctuation := value[len(trimmed):]
+	for _, ending := range koreanPasswordTails {
+		if strings.HasSuffix(trimmed, ending) && len(trimmed) > len(ending) {
+			return trimmed[:len(trimmed)-len(ending)], trimmed[len(trimmed)-len(ending):] + punctuation
+		}
+	}
+	return value, ""
+}
+
 func secretMarker(i int) string { return "\x00SECRETREF" + strconv.Itoa(i) + "\x00" }
 
 // ReplaceSecrets encrypts detected credential values through store and leaves
@@ -49,7 +64,8 @@ func ReplaceSecrets(input string, store func(string) (string, error)) (string, e
 	}
 	input = chatPasswordPattern.ReplaceAllStringFunc(input, func(match string) string {
 		parts := chatPasswordPattern.FindStringSubmatch(match)
-		return parts[1] + put(parts[2])
+		secret, tail := splitPasswordValue(parts[2])
+		return parts[1] + put(secret) + tail
 	})
 	input = chatToken.ReplaceAllStringFunc(input, put)
 	input = secretLabelWithReference.ReplaceAllStringFunc(input, func(labelRef string) string {
