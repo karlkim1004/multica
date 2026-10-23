@@ -5,6 +5,7 @@
     "unread_other": "{{count}} unread chats",
     "default": "Ask AIDO"
   },
+  "session_inaccessible": "This conversation is no longer available. Start a new chat.",
   "input": {
     "placeholder_no_agent": "Create an agent to start chatting",
     "placeholder_archived": "This session is archived",

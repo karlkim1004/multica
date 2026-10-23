@@ -45,7 +45,7 @@ import type {
   ChatMessage,
   ChatPendingTask,
 } from "@multica/core/types";
-import { api } from "@/data/api";
+import { api, ApiError } from "@/data/api";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { agentListOptions } from "@/data/queries/agents";
@@ -88,6 +88,8 @@ export default function ChatTab() {
   const userId = useAuthStore((s) => s.user?.id);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const activeSessionIdRef = useRef(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentPickerOpen, setAgentPickerOpen] = useState(false);
 
@@ -125,7 +127,7 @@ export default function ChatTab() {
     hydratedWsRef.current = wsId;
     setActiveSessionId(sessions[0].id);
   }, [wsId, sessions]);
-  const { data: messages = [], isLoading: messagesLoading } = useQuery(
+  const { data: messages = [], isLoading: messagesLoading, error: messagesError, isError: messagesFailed } = useQuery(
     chatMessagesOptions(activeSessionId),
   );
   const { data: pendingTask } = useQuery(
@@ -170,6 +172,14 @@ export default function ChatTab() {
     }
     return availableAgents[0] ?? null;
   }, [selectedAgentId, availableAgents, activeSession, agents]);
+
+  useEffect(() => {
+    if (!messagesFailed || !(messagesError instanceof ApiError) || messagesError.status !== 403 || !activeSessionId) return;
+    if (activeSessionIdRef.current !== activeSessionId) return;
+    setActiveSessionId(null);
+    setSelectedAgentId(null);
+    Alert.alert("채팅 세션 사용 불가", "이 대화는 더 이상 사용할 수 없어요. 새 채팅을 시작하세요.");
+  }, [messagesError, messagesFailed, activeSessionId]);
 
   const availability = useWorkspaceAgentAvailability();
   const presenceDetail = useAgentPresence(wsId, currentAgent?.id);
@@ -284,6 +294,15 @@ export default function ChatTab() {
           old ? old.filter((m) => m.id !== optimistic.id) : old,
         );
         qc.setQueryData(chatKeys.pendingTask(sessionId), {});
+        if (err instanceof ApiError && err.status === 403) {
+          setDraft(DRAFT_NEW_SESSION, content);
+          if (activeSessionIdRef.current === sessionId) {
+            setActiveSessionId(null);
+            setSelectedAgentId(null);
+          }
+          Alert.alert("채팅 세션 사용 불가", "이 대화는 더 이상 사용할 수 없어요. 새 채팅을 시작하세요.");
+          return;
+        }
         throw err;
       }
     },
@@ -294,6 +313,7 @@ export default function ChatTab() {
       qc,
       promoteNewDraft,
       clearDraft,
+      setDraft,
     ],
   );
 

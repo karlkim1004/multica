@@ -17,7 +17,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useAuthStore } from "@multica/core/auth";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { canAssignAgent } from "@multica/views/issues/components";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { useAgentPresenceDetail, useWorkspaceAgentAvailability } from "@multica/core/agents";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -62,6 +62,21 @@ const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 const CHAT_MESSAGES_REFRESH_LABEL = "메시지 새로고침";
+
+export function isInaccessibleSessionError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403;
+}
+
+export function clearInaccessibleActiveSession(
+  error: unknown,
+  failedSessionId: string,
+  activeSessionId: string | null,
+  clearActiveSession: () => void,
+): boolean {
+  if (!isInaccessibleSessionError(error) || activeSessionId !== failedSessionId) return false;
+  clearActiveSession();
+  return true;
+}
 
 function appendChatMessageToLatestPageCache(
   qc: ReturnType<typeof useQueryClient>,
@@ -185,6 +200,8 @@ export function ChatWindow() {
   const {
     data: rawMessagePages,
     isLoading: messagesLoading,
+    error: messagesError,
+    isError: messagesFailed,
     fetchNextPage: fetchOlderMessages,
     hasNextPage: hasOlderMessages,
     isFetchingNextPage: isFetchingOlderMessages,
@@ -228,6 +245,20 @@ export function ChatWindow() {
   const handleRestoreDraftConsumed = useCallback(() => {
     setRestoreDraftRequest(null);
   }, []);
+
+  useEffect(() => {
+    if (!messagesFailed || !isInaccessibleSessionError(messagesError) || !activeSessionId) return;
+    const failedSessionId = activeSessionId;
+    const cleared = clearInaccessibleActiveSession(
+      messagesError,
+      failedSessionId,
+      useChatStore.getState().activeSessionId,
+      () => setActiveSession(null),
+    );
+    if (!cleared) return;
+    apiLogger.warn("loadChatMessages.inaccessibleSession", { sessionId: failedSessionId });
+    toast.error(t(($) => $.session_inaccessible));
+  }, [messagesError, messagesFailed, activeSessionId, setActiveSession, t]);
 
   useEffect(() => {
     setVoiceOutputSupported(
@@ -531,6 +562,13 @@ export function ChatWindow() {
         stopRequestedBeforeTaskRef.current = false;
         removeChatMessageFromCaches(qc, sessionId, optimistic.id);
         qc.setQueryData(chatKeys.pendingTask(sessionId), {});
+        const inaccessibleSession = isInaccessibleSessionError(err);
+        clearInaccessibleActiveSession(
+          err,
+          sessionId,
+          useChatStore.getState().activeSessionId,
+          () => setActiveSession(null),
+        );
         setRestoreDraftRequest({
           id: `send-failed-${optimistic.id}`,
           content: finalContent,
@@ -538,9 +576,9 @@ export function ChatWindow() {
           // Restore into the session this was sent from. If the user
           // navigated away (fire-and-forget) the request waits until they
           // return rather than dumping content into another session.
-          sessionId,
+          sessionId: inaccessibleSession ? undefined : sessionId,
         });
-        toast.error(t(($) => $.input.send_failed_toast));
+        toast.error(t(inaccessibleSession ? ($) => $.session_inaccessible : ($) => $.input.send_failed_toast));
         return false;
       }
       apiLogger.info("sendChatMessage.success", {
