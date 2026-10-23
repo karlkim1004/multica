@@ -72,7 +72,8 @@ func canRead(actor authorizationActor, resource ResourceType) bool {
 	if isAdmin(actor) {
 		return true
 	}
-	return effectiveMemberRole(actor.Role) == RoleSuperUser && resource == ResourceIssue
+	return effectiveMemberRole(actor.Role) == RoleSuperUser &&
+		(resource == ResourceIssue || resource == ResourceAgent || resource == ResourceSquad)
 }
 
 func canCreate(actor authorizationActor, resource ResourceType) bool {

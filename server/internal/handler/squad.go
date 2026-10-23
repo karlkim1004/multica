@@ -132,23 +132,44 @@ func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (
 	return squad, workspaceID, true
 }
 
-func (h *Handler) loadSquadMemberSummary(ctx context.Context, squadID pgtype.UUID) (*squadMemberSummary, error) {
-	rows, err := h.Queries.ListSquadMemberPreviewRowsBySquad(ctx, squadID)
+func (h *Handler) squadPreviewAgentFilter(r *http.Request, workspaceID string) (map[string]struct{}, bool) {
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	if actorType != ActorMember {
+		return nil, false
+	}
+	member, err := h.getWorkspaceMember(r.Context(), actorID, workspaceID)
+	if err == nil && isAdmin(authorizationActor{Type: ActorMember, ID: actorID, Role: member.Role}) {
+		return nil, false
+	}
 	if err != nil {
-		return nil, err
+		return map[string]struct{}{}, true
+	}
+	ids, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if !ok {
+		return map[string]struct{}{}, true
+	}
+	return ids, true
+}
+
+func previewMemberVisible(memberType string, memberID pgtype.UUID, visibleAgents map[string]struct{}, filter bool) bool {
+	if !filter || memberType != "agent" {
+		return true
+	}
+	_, ok := visibleAgents[uuidToString(memberID)]
+	return ok
+}
+
+func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad, visibleAgents map[string]struct{}, filterPreview bool) (SquadResponse, error) {
+	resp := squadToResponse(squad)
+	rows, err := h.Queries.ListSquadMemberPreviewRowsBySquad(ctx, squad.ID)
+	if err != nil {
+		return resp, err
 	}
 	summary := &squadMemberSummary{}
 	for _, row := range rows {
-		addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
-	}
-	return summary, nil
-}
-
-func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad) (SquadResponse, error) {
-	resp := squadToResponse(squad)
-	summary, err := h.loadSquadMemberSummary(ctx, squad.ID)
-	if err != nil {
-		return resp, err
+		if previewMemberVisible(row.MemberType, row.MemberID, visibleAgents, filterPreview) {
+			addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
+		}
 	}
 	applySquadMemberSummary(&resp, summary)
 	return resp, nil
@@ -176,8 +197,12 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list squad member preview")
 		return
 	}
+	visibleAgents, filterPreview := h.squadPreviewAgentFilter(r, workspaceID)
 	summaries := make(map[string]*squadMemberSummary, len(squads))
 	for _, row := range previewRows {
+		if !previewMemberVisible(row.MemberType, row.MemberID, visibleAgents, filterPreview) {
+			continue
+		}
 		squadID := uuidToString(row.SquadID)
 		summary := summaries[squadID]
 		if summary == nil {
@@ -266,7 +291,8 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		Role:       "leader",
 	})
 
-	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
+	visibleAgents, filterPreview := h.squadPreviewAgentFilter(r, workspaceID)
+	resp, err := h.squadToResponseWithPreview(r.Context(), squad, visibleAgents, filterPreview)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
 		return
@@ -289,7 +315,8 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 	if !h.authorizeResource(w, r, uuidToString(squad.WorkspaceID), ResourceSquad, "read", resourceOwner{CreatorType: ActorMember, CreatorID: uuidToString(squad.CreatorID)}) {
 		return
 	}
-	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
+	visibleAgents, filterPreview := h.squadPreviewAgentFilter(r, uuidToString(squad.WorkspaceID))
+	resp, err := h.squadToResponseWithPreview(r.Context(), squad, visibleAgents, filterPreview)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
 		return
@@ -366,7 +393,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.squadToResponseWithPreview(r.Context(), updated)
+	visibleAgents, filterPreview := h.squadPreviewAgentFilter(r, workspaceID)
+	resp, err := h.squadToResponseWithPreview(r.Context(), updated, visibleAgents, filterPreview)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
 		return

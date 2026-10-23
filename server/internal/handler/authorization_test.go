@@ -7,22 +7,24 @@ func TestAuthorizationMatrix(t *testing.T) {
 	roles := []struct {
 		role      string
 		issueRead bool
+		allRead   bool
 		allCreate bool
 		allMutate bool
 		ownMutate bool
 	}{
-		{RoleAdmin, true, true, true, true},
-		{RoleOwner, true, true, true, true},
-		{RoleSuperUser, true, true, false, true},
-		{RoleMember, true, true, false, true}, // legacy member aliases super_user
-		{RoleGeneralUser, false, false, false, false},
+		{RoleAdmin, true, true, true, true, true},
+		{RoleOwner, true, true, true, true, true},
+		{RoleSuperUser, true, false, true, false, true},
+		{RoleMember, true, false, true, false, true}, // legacy member aliases super_user
+		{RoleGeneralUser, false, false, false, false, false},
 	}
 
 	for _, tc := range roles {
 		actor := authorizationActor{Type: ActorMember, ID: "actor", Role: tc.role}
 		for _, resource := range resources {
 			t.Run(tc.role+"/"+string(resource), func(t *testing.T) {
-				wantRead := tc.issueRead && resource == ResourceIssue || tc.allMutate
+				wantRead := tc.allRead || (tc.issueRead && resource == ResourceIssue) ||
+					((tc.role == RoleSuperUser || tc.role == RoleMember) && (resource == ResourceAgent || resource == ResourceSquad))
 				if got := canRead(actor, resource); got != wantRead {
 					t.Errorf("canRead(%s) = %v, want %v", resource, got, wantRead)
 				}
