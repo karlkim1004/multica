@@ -83,10 +83,11 @@ var patterns = []secretPattern{
 }
 
 var (
-	chatPasswordPattern = regexp.MustCompile(`(?i)((?:비밀번호|비번|password|passwd|pw)\s*(?:가|은|는|is|[:=])\s*)([^\s,;]+)`)
-	chatPrivateKey      = regexp.MustCompile(`(?s)-----BEGIN[A-Z\s]*PRIVATE KEY-----.*?-----END[A-Z\s]*PRIVATE KEY-----`)
-	chatToken           = regexp.MustCompile(`(?i)(?:AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|sk-[A-Za-z0-9_-]{15,}|glpat-[A-Za-z0-9_-]{15,}|eyJ[A-Za-z0-9_-]{30,}|xox[bporase]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._~+/=-]{20,})`)
-	secretRefPattern    = regexp.MustCompile(`\[secret:[^\]]+\]`)
+	chatPasswordPattern  = regexp.MustCompile(`(?i)((?:비밀번호|비번|패스워드|암호|password|passwd|pw)(?:\s*(?:가|은|는|이|를|을|is))?\s*(?:[:=]\s*|\s+))([^\s,;]+)`)
+	chatLabeledSecretRef = regexp.MustCompile(`(?i)(?:비밀번호|비번|패스워드|암호|password|passwd|pw)(?:\s*(?:가|은|는|이|를|을|is))?\s*(?:[:=]\s*|\s+)\[secret:[^\]]+\]`)
+	chatPrivateKey       = regexp.MustCompile(`(?s)-----BEGIN[A-Z\s]*PRIVATE KEY-----.*?-----END[A-Z\s]*PRIVATE KEY-----`)
+	chatToken            = regexp.MustCompile(`(?i)(?:AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|sk-[A-Za-z0-9_-]{15,}|glpat-[A-Za-z0-9_-]{15,}|eyJ[A-Za-z0-9_-]{30,}|xox[bporase]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._~+/=-]{20,})`)
+	secretRefPattern     = regexp.MustCompile(`\[secret:[^\]]+\]`)
 )
 
 // Korean sentence endings sometimes attach directly to a pasted password.
@@ -129,6 +130,17 @@ func hasCredentialRune(s string) bool {
 // prevents callers from persisting a broken reference or original input.
 func ReplaceSecrets(input string, store func(string) (string, error)) (string, error) {
 	var storeErr error
+	refs := make([]string, 0)
+	protect := func(value string) string {
+		token := fmt.Sprintf("ZZREF%dZZ", len(refs))
+		refs = append(refs, value)
+		return token
+	}
+	// Preserve an existing reference together with its label before scanning
+	// credentials. Otherwise the password matcher treats [secret:...] as a new
+	// value and stores it again, while Text() can also redact the label.
+	input = chatLabeledSecretRef.ReplaceAllStringFunc(input, protect)
+	input = secretRefPattern.ReplaceAllStringFunc(input, protect)
 	storeValue := func(value string) string {
 		if store == nil {
 			storeErr = ErrSecretStoreUnavailable
@@ -147,25 +159,19 @@ func ReplaceSecrets(input string, store func(string) (string, error)) (string, e
 	input = chatPasswordPattern.ReplaceAllStringFunc(input, func(match string) string {
 		parts := chatPasswordPattern.FindStringSubmatch(match)
 		value, suffix := splitPasswordValue(parts[2])
+		// A label followed by ordinary Korean help text is not a credential.
+		// Requiring an ASCII letter or digit avoids storing phrases like
+		// "비밀번호 변경 방법" as a secret.
+		if !hasCredentialRune(value) {
+			return match
+		}
 		return parts[1] + storeValue(value) + suffix
 	})
 	input = chatToken.ReplaceAllStringFunc(input, storeValue)
-	refs := make([]string, 0)
-	protect := func(value string) string {
-		token := fmt.Sprintf("ZZREF%dZZ", len(refs))
-		refs = append(refs, value)
-		return token
-	}
-	input = chatPasswordPattern.ReplaceAllStringFunc(input, func(match string) string {
-		parts := chatPasswordPattern.FindStringSubmatch(match)
-		if secretRefPattern.MatchString(parts[2]) {
-			return protect(parts[1] + parts[2])
-		}
-		return match
-	})
-	input = secretRefPattern.ReplaceAllStringFunc(input, func(ref string) string {
-		return protect(ref)
-	})
+	// References created above must also bypass Text(), especially when the
+	// generic PASSWORD/SECRET rules see their surrounding human label.
+	input = chatLabeledSecretRef.ReplaceAllStringFunc(input, protect)
+	input = secretRefPattern.ReplaceAllStringFunc(input, protect)
 	input = Text(input)
 	for i, ref := range refs {
 		input = strings.ReplaceAll(input, fmt.Sprintf("ZZREF%dZZ", i), ref)

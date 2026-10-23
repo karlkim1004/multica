@@ -317,6 +317,42 @@ func TestReplaceSecretsKeepsLabelsAndKoreanSentenceBoundary(t *testing.T) {
 	}
 }
 
+func TestReplaceSecretsHandlesNaturalKoreanLabelsAndAvoidsHelpText(t *testing.T) {
+	cases := []struct{ input, want, secret string }{
+		{"네이버웍스 비밀번호 Abc1234 입니다", "네이버웍스 비밀번호 [secret:ref-1] 입니다", "Abc1234"},
+		{"패스워드는 Abc1234", "패스워드는 [secret:ref-1]", "Abc1234"},
+		{"암호는 Abc1234야", "암호는 [secret:ref-1]야", "Abc1234"},
+	}
+	for _, tc := range cases {
+		var stored string
+		got, err := ReplaceSecrets(tc.input, func(value string) (string, error) { stored = value; return "ref-1", nil })
+		if err != nil || got != tc.want || stored != tc.secret {
+			t.Errorf("ReplaceSecrets(%q)=(%q,%q,err=%v), want (%q,%q)", tc.input, got, stored, err, tc.want, tc.secret)
+		}
+	}
+	for _, input := range []string{"비밀번호 변경 방법", "비밀번호 재설정 안내", "암호 관리 방법"} {
+		got, err := ReplaceSecrets(input, func(string) (string, error) {
+			t.Errorf("stored help text as a secret: %q", input)
+			return "unexpected", nil
+		})
+		if err != nil || got != input {
+			t.Errorf("help text changed: %q -> %q, err=%v", input, got, err)
+		}
+	}
+}
+
+func TestReplaceSecretsPreservesAlreadyStoredLabeledReferences(t *testing.T) {
+	for _, input := range []string{"password: [secret:123]", "pw는 [secret:abc]", "패스워드는 [secret:xyz]"} {
+		got, err := ReplaceSecrets(input, func(value string) (string, error) {
+			t.Errorf("stored an existing reference: %q", value)
+			return "new-ref", nil
+		})
+		if err != nil || got != input {
+			t.Errorf("existing reference changed: %q -> %q, err=%v", input, got, err)
+		}
+	}
+}
+
 func TestInputMap(t *testing.T) {
 	t.Parallel()
 	m := map[string]any{

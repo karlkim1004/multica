@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,6 +74,55 @@ var errNoWorkspaceRuntimesRegistered = errors.New("failed to register runtimes")
 // platform-side timeout failure reason so the server's existing retry path can
 // recover the task on a fresh attempt.
 var errTaskPrepareTimeout = errors.New("task preparation timed out")
+
+// newChatSecretKeychainCommand uses security's interactive command mode. The
+// secret is hex-encoded into stdin (required by security's -X option), never
+// included in the process argv where it could be observed by ps.
+func newChatSecretKeychainCommand(ctx context.Context, ref, value string) (*exec.Cmd, []byte, error) {
+	if _, err := uuid.Parse(ref); err != nil {
+		return nil, nil, errors.New("chat secret reference is invalid")
+	}
+	valueBytes := []byte(value)
+	encoded := make([]byte, hex.EncodedLen(len(valueBytes)))
+	hex.Encode(encoded, valueBytes)
+	clear(valueBytes)
+	input := make([]byte, 0, len("add-generic-password -U -a ")+len(ref)+len(" -s MulticaChat -X \n")+len(encoded))
+	input = append(input, "add-generic-password -U -a "...)
+	input = append(input, ref...)
+	input = append(input, " -s MulticaChat -X "...)
+	input = append(input, encoded...)
+	input = append(input, '\n')
+	clear(encoded)
+	cmd := exec.CommandContext(ctx, "security", "-i")
+	cmd.Stdin = bytes.NewReader(input)
+	return cmd, input, nil
+}
+
+func syncChatSecretsToKeychain(ctx context.Context, secrets []ChatSecretValue) error {
+	defer func() {
+		for i := range secrets {
+			secrets[i].Value = ""
+		}
+	}()
+	if len(secrets) == 0 {
+		return nil
+	}
+	if runtime.GOOS != "darwin" {
+		return errors.New("chat secret keychain sync requires macOS")
+	}
+	for i := range secrets {
+		cmd, input, err := newChatSecretKeychainCommand(ctx, secrets[i].Ref, secrets[i].Value)
+		if err != nil {
+			return err
+		}
+		err = cmd.Run()
+		clear(input)
+		if err != nil {
+			return errors.New("chat secret keychain sync failed")
+		}
+	}
+	return nil
+}
 
 // errSkillBundleUnavailable marks a task that died in preparation because the
 // daemon could not download one of the agent's skill bundles. Carrying it as a
@@ -7656,18 +7707,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, fmt.Errorf("refusing to spawn agent: task has no workspace_id (task_id=%s)", task.ID)
 	}
 	if len(task.ChatSecrets) > 0 {
-		if runtime.GOOS != "darwin" {
-			return TaskResult{}, errors.New("chat secret keychain sync requires macOS")
-		}
-		for i := range task.ChatSecrets {
-			cmd := exec.CommandContext(ctx, "security", "add-generic-password", "-U", "-a", task.ChatSecrets[i].Ref, "-s", "MulticaChat", "-w", task.ChatSecrets[i].Value)
-			if err := cmd.Run(); err != nil {
-				for j := range task.ChatSecrets {
-					task.ChatSecrets[j].Value = ""
-				}
-				return TaskResult{}, errors.New("chat secret keychain sync failed")
-			}
-			task.ChatSecrets[i].Value = ""
+		if err := syncChatSecretsToKeychain(ctx, task.ChatSecrets); err != nil {
+			return TaskResult{}, err
 		}
 		task.ChatSecrets = nil
 	}
