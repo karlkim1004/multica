@@ -546,6 +546,14 @@ type ChatPinnedAgent struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type ChatSecret struct {
+	SecretRef     pgtype.UUID        `json:"secret_ref"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	Ciphertext    []byte             `json:"ciphertext"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type ChatSession struct {
 	ID                  pgtype.UUID        `json:"id"`
 	WorkspaceID         pgtype.UUID        `json:"workspace_id"`

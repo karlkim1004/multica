@@ -28,6 +28,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
@@ -49,6 +50,7 @@ type TaskService struct {
 	Bus       *events.Bus
 	Analytics analytics.Client
 	Metrics   *obsmetrics.BusinessMetrics
+	ChatSecretBox *secretbox.Box
 	Wakeup    TaskWakeupNotifier
 	// PRSnapshotsEnabled reports whether the server can refresh GitHub check snapshots.
 	PRSnapshotsEnabled bool
@@ -2415,6 +2417,26 @@ func (s *TaskService) SendDirectChatMessage(
 		if !carrier.RuntimeID.Valid {
 			return ErrChatTaskAgentNoRuntime
 		}
+		safeContent, err := redact.ReplaceSecrets(content, func(value string) (string, error) {
+			if s.ChatSecretBox == nil {
+				return "", redact.ErrSecretStoreUnavailable
+			}
+			ref := dbid.NewV7()
+			ciphertext, err := s.ChatSecretBox.Seal([]byte(value))
+			if err != nil {
+				return "", errors.New("encrypt chat secret")
+			}
+			if err := qtx.CreateChatSecret(ctx, db.CreateChatSecretParams{
+				SecretRef: ref, WorkspaceID: currentSession.WorkspaceID,
+				ChatSessionID: currentSession.ID, Ciphertext: ciphertext,
+			}); err != nil {
+				return "", errors.New("store encrypted chat secret")
+			}
+			return util.UUIDToString(ref), nil
+		})
+		if err != nil {
+			return errors.New("secure chat secret storage is unavailable")
+		}
 
 		// The database status of every newly-created task is "queued" until a
 		// daemon claims it. Product queue semantics are positional instead: this
@@ -2473,7 +2495,7 @@ func (s *TaskService) SendDirectChatMessage(
 		// Initialize an explicitly empty Chat before inserting its first public
 		// user message. The CAS query also protects a manual rename and competing
 		// first send; keeping it in this transaction prevents a title-only commit.
-		if title := chattitle.Derive(content); title != "" {
+		if title := chattitle.Derive(safeContent); title != "" {
 			if _, err := qtx.InitializeChatSessionTitle(ctx, db.InitializeChatSessionTitleParams{ID: session.ID, Title: title}); err == nil {
 				out.InitialTitle = title
 			} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -2487,7 +2509,7 @@ func (s *TaskService) SendDirectChatMessage(
 			ID:            dbid.NewV7(),
 			ChatSessionID: session.ID,
 			Role:          "user",
-			Content:       content,
+			Content:       safeContent,
 			TaskID:        task.ID,
 			MessageKind:   pgtype.Text{String: protocol.ChatMessageKindMessage, Valid: true},
 		})

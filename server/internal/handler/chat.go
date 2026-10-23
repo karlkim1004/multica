@@ -23,7 +23,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
-	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // chatSessionTitleMaxLen caps the rename input. Long enough to fit a
@@ -857,8 +856,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
-	// Persist only redacted content so DB rows and daemon prompts share a safe source.
-	req.Content = redact.Text(req.Content)
 
 	// Pre-validate attachment ids early so invalid input returns 400 before
 	// any state mutation. The actual link runs after CreateChatMessage so we
@@ -1007,7 +1004,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		ChatSessionID: resolvedSessionID,
 		MessageID:     uuidToString(msg.ID),
 		Role:          "user",
-		Content:       req.Content,
+		Content:       msg.Content,
 		TaskID:        uuidToString(task.ID),
 		CreatedAt:     timestampToString(msg.CreatedAt),
 	})
@@ -1020,7 +1017,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// manual rename mid-generation is never clobbered.
 	shouldGenerateTitle := shouldGenerateFirstMessageTitle(hadUserMessage, currentTitle, sent.InitialTitle, channelBacked, channelSourceKnown)
 	if shouldGenerateTitle {
-		h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, currentTitle, req.Content)
+		h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, currentTitle, msg.Content)
 	}
 
 	writeJSON(w, http.StatusCreated, SendChatMessageResponse{

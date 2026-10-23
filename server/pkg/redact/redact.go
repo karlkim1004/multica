@@ -3,8 +3,11 @@
 package redact
 
 import (
+	"errors"
 	"regexp"
 )
+
+var ErrSecretStoreUnavailable = errors.New("secret store unavailable")
 
 // secretPattern pairs a compiled regex with its replacement text.
 type secretPattern struct {
@@ -74,6 +77,41 @@ var patterns = []secretPattern{
 
 	// Generic key=value patterns for common secret env var names
 	{regexp.MustCompile(`(?i)(?:API_KEY|API_SECRET|SECRET_KEY|SECRET|ACCESS_TOKEN|AUTH_TOKEN|PRIVATE_KEY|DATABASE_URL|DB_PASSWORD|DB_URL|REDIS_URL|PASSWORD|TOKEN)\s*[=:]\s*\S+`), "[REDACTED CREDENTIAL]"},
+}
+
+var (
+	chatPasswordPattern = regexp.MustCompile(`(?i)((?:비밀번호|비번|password|passwd|pw)\s*(?:가|은|는|is|[:=])\s*)([^\s,;]+)`)
+	chatPrivateKey      = regexp.MustCompile(`(?s)-----BEGIN[A-Z\s]*PRIVATE KEY-----.*?-----END[A-Z\s]*PRIVATE KEY-----`)
+	chatToken           = regexp.MustCompile(`(?i)(?:AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|sk-[A-Za-z0-9_-]{15,}|glpat-[A-Za-z0-9_-]{15,}|eyJ[A-Za-z0-9_-]{30,}|xox[bporase]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._~+/=-]{20,})`)
+)
+
+// ReplaceSecrets stores detected values through store and replaces them with
+// [secret:<ref>]. When storage fails, values are still masked and an error
+// prevents callers from persisting a broken reference or original input.
+func ReplaceSecrets(input string, store func(string) (string, error)) (string, error) {
+	var storeErr error
+	storeValue := func(value string) string {
+		if store == nil {
+			storeErr = ErrSecretStoreUnavailable
+			return "***"
+		}
+		ref, err := store(value)
+		if err != nil {
+			storeErr = err
+			return "***"
+		}
+		return "[secret:" + ref + "]"
+	}
+	if loc := chatPrivateKey.FindStringIndex(input); loc != nil {
+		input = input[:loc[0]] + storeValue(input[loc[0]:loc[1]]) + input[loc[1]:]
+	}
+	input = chatPasswordPattern.ReplaceAllStringFunc(input, func(match string) string {
+		parts := chatPasswordPattern.FindStringSubmatch(match)
+		return parts[1] + storeValue(parts[2])
+	})
+	input = chatToken.ReplaceAllStringFunc(input, storeValue)
+	input = Text(input)
+	return input, storeErr
 }
 
 // maxRedactDepth bounds the walk in redactValue. Tool inputs are decoded from

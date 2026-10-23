@@ -451,6 +451,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		GitExtraCACerts:                gitca.Load(slog.Default()),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	var chatSecretBox *secretbox.Box
+	if key, keyErr := secretbox.LoadKey("MULTICA_CHAT_SECRET_KEY"); keyErr == nil {
+		chatSecretBox, _ = secretbox.New(key)
+	}
+	h.TaskService.ChatSecretBox = chatSecretBox
 	invitationRateLimits := handler.DefaultInvitationRateLimits()
 	invitationRateLimits.Actor.Limit = envNonNegativeInt("RATE_LIMIT_INVITATION_ACTOR_10M", invitationRateLimits.Actor.Limit)
 	invitationRateLimits.Workspace.Limit = envNonNegativeInt("RATE_LIMIT_INVITATION_WORKSPACE_24H", invitationRateLimits.Workspace.Limit)
@@ -641,7 +646,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Group:    "Lark group chat",
 					Direct:   "Lark direct message",
 					Fallback: "Lark chat",
-				})
+			}, chatSecretBox)
 
 				// OutcomeReplier wires the outbound side: NeedsBinding /
 				// AgentOffline / AgentArchived / issue-created translate to a
@@ -832,7 +837,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					slog.Default(),
 				)
 			}
-			channelRouter.Register(slack.TypeSlack, slack.NewSlackResolverSet(queries, pool, slackReplier, slackTyping, slackMedia))
+			channelRouter.Register(slack.TypeSlack, slack.NewSlackResolverSet(queries, pool, slackReplier, slackTyping, slackMedia, chatSecretBox))
 			slack.NewOutbound(queries, box.Open, slog.Default()).Register(bus)
 
 			// On-demand history reader behind the unified `multica chat history`
@@ -904,7 +909,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				)
 			}
 			botNames := dingtalk.NewBotNameResolver(dingtalkClient, box.Open)
-			channelRouter.Register(dingtalk.TypeDingTalk, dingtalk.NewDingTalkResolverSet(queries, pool, replier, ack, media, botNames))
+			channelRouter.Register(dingtalk.TypeDingTalk, dingtalk.NewDingTalkResolverSet(queries, pool, replier, ack, media, botNames, chatSecretBox))
 			dingtalk.NewOutbound(queries, box.Open, dingtalkClient, ack, slog.Default()).Register(bus)
 			dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
 				Decrypt:  box.Open,
@@ -1000,7 +1005,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Group:    "企业微信群聊",
 					Direct:   "企业微信单聊",
 					Fallback: "企业微信会话",
-				})
+				}, chatSecretBox)
 
 				wecom.RegisterWecom(channelRegistry, wecom.ChannelDeps{
 					Credentials: credsResolver,
@@ -1218,7 +1223,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				telegramOutbound.EnableFileDelivery(store)
 				h.DeclareChannelFileDelivery(string(telegram.TypeTelegram))
 			}
-			channelRouter.Register(telegram.TypeTelegram, telegram.NewTelegramResolverSet(queries, pool, telegramReplier, telegramTyping, telegramMedia))
+			channelRouter.Register(telegram.TypeTelegram, telegram.NewTelegramResolverSet(queries, pool, telegramReplier, telegramTyping, telegramMedia, chatSecretBox))
 			telegramOutbound.Register(bus)
 			h.TelegramOutbound = telegramOutbound
 
