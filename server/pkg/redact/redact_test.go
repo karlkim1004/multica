@@ -260,6 +260,28 @@ func TestRedactPasswordEnvVar(t *testing.T) {
 	}
 }
 
+func TestRedactUserEnteredPasswordsAndCompactJWT(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"비밀번호가 Abc1234야",
+		"pw는 X",
+		"password: X",
+		"sk-abcdefghijklmnopqrstuvwxyz123456",
+		"ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+		"eyJabcdefghijklmnopqrstuvwxyz1234567890",
+		"-----BEGIN PRIVATE KEY-----\\nsecret\\n-----END PRIVATE KEY-----",
+	}
+	for _, input := range cases {
+		got := Text(input)
+		if strings.Contains(got, "Abc1234") || strings.Contains(got, "pw는 X") || strings.Contains(got, "password: X") || strings.Contains(got, "sk-") || strings.Contains(got, "ghp_") || strings.Contains(got, "eyJ") || strings.Contains(got, "secret") {
+			t.Errorf("sensitive input was not scrubbed: %q -> %q", input, got)
+		}
+	}
+	if got := Text("일반적인 문장입니다"); got != "일반적인 문장입니다" {
+		t.Fatalf("ordinary text changed: %q", got)
+	}
+}
+
 func TestInputMap(t *testing.T) {
 	t.Parallel()
 	m := map[string]any{

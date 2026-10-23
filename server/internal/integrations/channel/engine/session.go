@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // This file is the SHARED, channel-agnostic chat-session service every IM
@@ -536,7 +537,7 @@ func (s *ChatSession) StartSession(ctx context.Context, in StartSessionInput) (S
 			return StartSessionResult{}, fmt.Errorf("snapshot started chat initiator: %w", err)
 		}
 		msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
-			ID: dbid.NewV7(), ChatSessionID: session.ID, Role: "user", Content: in.Body,
+			ID: dbid.NewV7(), ChatSessionID: session.ID, Role: "user", Content: redact.Text(in.Body),
 			ChannelMediaPendingSecs: pgtype.Float8{Float64: in.MediaPendingSeconds, Valid: in.MediaPendingSeconds > 0},
 			ChannelIngested:         pgtype.Bool{Bool: true, Valid: true},
 			ChannelContextRevision:  pgtype.Int8{Int64: 1, Valid: true},
@@ -653,6 +654,7 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	if commandSource == "" {
 		commandSource = in.Body
 	}
+	commandSource = redact.Text(commandSource)
 	cmd, _ := ParseIssueCommand(commandSource)
 	// Context paths acquire chat_session before binding and generation. This
 	// also keeps the later TouchChatSession update from introducing the reverse
@@ -750,7 +752,7 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		ID:                      dbid.NewV7(),
 		ChatSessionID:           in.SessionID,
 		Role:                    "user",
-		Content:                 in.Body,
+		Content:                 redact.Text(in.Body),
 		MessageKind:             textOrNullIf(cmd != nil, channelCommandMessageKind),
 		ChannelMediaPendingSecs: pgtype.Float8{Float64: in.MediaPendingSeconds, Valid: in.MediaPendingSeconds > 0},
 		ChannelIngested:         pgtype.Bool{Bool: true, Valid: true},
