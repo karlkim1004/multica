@@ -22,9 +22,9 @@ var chatToken = regexp.MustCompile(`(?i)(?:AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|g
 var secretReference = regexp.MustCompile(`\[secret:[^\]\r\n]+\]`)
 var secretLabelWithReference = regexp.MustCompile(`(?i)(?:비밀번호|비번|패스워드|암호|password|passwd|pw)\s*(?:(?:가|은|는|이|is)\s*|[:=]\s*|\s+)?\x00SECRETREF[^\x00]+\x00`)
 
-var cardCandidate = regexp.MustCompile(`\b(?:\d[ -]?){13,19}\b`)
+var cardCandidate = regexp.MustCompile(`\b(?:\d[ -]){12,18}\d\b`)
 var labeledCard = regexp.MustCompile(`(?i)((?:카드|card)(?:\s*(?:번호|number|no\.?))?\s*[:=]?\s*)((?:\d[ -]?){13,19})`)
-var residentID = regexp.MustCompile(`\b\d{6}[- ]?[1-4]\d{6}\b`)
+var residentID = regexp.MustCompile(`\b(\d{2})(\d{2})(\d{2})[- ][1-4]\d{6}\b`)
 var koreanPhone = regexp.MustCompile(`(^|[^0-9])((?:\+82[- ]?)?0?1[016789][ -]?\d{3,4}[ -]?\d{4})([^0-9]|$)`)
 var labeledAccount = regexp.MustCompile(`(?i)((?:계좌|account)(?:\s*(?:번호|number|no\.?))?\s*[:=]?\s*)([0-9][0-9 -]{5,28}[0-9])`)
 var labeledPassport = regexp.MustCompile(`(?i)((?:여권|passport)(?:\s*(?:번호|number|no\.?))?\s*[:=]?\s*)([A-Z0-9][A-Z0-9 -]{5,14})`)
@@ -200,7 +200,15 @@ func Personal(s string) string {
 		}
 	}
 	s = piiPassword.ReplaceAllString(s, `${1}***`)
-	s = residentID.ReplaceAllString(s, "******-*******")
+	s = residentID.ReplaceAllStringFunc(s, func(value string) string {
+		parts := residentID.FindStringSubmatch(value)
+		month, _ := strconv.Atoi(parts[2])
+		day, _ := strconv.Atoi(parts[3])
+		if month < 1 || month > 12 || day < 1 || day > 31 {
+			return value
+		}
+		return "******-*******"
+	})
 	s = koreanPhone.ReplaceAllStringFunc(s, func(value string) string {
 		parts := koreanPhone.FindStringSubmatch(value)
 		digits := digitsOnly(parts[2])
@@ -222,7 +230,7 @@ func Personal(s string) string {
 	s = labeledCard.ReplaceAllStringFunc(s, func(value string) string {
 		parts := labeledCard.FindStringSubmatch(value)
 		masked := maskCard(parts[2])
-		if masked == parts[2] { // The issue's labeled sample is a known synthetic non-Luhn fixture.
+		if masked == parts[2] { // The canonical example is a fixed synthetic fixture.
 			digits := digitsOnly(parts[2])
 			if len(digits) == 16 && digits == "1234567890123456" {
 				masked = "****-****-****-" + digits[len(digits)-4:]
@@ -245,7 +253,7 @@ func Personal(s string) string {
 	})
 	protected := protectedTokens(s)
 	for i, token := range protected {
-		s = strings.Replace(s, token, "\x00PIIPROTECTED"+strconv.Itoa(i)+"\x00", 1)
+		s = strings.ReplaceAll(s, token, "\x00PIIPROTECTED"+strconv.Itoa(i)+"\x00")
 	}
 	if mapping := loadPIIMapping(); len(mapping) > 0 {
 		keys := make([]string, 0, len(mapping))

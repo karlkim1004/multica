@@ -95,6 +95,18 @@ func TestPersonalDataRedactionRejectsInvalidCardAndAllowsConfiguredPhone(t *test
 	}
 }
 
+func TestPersonalDataRedactionPreservesTimestampsAndInvalidResidentIDs(t *testing.T) {
+	t.Setenv("PII_REDACT_MAPPING", "")
+	for _, value := range []string{"1729764000123", "1234567890123", "991332-1234567"} {
+		if got := Personal(value); got != value {
+			t.Errorf("non-PII numeric value %q changed to %q", value, got)
+		}
+	}
+	if got := Personal("resident 900101-1234567"); !strings.Contains(got, "******-*******") {
+		t.Fatalf("valid formatted resident ID not redacted: %q", got)
+	}
+}
+
 func TestCustomerMappingUsesLongestKeyAndBoundaries(t *testing.T) {
 	path := t.TempDir() + "/mapping.json"
 	if err := os.WriteFile(path, []byte(`{"LG전자":"A사","LG":"A사","LGCOMMIE":"T-PROJECT"}`), 0600); err != nil {
