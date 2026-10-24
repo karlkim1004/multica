@@ -5,6 +5,7 @@ package redact
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -12,9 +13,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var ErrSecretStoreUnavailable = errors.New("secret store unavailable")
+
+var piiMappingLogState sync.Map
 
 var chatPasswordPattern = regexp.MustCompile(`(?i)((?:비밀번호|비번|패스워드|암호|password|passwd|pw)\s*(?:(?:가|은|는|이|is)\s*|[:=]\s*|\s+))([A-Za-z0-9][^\s,;]*)`)
 var chatPrivateKey = regexp.MustCompile(`(?s)-----BEGIN[A-Z\s]*PRIVATE KEY-----.*?-----END[A-Z\s]*PRIVATE KEY-----`)
@@ -286,14 +290,43 @@ func loadPIIMapping() map[string]string {
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
+		logPIIMappingStatus(path, "unavailable", 0, err)
 		return nil
 	}
 	var m map[string]string
-	if json.Unmarshal(b, &m) != nil {
+	if err := json.Unmarshal(b, &m); err != nil {
+		logPIIMappingStatus(path, "invalid", 0, err)
 		return nil
 	}
+	if len(m) == 0 {
+		logPIIMappingStatus(path, "empty", 0, nil)
+		return nil
+	}
+	logPIIMappingStatus(path, "loaded", len(m), nil)
 	return m
 }
+
+// LogPIIMappingStatus makes the mapping availability visible during server startup.
+func LogPIIMappingStatus() {
+	loadPIIMapping()
+}
+
+func logPIIMappingStatus(path, status string, entries int, err error) {
+	key := path + ":" + status + ":" + strconv.Itoa(entries)
+	if _, loaded := piiMappingLogState.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	if status == "loaded" {
+		slog.Info("PII redaction mapping loaded", "entries", entries)
+		return
+	}
+	if err != nil {
+		slog.Warn("PII redaction mapping unavailable; customer-name replacement disabled", "path", path, "error", err)
+		return
+	}
+	slog.Warn("PII redaction mapping is empty; customer-name replacement disabled", "path", path)
+}
+
 func protectedTokens(s string) []string {
 	tokens := operationalID.FindAllString(s, -1)
 	tokens = append(tokens, protectedPath.FindAllString(s, -1)...)

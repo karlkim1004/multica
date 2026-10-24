@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -120,6 +121,7 @@ func envDuration(name string, def time.Duration) time.Duration {
 
 func main() {
 	logger.Init()
+	redact.LogPIIMappingStatus()
 
 	// Warn about missing configuration
 	if os.Getenv("JWT_SECRET") == "" {
