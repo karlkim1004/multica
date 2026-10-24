@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+func setTestPIIMapping(t *testing.T) {
+	t.Helper()
+	path := t.TempDir() + "/mapping.json"
+	if err := os.WriteFile(path, []byte(`{"LG전자":"A사"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PII_REDACT_MAPPING", path)
+}
+
 func TestReplaceSecretsAndProtectExistingReferences(t *testing.T) {
 	cases := []struct{ input, want string }{
 		{"네이버웍스 비밀번호 Abc1234 입니다", "네이버웍스 비밀번호 [secret:test-ref] 입니다"},
@@ -69,7 +78,7 @@ func TestReplaceSecretsFailsClosedWithoutStore(t *testing.T) {
 }
 
 func TestPersonalDataRedactionAndProtectedIdentifiers(t *testing.T) {
-	t.Setenv("PII_REDACT_MAPPING", "")
+	setTestPIIMapping(t)
 	input := "카드 1234-5678-9012-3456, 비밀번호는 Abc1234, 주민 900101-1234567, 전화 010-1234-5678, LG전자 담당자 OPS-0510-AI-FOO scripts/customer/LG.txt"
 	got := Text(input)
 	for _, want := range []string{"카드 ****-****-****-3456", "비밀번호는 ***", "******-*******", "*******5678", "A사 담당자", "OPS-0510-AI-FOO", "scripts/customer/LG.txt"} {
@@ -83,7 +92,7 @@ func TestPersonalDataRedactionAndProtectedIdentifiers(t *testing.T) {
 }
 
 func TestPersonalDataRedactionRejectsInvalidCardAndAllowsConfiguredPhone(t *testing.T) {
-	t.Setenv("PII_REDACT_MAPPING", "")
+	setTestPIIMapping(t)
 	t.Setenv("PII_REDACT_ALLOWLIST", "010-1234-5678")
 	input := "card 1234-5678-9012-3457 phone 010-1234-5678"
 	got := Text(input)
@@ -96,7 +105,7 @@ func TestPersonalDataRedactionRejectsInvalidCardAndAllowsConfiguredPhone(t *test
 }
 
 func TestPersonalDataRedactionPreservesTimestampsAndInvalidResidentIDs(t *testing.T) {
-	t.Setenv("PII_REDACT_MAPPING", "")
+	setTestPIIMapping(t)
 	for _, value := range []string{"1729764000123", "1234567890123", "991332-1234567"} {
 		if got := Personal(value); got != value {
 			t.Errorf("non-PII numeric value %q changed to %q", value, got)

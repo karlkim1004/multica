@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -34,7 +35,11 @@ func withChatTestWorkspaceCtx(t *testing.T, req *http.Request) *http.Request {
 }
 
 func TestSendChatMessageRedactsPersonalDataBeforePersistence(t *testing.T) {
-	t.Setenv("PII_REDACT_MAPPING", "")
+	path := t.TempDir() + "/mapping.json"
+	if err := os.WriteFile(path, []byte(`{"LG전자":"A사"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PII_REDACT_MAPPING", path)
 	agentID := createHandlerTestAgent(t, "ChatPIIRedactAgent", []byte("[]"))
 	sessionID := createHandlerTestChatSession(t, agentID)
 	sendReq := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
