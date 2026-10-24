@@ -1,9 +1,19 @@
 package redact
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
+
+func setTestPIIMapping(t *testing.T) {
+	t.Helper()
+	path := t.TempDir() + "/mapping.json"
+	if err := os.WriteFile(path, []byte(`{"LG전자":"A사"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PII_REDACT_MAPPING", path)
+}
 
 func TestReplaceSecretsAndProtectExistingReferences(t *testing.T) {
 	cases := []struct{ input, want string }{
@@ -64,6 +74,58 @@ func TestReplaceSecretsFailsClosedWithoutStore(t *testing.T) {
 	got, err := ReplaceSecrets("password: Abc1234", nil)
 	if err == nil || got == "password: Abc1234" || strings.Contains(got, "Abc1234") {
 		t.Fatalf("got %q, err %v; expected a masked result and an error", got, err)
+	}
+}
+
+func TestPersonalDataRedactionAndProtectedIdentifiers(t *testing.T) {
+	setTestPIIMapping(t)
+	input := "카드 1234-5678-9012-3456, 비밀번호는 Abc1234, 주민 900101-1234567, 전화 010-1234-5678, LG전자 담당자 OPS-0510-AI-FOO scripts/customer/LG.txt"
+	got := Text(input)
+	for _, want := range []string{"카드 ****-****-****-3456", "비밀번호는 ***", "******-*******", "*******5678", "A사 담당자", "OPS-0510-AI-FOO", "scripts/customer/LG.txt"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("sanitized output missing %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "1234-5678-9012-3456") || strings.Contains(got, "Abc1234") {
+		t.Fatalf("sensitive value survived: %q", got)
+	}
+}
+
+func TestPersonalDataRedactionRejectsInvalidCardAndAllowsConfiguredPhone(t *testing.T) {
+	setTestPIIMapping(t)
+	t.Setenv("PII_REDACT_ALLOWLIST", "010-1234-5678")
+	input := "card 1234-5678-9012-3457 phone 010-1234-5678"
+	got := Text(input)
+	if !strings.Contains(got, "1234-5678-9012-3457") {
+		t.Fatalf("invalid Luhn candidate was masked: %q", got)
+	}
+	if !strings.Contains(got, "010-1234-5678") {
+		t.Fatalf("allowlisted phone was altered: %q", got)
+	}
+}
+
+func TestPersonalDataRedactionPreservesTimestampsAndInvalidResidentIDs(t *testing.T) {
+	setTestPIIMapping(t)
+	for _, value := range []string{"1729764000123", "1234567890123", "991332-1234567"} {
+		if got := Personal(value); got != value {
+			t.Errorf("non-PII numeric value %q changed to %q", value, got)
+		}
+	}
+	if got := Personal("resident 900101-1234567"); !strings.Contains(got, "******-*******") {
+		t.Fatalf("valid formatted resident ID not redacted: %q", got)
+	}
+}
+
+func TestCustomerMappingUsesLongestKeyAndBoundaries(t *testing.T) {
+	path := t.TempDir() + "/mapping.json"
+	if err := os.WriteFile(path, []byte(`{"LG전자":"A사","LG":"A사","LGCOMMIE":"T-PROJECT"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PII_REDACT_MAPPING", path)
+	got := Personal("LG전자 LGCOMMIE path/LG전자 OPS-1000-ABC")
+	want := "A사 T-PROJECT path/LG전자 OPS-1000-ABC"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 

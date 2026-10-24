@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -292,6 +293,26 @@ func TestBuildChatPromptInjectsHistory(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+func TestBuildPromptSanitizesPersonalDataAtFinalBoundary(t *testing.T) {
+	path := t.TempDir() + "/mapping.json"
+	if err := os.WriteFile(path, []byte(`{"LG전자":"A사"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PII_REDACT_MAPPING", path)
+	task := Task{ChatSessionID: "sess-pii", ChatMessage: "카드 1234-5678-9012-3456, 비밀번호는 Abc1234, LG전자 담당자"}
+	out := BuildPrompt(task, "codex")
+	for _, want := range []string{"카드 ****-****-****-3456", "비밀번호는 ***", "A사 담당자"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("prompt missing sanitized value %q", want)
+		}
+	}
+	for _, secret := range []string{"1234-5678-9012-3456", "Abc1234", "LG전자"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("prompt contains raw sensitive value %q", secret)
 		}
 	}
 }

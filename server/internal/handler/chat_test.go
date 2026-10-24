@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -31,6 +32,44 @@ func withChatTestWorkspaceCtx(t *testing.T, req *http.Request) *http.Request {
 		t.Fatalf("load test member row: %v", err)
 	}
 	return req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, memberRow))
+}
+
+func TestSendChatMessageRedactsPersonalDataBeforePersistence(t *testing.T) {
+	path := t.TempDir() + "/mapping.json"
+	if err := os.WriteFile(path, []byte(`{"LG전자":"A사"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PII_REDACT_MAPPING", path)
+	agentID := createHandlerTestAgent(t, "ChatPIIRedactAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	sendReq := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
+		"content": "카드 1234-5678-9012-3456, LG전자 담당자",
+	})
+	sendReq = withURLParam(sendReq, "sessionId", sessionID)
+	sendReq = withChatTestWorkspaceCtx(t, sendReq)
+	sendW := httptest.NewRecorder()
+	testHandler.SendChatMessage(sendW, sendReq)
+	if sendW.Code != http.StatusCreated {
+		t.Fatalf("SendChatMessage: expected 201, got %d: %s", sendW.Code, sendW.Body.String())
+	}
+	var response SendChatMessageResponse
+	if err := json.Unmarshal(sendW.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	var content string
+	if err := testPool.QueryRow(context.Background(), `SELECT content FROM chat_message WHERE id = $1`, response.MessageID).Scan(&content); err != nil {
+		t.Fatalf("read persisted message: %v", err)
+	}
+	for _, want := range []string{"카드 ****-****-****-3456", "A사 담당자"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("persisted message missing %q: %q", want, content)
+		}
+	}
+	for _, secret := range []string{"1234-5678-9012-3456", "LG전자"} {
+		if strings.Contains(content, secret) {
+			t.Errorf("sensitive value survived in persisted message: %q", content)
+		}
+	}
 }
 
 // TestSendChatMessage_LinksAttachments verifies that attachments uploaded

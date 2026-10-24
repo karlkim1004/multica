@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 type CommentResponse struct {
@@ -1031,6 +1032,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 
 	routeUUID, routeLabel, routeReason := resolveRerouteTarget(issue, authorType, authorID)
 	req.Content = rewriteHumanMentions(req.Content, authorType == "agent", routeUUID, routeLabel, routeReason)
+	req.Content = redact.Text(req.Content)
 
 	// NOTE: Comment content is stored as Markdown source. XSS is handled at the
 	// rendering layer (rehype-sanitize) and at the editor layer
