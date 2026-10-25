@@ -1,5 +1,7 @@
 # Runtimes and repos source map
 
+- `server/internal/cli/update_target.go` rejects direct executable updates inside macOS app bundles. `UpdateViaDownloadWithTimeout` checks the resolved path before fetching a release, and `replaceBinary` in `update_unix.go` checks again before rename. `update_target_test.go` covers platform/path classification; `update_darwin_test.go` verifies rejection preserves both original and candidate files and standalone replacement still works.
+
 - `server/cmd/multica/cmd_runtime.go` registers `runtime list`, `usage`, `activity`, `update`, and `delete`.
 - `runtime list` reads `/api/runtimes` and prints `id`, `name`, `runtime_mode`, `provider`, `status`, and `last_seen_at`.
 - `runtime update` posts to `/api/runtimes/{runtime-id}/update`; with `--wait` it polls update status.

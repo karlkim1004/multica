@@ -369,6 +369,9 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	if err != nil {
 		return "", fmt.Errorf("resolve symlink: %w", err)
 	}
+	if err := validateBinaryUpdateTarget(runtime.GOOS, exePath); err != nil {
+		return "", err
+	}
 
 	tag := normalizeReleaseTag(targetVersion)
 	release, err := fetchReleaseByTag(tag)

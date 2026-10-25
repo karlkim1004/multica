@@ -49,6 +49,12 @@ multica repo checkout <url> --ref <branch-or-sha>
 
 `repo checkout` requires `MULTICA_DAEMON_PORT`; it is intended to run inside a daemon task. If absent, you are not in the normal agent checkout path.
 
+On macOS, the download updater refuses to replace a CLI executable inside an
+`.app/Contents/MacOS` directory. This also applies when a daemon update reaches
+the download updater. Use the app's signed bundle installer for these installs;
+replacing only its executable would invalidate the bundle signature and can
+break existing macOS privacy permissions. Standalone CLI installs are unaffected.
+
 ## Debugging an agent that did not run
 
 Check in this order:
