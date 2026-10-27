@@ -19,6 +19,10 @@ type Store struct{ pool *pgxpool.Pool }
 
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
+func (s *Store) begin(ctx context.Context) (pgx.Tx, error) {
+	return s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+}
+
 // lockRuntime serializes fence acquisition and claims, including initial row creation.
 func lockRuntime(ctx context.Context, tx pgx.Tx, runtimeID uuid.UUID) (*uuid.UUID, int64, error) {
 	if runtimeID == uuid.Nil {
@@ -39,7 +43,7 @@ func (s *Store) Acquire(ctx context.Context, runtimeID, ownerID uuid.UUID) (int6
 	if ownerID == uuid.Nil {
 		return 0, errors.New("owner ID is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -71,7 +75,7 @@ func (s *Store) Claim(ctx context.Context, runtimeID, operationID uuid.UUID, ass
 	if operationID == uuid.Nil || assign == nil {
 		return nil, errors.New("operation ID and assignment are required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return nil, err
 	}

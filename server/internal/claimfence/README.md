@@ -13,9 +13,11 @@ after commit. Concurrent owners cannot acquire the same fence.
 
 The tests use a disposable PostgreSQL database and a synthetic task table. They
 do not execute the real Multica handler, daemon, task runner, network failure,
-or heartbeat. The test requires `NEX1499_TEST_DB_URL` pointing to a database
-named `nex1499_isolated` on `127.0.0.1`; it creates and removes only uniquely
-named test schemas.
+or heartbeat. Without `NEX1499_TEST_DB_URL`, the tests skip. When set, it must
+point to a database named `nex1499_isolated` on `127.0.0.1`; each test creates
+and removes only a uniquely named schema. Store transactions explicitly use
+READ COMMITTED so receipt reconciliation sees commits made while waiting for
+the runtime row lock.
 
 Before integrating this primitive, the server must move the actual task
 selection, assignment, and receipt into the same transaction; enforce the

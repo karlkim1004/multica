@@ -3,6 +3,7 @@ package claimfence
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"testing"
@@ -16,6 +17,9 @@ import (
 func isolatedPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("NEX1499_TEST_DB_URL")
+	if dsn == "" {
+		t.Skip("NEX1499_TEST_DB_URL is required for isolated PostgreSQL tests")
+	}
 	u, err := url.Parse(dsn)
 	if err != nil || u.Scheme != "postgres" || u.Hostname() != "127.0.0.1" || u.Path != "/nex1499_isolated" {
 		t.Fatal("NEX1499_TEST_DB_URL must point to the isolated loopback database")
@@ -41,6 +45,8 @@ func isolatedPool(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	config.ConnConfig.RuntimeParams["search_path"] = schema
+	appName := "nex1499_" + uuid.New().String()[:8]
+	config.ConnConfig.RuntimeParams["application_name"] = appName
 	pool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +65,7 @@ func isolatedPool(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("NEX1499_TEST_APP_NAME", appName)
 	return pool
 }
 
@@ -72,6 +79,13 @@ func TestFenceWaitsForClaimTransactionAndRecoversItsReceipt(t *testing.T) {
 	claimDone := make(chan error, 1)
 	go func() {
 		_, err := store.Claim(ctx, runtimeID, operationID, func(ctx context.Context, tx pgx.Tx) (*uuid.UUID, error) {
+			var isolation string
+			if err := tx.QueryRow(ctx, `SHOW transaction_isolation`).Scan(&isolation); err != nil {
+				return nil, err
+			}
+			if isolation != "read committed" {
+				return nil, fmt.Errorf("transaction isolation = %q, want read committed", isolation)
+			}
 			close(entered)
 			select {
 			case <-finish:
@@ -89,12 +103,18 @@ func TestFenceWaitsForClaimTransactionAndRecoversItsReceipt(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
+	fenceStarted := make(chan struct{})
 	fenceDone := make(chan error, 1)
-	go func() { _, err := store.Acquire(ctx, runtimeID, ownerID); fenceDone <- err }()
-	select {
-	case err := <-fenceDone:
-		t.Fatalf("fence returned before in-flight claim completed: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	go func() {
+		close(fenceStarted)
+		_, err := store.Acquire(ctx, runtimeID, ownerID)
+		fenceDone <- err
+	}()
+	<-fenceStarted
+	if err := waitForLockWait(ctx, pool); err != nil {
+		close(finish)
+		<-claimDone
+		t.Fatal(err)
 	}
 	close(finish)
 	if err := <-claimDone; err != nil {
@@ -110,7 +130,30 @@ func TestFenceWaitsForClaimTransactionAndRecoversItsReceipt(t *testing.T) {
 	if err != nil || receipt == nil || *receipt != taskID {
 		t.Fatalf("receipt = %v, %v; want %s", receipt, err, taskID)
 	}
-	t.Logf("runtime=%s operation=%s task=%s claim-commit=before-fence receipt=recovered", runtimeID, operationID, taskID)
+	t.Logf("runtime=%s operation=%s task=%s postgres-wait_event=Lock claim-commit=before-fence receipt=recovered", runtimeID, operationID, taskID)
+}
+
+func waitForLockWait(ctx context.Context, pool *pgxpool.Pool) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		err := pool.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE application_name=$1 AND wait_event_type='Lock'
+		)`, os.Getenv("NEX1499_TEST_APP_NAME")).Scan(&waiting)
+		if err != nil {
+			return fmt.Errorf("observe PostgreSQL lock wait: %w", err)
+		}
+		if waiting {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("no PostgreSQL lock wait observed: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func TestFailedAssignmentRollsBackAndOtherOwnerCannotAcquire(t *testing.T) {
