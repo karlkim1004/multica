@@ -18,6 +18,12 @@ SELECT * FROM task_usage
 WHERE task_id = $1
 ORDER BY model;
 
+-- name: ListTaskUsageByIssue :many
+SELECT tu.* FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+WHERE atq.issue_id = $1
+ORDER BY tu.task_id, tu.provider, tu.model;
+
 -- name: GetIssueUsageSummary :one
 SELECT
     COALESCE(SUM(tu.input_tokens), 0)::bigint AS total_input_tokens,

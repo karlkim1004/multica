@@ -393,6 +393,44 @@ func (q *Queries) ListDashboardUsageDaily(ctx context.Context, arg ListDashboard
 	return items, nil
 }
 
+const listTaskUsageByIssue = `-- name: ListTaskUsageByIssue :many
+SELECT tu.id, tu.task_id, tu.provider, tu.model, tu.input_tokens, tu.output_tokens, tu.cache_read_tokens, tu.cache_write_tokens, tu.created_at, tu.updated_at FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+WHERE atq.issue_id = $1
+ORDER BY tu.task_id, tu.provider, tu.model
+`
+
+func (q *Queries) ListTaskUsageByIssue(ctx context.Context, issueID pgtype.UUID) ([]TaskUsage, error) {
+	rows, err := q.db.Query(ctx, listTaskUsageByIssue, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskUsage{}
+	for rows.Next() {
+		var i TaskUsage
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.Provider,
+			&i.Model,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertTaskUsage = `-- name: UpsertTaskUsage :exec
 INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, now())

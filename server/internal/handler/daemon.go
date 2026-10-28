@@ -2710,9 +2710,27 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	resp := make([]AgentTaskResponse, len(tasks))
+	usageRows, err := h.Queries.ListTaskUsageByIssue(r.Context(), issue.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list task usage")
+		return
+	}
+	usageByTask := make(map[string][]TaskUsageResponse)
+	for _, row := range usageRows {
+		id := uuidToString(row.TaskID)
+		usageByTask[id] = append(usageByTask[id], taskUsageToResponse(row))
+	}
+	type taskRunResponse struct {
+		AgentTaskResponse
+		Usage []TaskUsageResponse `json:"usage"`
+	}
+	resp := make([]taskRunResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+		usage := usageByTask[uuidToString(t.ID)]
+		if usage == nil {
+			usage = []TaskUsageResponse{}
+		}
+		resp[i] = taskRunResponse{taskToResponse(t, workspaceID), usage}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
