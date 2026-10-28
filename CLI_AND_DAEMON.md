@@ -790,3 +790,14 @@ always at least this value, so raising it takes effect across all commands.
 ```bash
 MULTICA_HTTP_TIMEOUT=60s multica issue list
 ```
+
+## Task token usage
+
+`multica issue runs <issue-id> --output json` includes a `usage` array on every
+run. Each entry contains `provider`, `model`, `input_tokens`, `output_tokens`,
+`cache_read_tokens`, and `cache_write_tokens`. An empty array means usage has
+not been reported; it does not mean zero tokens.
+
+Use `multica task usage <task-id> --output json` to read the same entries for
+one task (`GET /api/tasks/{taskId}/usage`). The task must belong to the selected
+workspace; tasks from other workspaces return 404.
