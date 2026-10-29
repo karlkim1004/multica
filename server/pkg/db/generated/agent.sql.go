@@ -2162,6 +2162,27 @@ func (q *Queries) HasActiveTaskForIssue(ctx context.Context, issueID pgtype.UUID
 	return has_active, err
 }
 
+const hasCompletedTaskForIssueSince = `-- name: HasCompletedTaskForIssueSince :one
+SELECT count(*) > 0 AS has_completed FROM agent_task_queue
+WHERE issue_id = $1 AND agent_id = $2 AND status = 'completed'
+  AND completed_at > $3
+`
+
+type HasCompletedTaskForIssueSinceParams struct {
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+}
+
+// A completed run is a fresh response to the issue's current state. Do not
+// let stale-assignment recovery repeat it until the issue itself changes.
+func (q *Queries) HasCompletedTaskForIssueSince(ctx context.Context, arg HasCompletedTaskForIssueSinceParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasCompletedTaskForIssueSince, arg.IssueID, arg.AgentID, arg.CompletedAt)
+	var has_completed bool
+	err := row.Scan(&has_completed)
+	return has_completed, err
+}
+
 const hasPendingTaskForIssue = `-- name: HasPendingTaskForIssue :one
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1 AND status IN ('queued', 'dispatched')
