@@ -780,6 +780,13 @@ WHERE agent_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_direc
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
 WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory');
 
+-- name: HasCompletedTaskForIssueSince :one
+-- A completed run is a fresh response to the issue's current state. Do not
+-- let stale-assignment recovery repeat it until the issue itself changes.
+SELECT count(*) > 0 AS has_completed FROM agent_task_queue
+WHERE issue_id = $1 AND agent_id = $2 AND status = 'completed'
+  AND completed_at > $3;
+
 -- name: HasPendingTaskForIssue :one
 -- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
 -- Used by the coalescing queue: allow enqueue when a task is running (so

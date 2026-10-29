@@ -170,6 +170,18 @@ func (s *IssueService) SweepStaleAssigned(ctx context.Context, workspaceID pgtyp
 			// scan cannot be revived by this sweep.
 			issue, getErr := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: candidate.ID, WorkspaceID: workspaceID})
 			if getErr == nil && issue.Status == status && issue.AssigneeType.String == "agent" && issue.AssigneeID == agent.ID && issue.UpdatedAt.Valid && !issue.UpdatedAt.Time.After(cutoff) && poolIssueMayDispatch(issue.Metadata) {
+				completed, completedErr := s.Queries.HasCompletedTaskForIssueSince(ctx, db.HasCompletedTaskForIssueSinceParams{
+					IssueID: issue.ID, AgentID: agent.ID, CompletedAt: issue.UpdatedAt,
+				})
+				if completedErr != nil {
+					slog.Warn("pool dispatch: check recent completion failed; suppressing requeue", "issue_id", util.UUIDToString(issue.ID), "worker_id", util.UUIDToString(agent.ID), "error", completedErr)
+					_ = s.WorkerPool.ReleaseIssueLock(ctx, workspaceID, candidate.ID, agent.ID)
+					continue
+				}
+				if completed {
+					_ = s.WorkerPool.ReleaseIssueLock(ctx, workspaceID, candidate.ID, agent.ID)
+					continue
+				}
 				failures, outcomeErr := s.Queries.ListAgentRuntimeFailuresSinceSuccess(ctx, db.ListAgentRuntimeFailuresSinceSuccessParams{
 					WorkspaceID: workspaceID, AgentID: agent.ID, RuntimeID: agent.RuntimeID,
 				})
