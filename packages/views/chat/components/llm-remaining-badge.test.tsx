@@ -192,3 +192,19 @@ describe("last known quota during failures", () => {
     vi.unstubAllGlobals();
   });
 });
+
+
+it("marks partial fallback as stale and replaces it with the next complete observation", () => {
+  const previous = llmLimitStatusSchema.parse({five_hour_pct: 9, seven_day_pct: 82});
+  const partial = retainKnownQuota(previous, llmLimitStatusSchema.parse({five_hour_pct: 10, claude_status: "available"}));
+  expect(partial).toMatchObject({five_hour_pct: 10, seven_day_pct: 82, claude_status: "stale"});
+  const recovered = retainKnownQuota(partial, llmLimitStatusSchema.parse({five_hour_pct: 11, seven_day_pct: 83, claude_status: "available"}));
+  expect(recovered).toMatchObject({five_hour_pct: 11, seven_day_pct: 83, claude_status: "available"});
+});
+
+it("marks a retained weekly-only observation", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ok: true,json: async () => ({claude_status: "unavailable",claude_last_seven_day_pct: 82})})));
+  renderBadge();
+  await waitFor(() => expect(screen.getByTestId("chat-llm-gauge-compact")).toHaveTextContent("C*: 5h 확인 불가/7d 18%"));
+  vi.unstubAllGlobals();
+});

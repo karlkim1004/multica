@@ -96,13 +96,13 @@ export function retainKnownQuota(previous: LlmLimitStatus | undefined, current: 
     result.seven_day_pct ??= current.claude_last_seven_day_pct ?? previous?.seven_day_pct ?? null;
     result.sonnet_pct ??= previous?.sonnet_pct ?? null;
     result.claude_last_observed_at ??= previous?.claude_last_observed_at;
-    if (result.five_hour_pct !== null || result.seven_day_pct !== null) result.claude_status = current.claude_status ?? "unavailable";
+    if (result.five_hour_pct !== null || result.seven_day_pct !== null) result.claude_status = current.claude_status === "available" ? "stale" : current.claude_status ?? "unavailable";
   }
   if (current.gpt_five_hour_pct === null || current.gpt_seven_day_pct === null) {
     result.gpt_five_hour_pct ??= previous?.gpt_five_hour_pct ?? null;
     result.gpt_seven_day_pct ??= previous?.gpt_seven_day_pct ?? null;
     result.gpt_last_observed_at ??= previous?.gpt_last_observed_at;
-    if (result.gpt_five_hour_pct !== null || result.gpt_seven_day_pct !== null) result.gpt_status = current.gpt_status ?? "unavailable";
+    if (result.gpt_five_hour_pct !== null || result.gpt_seven_day_pct !== null) result.gpt_status = current.gpt_status === "available" ? "stale" : current.gpt_status ?? "unavailable";
   }
   return result;
 }
@@ -135,8 +135,8 @@ export function LlmRemainingBadge({ className }: { className?: string }) {
     `GPT 5시간 ${gptFiveHourRemaining === null ? "확인 불가" : `${gptFiveHourRemaining}%`}, 리셋 ${gptFiveHourReset}`,
     `GPT 1주 ${gptSevenDayRemaining === null ? "확인 불가" : `${gptSevenDayRemaining}%`}, 리셋 ${gptSevenDayReset}`,
   ].join(", ");
-  const claudeLastKnown = data.claude_status !== undefined && data.claude_status !== "available" && claudeFiveHourRemaining !== null;
-  const gptLastKnown = data.gpt_status !== undefined && data.gpt_status !== "available" && gptFiveHourRemaining !== null;
+  const claudeLastKnown = data.claude_status !== undefined && data.claude_status !== "available" && (claudeFiveHourRemaining !== null || claudeSevenDayRemaining !== null);
+  const gptLastKnown = data.gpt_status !== undefined && data.gpt_status !== "available" && (gptFiveHourRemaining !== null || gptSevenDayRemaining !== null);
   const lastKnownTitle = [
     claudeLastKnown ? t($ => $.limit_reset.last_known, {provider: "C*", time: data.claude_last_observed_at ?? "--"}) : "",
     gptLastKnown ? t($ => $.limit_reset.last_known, {provider: "G*", time: data.gpt_last_observed_at ?? "--"}) : "",
