@@ -5,6 +5,7 @@ import { llmLimitStatusSchema, unavailableLlmLimitStatus, type LlmLimitStatus } 
 
 
 import { useEffect, useState } from "react";
+import { useT } from "../../i18n";
 import { RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
@@ -64,6 +65,7 @@ export function formatResetCountdown(resetAt: string | null | undefined, now: nu
 }
 
 function ResetCountdown({ data }: { data: LlmLimitStatus }) {
+  const { t } = useT("chat");
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -75,12 +77,12 @@ function ResetCountdown({ data }: { data: LlmLimitStatus }) {
     ["C", sonnetLimits ? data.sonnet_resets_at : data.seven_day_resets_at],
     ["G", data.gpt_seven_resets_at],
   ] as const;
-  return <div data-testid="chat-reset-countdown" className="@container max-w-full pb-0.5 text-[10px] leading-4 tabular-nums" aria-label="한도 초기화까지 남은 시간">
+  return <div data-testid="chat-reset-countdown" className="@container max-w-full pb-0.5 text-[10px] leading-4 tabular-nums" aria-label={t($ => $.limit_reset.countdown_label)}>
     <div className="flex flex-col @[330px]:flex-row @[330px]:gap-2">
     {resets.map(([label, resetAt], index) => <span key={label} className="whitespace-nowrap">
       {index > 0 && <span aria-hidden="true" className="hidden pr-2 @[330px]:inline">|</span>}
-      <span title={resetAt ? `리셋 ${new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "full", timeStyle: "long" }).format(new Date(resetAt))} (KST)` : "리셋 시각 확인 불가"}>
-        {label} 리셋 {formatResetCountdown(resetAt, now)}
+      <span title={resetAt ? t($ => $.limit_reset.at, { time: new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "full", timeStyle: "long" }).format(new Date(resetAt)) }) : t($ => $.limit_reset.unknown)}>
+        {label} {t($ => $.limit_reset.label)} {formatResetCountdown(resetAt, now)}
       </span>
     </span>)}
     </div>

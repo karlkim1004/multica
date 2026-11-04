@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithI18n } from "../../test/i18n";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { llmLimitStatusSchema } from "@multica/core/api/schemas";
@@ -8,10 +9,11 @@ function renderBadge() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  return renderWithI18n(
     <QueryClientProvider client={queryClient}>
       <LlmRemainingBadge />
     </QueryClientProvider>,
+    { locale: "ko" },
   );
 }
 
