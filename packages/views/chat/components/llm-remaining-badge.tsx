@@ -72,18 +72,18 @@ function ResetCountdown({ data }: { data: LlmLimitStatus }) {
   const sonnetLimits = remainingFromUsage(data.sonnet_pct) !== null &&
     (remainingFromUsage(data.seven_day_pct) === null || data.sonnet_pct! > data.seven_day_pct!);
   const resets = [
-    ["C 5h", data.five_hour_resets_at],
-    ["7d", sonnetLimits ? data.sonnet_resets_at : data.seven_day_resets_at],
-    ["G 5h", data.gpt_five_resets_at],
-    ["7d", data.gpt_seven_resets_at],
+    ["C", sonnetLimits ? data.sonnet_resets_at : data.seven_day_resets_at],
+    ["G", data.gpt_seven_resets_at],
   ] as const;
-  return <div data-testid="chat-reset-countdown" tabIndex={0} className="max-w-full overflow-x-auto whitespace-nowrap pb-0.5 text-[10px] leading-4 tabular-nums" aria-label="한도 초기화까지 남은 시간">
-    {resets.map(([label, resetAt], index) => <span key={index}>
-      {index > 0 && (index === 2 ? " | " : " · ")}
+  return <div data-testid="chat-reset-countdown" className="@container max-w-full pb-0.5 text-[10px] leading-4 tabular-nums" aria-label="한도 초기화까지 남은 시간">
+    <div className="flex flex-col @[330px]:flex-row @[330px]:gap-2">
+    {resets.map(([label, resetAt], index) => <span key={label} className="whitespace-nowrap">
+      {index > 0 && <span aria-hidden="true" className="hidden pr-2 @[330px]:inline">|</span>}
       <span title={resetAt ? `리셋 ${new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "full", timeStyle: "long" }).format(new Date(resetAt))} (KST)` : "리셋 시각 확인 불가"}>
         {label} 리셋 {formatResetCountdown(resetAt, now)}
       </span>
     </span>)}
+    </div>
   </div>;
 }
 
