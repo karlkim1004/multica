@@ -30,27 +30,81 @@ var daemonCmd = &cobra.Command{
 
 var daemonProvisionOwnerCmd = &cobra.Command{
 	Use: "provision-owner", Short: "Create an owner-bound runtime and issue its one-time daemon token",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newAPIClient(cmd)
-		if err != nil {
-			return err
+	RunE: runDaemonProvisionOwner,
+}
+
+type daemonProvisionOwnerResponse struct {
+	RuntimeID string `json:"runtime_id"`
+	DaemonID  string `json:"daemon_id"`
+	Token     string `json:"token"`
+}
+
+func runDaemonProvisionOwner(cmd *cobra.Command, _ []string) (retErr error) {
+	workspaceID, _ := cmd.Flags().GetString("workspace-id")
+	daemonID, _ := cmd.Flags().GetString("daemon-id")
+	outputFile, _ := cmd.Flags().GetString("output-file")
+	if outputFile == "" {
+		return fmt.Errorf("--output-file is required")
+	}
+
+	// Reserve the destination before provisioning: an existing path must not
+	// leave a newly-created one-time credential without a safe destination.
+	f, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("create daemon token output file: %w", err)
+	}
+	keepFile := false
+	closed := false
+	defer func() {
+		if !closed {
+			if closeErr := f.Close(); retErr == nil && closeErr != nil {
+				retErr = fmt.Errorf("close daemon token output file")
+			}
 		}
-		workspaceID, _ := cmd.Flags().GetString("workspace-id")
-		daemonID, _ := cmd.Flags().GetString("daemon-id")
-		provider, _ := cmd.Flags().GetString("provider")
-		name, _ := cmd.Flags().GetString("name")
-		deviceName, _ := cmd.Flags().GetString("device-name")
-		ctx, cancel := cli.APIContext(context.Background())
-		defer cancel()
-		var result map[string]any
-		if err := client.PostJSON(ctx, "/api/daemon/provision-owner", map[string]string{
-			"workspace_id": workspaceID, "daemon_id": daemonID, "provider": provider,
-			"name": name, "device_name": deviceName,
-		}, &result); err != nil {
-			return err
+		if !keepFile {
+			_ = os.Remove(outputFile)
 		}
-		return cli.PrintJSON(os.Stdout, result)
-	},
+	}()
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	provider, _ := cmd.Flags().GetString("provider")
+	name, _ := cmd.Flags().GetString("name")
+	deviceName, _ := cmd.Flags().GetString("device-name")
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var result daemonProvisionOwnerResponse
+	if err := client.PostJSON(ctx, "/api/daemon/provision-owner", map[string]string{
+		"workspace_id": workspaceID, "daemon_id": daemonID, "provider": provider,
+		"name": name, "device_name": deviceName,
+	}, &result); err != nil {
+		return err
+	}
+	if result.RuntimeID == "" || result.DaemonID == "" || result.Token == "" {
+		return fmt.Errorf("provision owner daemon: server returned an incomplete response")
+	}
+	if _, err := f.WriteString(result.Token); err != nil {
+		return fmt.Errorf("write daemon token output file")
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync daemon token output file")
+	}
+	if err := f.Close(); err != nil {
+		closed = true
+		return fmt.Errorf("close daemon token output file")
+	}
+	closed = true
+	keepFile = true
+	tokenID := result.Token
+	if len(tokenID) > 8 {
+		tokenID = tokenID[:8]
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "Runtime ID: %s\nDaemon ID: %s\nToken ID: %s\n", result.RuntimeID, result.DaemonID, tokenID); err != nil {
+		return err
+	}
+	return nil
 }
 
 var daemonStartCmd = &cobra.Command{
@@ -107,8 +161,10 @@ func init() {
 	pf.String("provider", "claude", "Runtime provider: claude or codex")
 	pf.String("name", "AIDO dedicated runtime", "Runtime display name")
 	pf.String("device-name", "AIDO dedicated host", "Runtime device label")
+	pf.String("output-file", "", "Write the one-time daemon token to this new file (required; mode 0600)")
 	_ = daemonProvisionOwnerCmd.MarkFlagRequired("workspace-id")
 	_ = daemonProvisionOwnerCmd.MarkFlagRequired("daemon-id")
+	_ = daemonProvisionOwnerCmd.MarkFlagRequired("output-file")
 	daemonCmd.AddCommand(daemonProvisionOwnerCmd)
 	f := daemonStartCmd.Flags()
 	f.Bool("foreground", false, "Run in the foreground instead of background")
