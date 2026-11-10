@@ -321,6 +321,7 @@ func discoveryCacheKey(providerType, executablePath string) string {
 // the everyday workhorse (Opus is reserved for advisor-style flows).
 func claudeStaticModels() []Model {
 	return []Model{
+		{ID: "claude-fable-5-2", Label: "Claude Fable 5.2", Provider: "anthropic"},
 		{ID: "claude-haiku-5-5", Label: "Claude Haiku 5.5", Provider: "anthropic"},
 		{ID: "claude-opus-5-5", Label: "Claude Opus 5.5", Provider: "anthropic"},
 		{ID: "claude-sonnet-5-5", Label: "Claude Sonnet 5.5", Provider: "anthropic"},
