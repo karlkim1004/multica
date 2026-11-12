@@ -2594,6 +2594,15 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			// Same workspace check as CreateIssue: the project FK alone does
+			// not stop an issue from pointing at another tenant's project.
+			if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
+				ID:          projectUUID,
+				WorkspaceID: prevIssue.WorkspaceID,
+			}); err != nil {
+				writeError(w, http.StatusBadRequest, "project not found in this workspace")
+				return
+			}
 			params.ProjectID = projectUUID
 		} else {
 			params.ProjectID = pgtype.UUID{Valid: false}
@@ -3027,6 +3036,21 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
 		return
+	}
+	// Validate the target project once, against the request workspace, so a
+	// batch update cannot attach issues to another tenant's project.
+	if _, ok := rawUpdates["project_id"]; ok && req.Updates.ProjectID != nil {
+		projectUUID, ok := parseUUIDOrBadRequest(w, *req.Updates.ProjectID, "project_id")
+		if !ok {
+			return
+		}
+		if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
+			ID:          projectUUID,
+			WorkspaceID: wsUUID,
+		}); err != nil {
+			writeError(w, http.StatusBadRequest, "project not found in this workspace")
+			return
+		}
 	}
 	updated := 0
 	for _, issueID := range req.IssueIDs {
