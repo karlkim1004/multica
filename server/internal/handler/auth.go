@@ -411,6 +411,14 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 // This allows cookie-authenticated browser sessions to obtain a bearer token
 // that can be handed off to the CLI via the cli_callback redirect.
 func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
+	// Machine credentials (mat_ task tokens, mcn_ cloud-node PATs, external
+	// relay PATs) authenticate as the owning human. Minting a full user JWT
+	// from them would escape the task token's workspace binding, so only
+	// human sessions may obtain a CLI token. X-Actor-Source is server-set.
+	if r.Header.Get("X-Actor-Source") != "" {
+		writeError(w, http.StatusForbidden, "machine credentials cannot issue CLI tokens")
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return

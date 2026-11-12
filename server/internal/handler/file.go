@@ -595,7 +595,7 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 	}
 
 	workspaceID := uuidToString(att.WorkspaceID)
-	if workspaceID == "" {
+	if workspaceID == "" || !taskTokenBoundTo(r, workspaceID) {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
@@ -686,6 +686,19 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// taskTokenBoundTo reports whether the request may touch workspaceID given
+// its task-token binding. Attachment download routes sit outside the
+// workspace middleware, so they must repeat its MUL-2600 binding check:
+// a mat_ token only reaches the workspace stamped into X-Workspace-ID by
+// the Auth middleware. Non-task-token callers are unaffected.
+func taskTokenBoundTo(r *http.Request, workspaceID string) bool {
+	if r.Header.Get("X-Actor-Source") != "task_token" {
+		return true
+	}
+	bound := r.Header.Get("X-Workspace-ID")
+	return bound != "" && bound == workspaceID
+}
+
 // ServeLocalUpload protects legacy /uploads/<key> URLs emitted by
 // LocalStorage. Those URLs used to bypass the attachment ACL entirely because
 // the router delegated them straight to http.ServeFile. Keep old links
@@ -708,6 +721,10 @@ func (h *Handler) ServeLocalUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := uuidToString(att.WorkspaceID)
+	if !taskTokenBoundTo(r, workspaceID) {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
 	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "attachment not found")
