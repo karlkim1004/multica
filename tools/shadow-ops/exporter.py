@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -18,13 +19,42 @@ from urllib.request import Request, urlopen
 
 
 MAX_RESPONSE_BYTES = 8_000_000
+KEYCHAIN_SERVICE = "nexai-shadow-runner"
+
+
+def read_keychain_entry(service: str = KEYCHAIN_SERVICE) -> dict[str, str]:
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-w"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        raise ValueError("macOS Keychain is unavailable") from exc
+    if result.returncode:
+        raise ValueError("shadow runner Keychain item is unavailable")
+    try:
+        entry = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("shadow runner Keychain item is invalid") from exc
+    if not isinstance(entry, dict):
+        raise ValueError("shadow runner Keychain item is invalid")
+    return entry
 
 
 def get_config(env: dict[str, str] | None = None) -> tuple[str, str, str, str]:
+    use_keychain = env is None
     env = os.environ if env is None else env
-    base_url = env.get("MULTICA_API_BASE_URL", "").rstrip("/")
+    base_url = env.get("MULTICA_API_BASE_URL", "")
     runtime_id = env.get("MULTICA_RUNTIME_ID", "")
     token = env.get("MULTICA_DAEMON_TOKEN", "")
+    if use_keychain and not (base_url and runtime_id and token):
+        keychain = read_keychain_entry()
+        base_url = base_url or keychain.get("server_url", "")
+        runtime_id = runtime_id or keychain.get("runtime_id", "")
+        token = token or keychain.get("daemon_token", "")
+    if not all(isinstance(value, str) for value in (base_url, runtime_id, token)):
+        raise ValueError("shadow runner Keychain item has invalid fields")
+    base_url = base_url.rstrip("/")
     shadow_url = env.get("SHADOW_RECEIVER_URL", "http://127.0.0.1:8765").rstrip("/")
     if not base_url or not runtime_id or not token:
         raise ValueError("MULTICA_API_BASE_URL, MULTICA_RUNTIME_ID, and MULTICA_DAEMON_TOKEN are required")

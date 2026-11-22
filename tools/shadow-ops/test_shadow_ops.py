@@ -1,4 +1,6 @@
 import json
+import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -6,7 +8,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from unittest.mock import patch
 
+import exporter
 from shadow_ops import ShadowStore, create_server, loopback_host, read_rows
 from exporter import export_once, get_config, queued_only
 
@@ -42,6 +46,13 @@ class ShadowOpsTest(unittest.TestCase):
                                     "expected_sha256": self.store.report()["rows"][0]["expected_sha256"],
                                     "actual_sha256": self.store.report()["rows"][0]["actual_sha256"]}]},
                          self.store.report())
+        self.assertEqual("shadow.sqlite3", self.store.database.name)
+        self.assertEqual(0o700, self.root.stat().st_mode & 0o777)
+        self.assertEqual(0o600, self.store.database.stat().st_mode & 0o777)
+        with sqlite3.connect(self.store.database) as db:
+            tables = {row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertTrue({"inputs", "results", "baselines"}.issubset(tables))
 
     def test_missing_input_duplicate_and_unmirrored_result_are_rejected(self):
         with self.assertRaises(ValueError):
@@ -76,6 +87,17 @@ class ShadowOpsTest(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 get_config(bad)
+
+    def test_exporter_reads_credentials_from_keychain_without_logging_them(self):
+        entry = {"server_url": "http://127.0.0.1:8081", "runtime_id": "runtime-id",
+                 "workspace_id": "workspace-id", "daemon_token": "secret-value"}
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(exporter, "read_keychain_entry", return_value=entry):
+            config = exporter.get_config()
+        self.assertEqual("http://127.0.0.1:8081", config[0])
+        self.assertEqual("runtime-id", config[1])
+        self.assertEqual("secret-value", config[2])
+        self.assertEqual("http://127.0.0.1:8765", config[3])
 
     def test_exporter_gets_snapshot_and_posts_queued_rows_only(self):
         source_state = {"methods": [], "authorization": None}
@@ -185,7 +207,7 @@ class ShadowOpsTest(unittest.TestCase):
                     result[key] for key in ("compared", "matches", "differences", "pending")
                 ))
                 self.assertEqual(["diff", "match"], [row["state"] for row in result["rows"]])
-                self.assertEqual(2, len(read_rows(self.store.baselines)))
+                self.assertEqual(2, len(read_rows(self.store.baselines, "baselines")))
             finally:
                 server.shutdown()
                 thread.join()

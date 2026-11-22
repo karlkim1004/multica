@@ -2,7 +2,7 @@
 """Offline shadow-run input mirror, result sink, and comparison dashboard.
 
 This service deliberately has no upstream API client and no claim/complete route.
-Inputs must be exported by a read-only source-side process and imported as JSONL.
+Inputs must be exported by a read-only source-side process into the isolated SQLite sink.
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import os
+import sqlite3
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,32 +20,40 @@ from pathlib import Path
 from typing import Any
 
 
-def read_rows(path: Path) -> list[dict[str, Any]]:
+def read_rows(path: Path, table: str = "inputs") -> list[dict[str, Any]]:
+    if table not in ("inputs", "results", "baselines"):
+        raise ValueError("unknown shadow table")
     if not path.exists():
         return []
-    rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            item = json.loads(line)
-            if not isinstance(item, dict):
-                raise ValueError("each JSONL row must be an object")
-            rows.append(item)
-    return rows
-
-
-def append_row(path: Path, row: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as out:
-        out.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
+    with sqlite3.connect(path) as db:
+        exists = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if not exists:
+            return []
+        return [json.loads(row[0]) for row in db.execute(
+            f"SELECT payload FROM {table} ORDER BY task_id"
+        )]
 
 
 class ShadowStore:
     def __init__(self, root: Path):
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(root, 0o700)
         self.root = root
-        self.inputs = root / "inputs.jsonl"
-        self.results = root / "results.jsonl"
-        self.baselines = root / "baselines.jsonl"
+        self.database = root / "shadow.sqlite3"
+        self.inputs = self.database
+        self.results = self.database
+        self.baselines = self.database
         self.lock = threading.Lock()
+        with sqlite3.connect(self.database) as db:
+            db.execute("PRAGMA journal_mode=DELETE")
+            for table in ("inputs", "results", "baselines"):
+                db.execute(f"CREATE TABLE IF NOT EXISTS {table} (task_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+        os.chmod(self.database, 0o600)
+
+    def _rows(self, table: str) -> list[dict[str, Any]]:
+        return read_rows(self.database, table)
 
     def mirror_input(self, item: dict[str, Any]) -> dict[str, Any]:
         task_id = item.get("task_id")
@@ -54,11 +64,11 @@ class ShadowStore:
         clone["shadow"] = True
         clone["claim_allowed"] = False
         with self.lock:
-            existing = {r["task_id"]: r for r in read_rows(self.inputs)}
-            if task_id in existing:
-                return existing[task_id]
-            append_row(self.inputs, clone)
-        return clone
+            with sqlite3.connect(self.database) as db:
+                db.execute("INSERT OR IGNORE INTO inputs(task_id,payload) VALUES (?,?)",
+                           (task_id, json.dumps(clone, sort_keys=True, separators=(",", ":"))))
+                row = db.execute("SELECT payload FROM inputs WHERE task_id=?", (task_id,)).fetchone()
+        return json.loads(row[0])
 
     def discard_result(self, item: dict[str, Any]) -> dict[str, Any]:
         task_id = item.get("task_id")
@@ -66,16 +76,16 @@ class ShadowStore:
             raise ValueError("task_id is required")
         # A result is only accepted for a mirrored input and is written solely here.
         with self.lock:
-            allowed = {r["task_id"] for r in read_rows(self.inputs)}
-            if task_id not in allowed:
-                raise ValueError("result has no mirrored input")
-            existing = {r["task_id"] for r in read_rows(self.results)}
-            if task_id in existing:
-                raise ValueError("result already recorded")
             result = {"task_id": task_id, "status": str(item.get("status", "unknown")),
                       "output": item.get("output"), "shadow": True,
                       "sink": "local_only"}
-            append_row(self.results, result)
+            with sqlite3.connect(self.database) as db:
+                if not db.execute("SELECT 1 FROM inputs WHERE task_id=?", (task_id,)).fetchone():
+                    raise ValueError("result has no mirrored input")
+                if db.execute("SELECT 1 FROM results WHERE task_id=?", (task_id,)).fetchone():
+                    raise ValueError("result already recorded")
+                db.execute("INSERT INTO results(task_id,payload) VALUES (?,?)",
+                           (task_id, json.dumps(result, sort_keys=True, separators=(",", ":"))))
         return result
 
     def record_baseline(self, item: dict[str, Any]) -> None:
@@ -84,21 +94,23 @@ class ShadowStore:
             raise ValueError("baseline requires task_id and output")
         row = {"task_id": task_id, "output": item["output"]}
         with self.lock:
-            inputs = {r["task_id"] for r in read_rows(self.inputs)}
+            inputs = {r["task_id"] for r in self._rows("inputs")}
             if task_id not in inputs:
                 raise ValueError("baseline has no mirrored input")
-            existing = {r["task_id"]: r for r in read_rows(self.baselines)}
+            existing = {r["task_id"]: r for r in self._rows("baselines")}
             if task_id in existing:
                 if digest(existing[task_id]["output"]) != digest(row["output"]):
                     raise ValueError("baseline already recorded with different output")
                 return
-            append_row(self.baselines, row)
+            with sqlite3.connect(self.database) as db:
+                db.execute("INSERT INTO baselines(task_id,payload) VALUES (?,?)",
+                           (task_id, json.dumps(row, sort_keys=True, separators=(",", ":"))))
 
     def report(self) -> dict[str, Any]:
         with self.lock:
-            inputs = {r["task_id"]: r for r in read_rows(self.inputs)}
-            results = {r["task_id"]: r for r in read_rows(self.results)}
-            baselines = {r["task_id"]: r for r in read_rows(self.baselines)}
+            inputs = {r["task_id"]: r for r in self._rows("inputs")}
+            results = {r["task_id"]: r for r in self._rows("results")}
+            baselines = {r["task_id"]: r for r in self._rows("baselines")}
         rows = []
         for task_id in sorted(inputs.keys() | results.keys()):
             source = inputs.get(task_id, {})
@@ -214,7 +226,8 @@ def create_server(host: str, port: int, store: ShadowStore) -> ThreadingHTTPServ
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-dir", type=Path, default=Path("./shadow-data"))
+    parser.add_argument("--data-dir", type=Path,
+                        default=Path.home() / "nexai/state/shadow-sink")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
