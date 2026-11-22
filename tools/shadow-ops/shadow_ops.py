@@ -42,6 +42,7 @@ class ShadowStore:
         self.root = root
         self.inputs = root / "inputs.jsonl"
         self.results = root / "results.jsonl"
+        self.baselines = root / "baselines.jsonl"
         self.lock = threading.Lock()
 
     def mirror_input(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -77,27 +78,53 @@ class ShadowStore:
             append_row(self.results, result)
         return result
 
+    def record_baseline(self, item: dict[str, Any]) -> None:
+        task_id = item.get("task_id")
+        if not isinstance(task_id, str) or not task_id or "output" not in item:
+            raise ValueError("baseline requires task_id and output")
+        row = {"task_id": task_id, "output": item["output"]}
+        with self.lock:
+            inputs = {r["task_id"] for r in read_rows(self.inputs)}
+            if task_id not in inputs:
+                raise ValueError("baseline has no mirrored input")
+            existing = {r["task_id"]: r for r in read_rows(self.baselines)}
+            if task_id in existing:
+                if digest(existing[task_id]["output"]) != digest(row["output"]):
+                    raise ValueError("baseline already recorded with different output")
+                return
+            append_row(self.baselines, row)
+
     def report(self) -> dict[str, Any]:
-        inputs = {r["task_id"]: r for r in read_rows(self.inputs)}
-        results = {r["task_id"]: r for r in read_rows(self.results)}
+        with self.lock:
+            inputs = {r["task_id"]: r for r in read_rows(self.inputs)}
+            results = {r["task_id"]: r for r in read_rows(self.results)}
+            baselines = {r["task_id"]: r for r in read_rows(self.baselines)}
         rows = []
         for task_id in sorted(inputs.keys() | results.keys()):
             source = inputs.get(task_id, {})
             result = results.get(task_id, {})
-            expected = source.get("expected_output")
-            actual = result.get("output")
-            rows.append({"task_id": task_id,
-                         "state": "missing_input" if task_id not in inputs else
-                                  "awaiting_result" if task_id not in results else
-                                  "match" if expected == actual else "diff",
+            if task_id in baselines:
+                expected_hash = digest(baselines[task_id]["output"])
+            else:
+                expected_hash = digest(source["expected_output"]) if "expected_output" in source else None
+            actual_hash = digest(result["output"]) if "output" in result else None
+            if task_id not in inputs:
+                state = "missing_input"
+            elif task_id not in results:
+                state = "awaiting_result"
+            elif expected_hash is None:
+                state = "awaiting_baseline"
+            else:
+                state = "match" if expected_hash == actual_hash else "diff"
+            rows.append({"task_id": task_id, "state": state,
                          "status": result.get("status"),
-                         "expected_sha256": digest(expected) if expected is not None else None,
-                         "actual_sha256": digest(actual) if actual is not None else None})
+                         "expected_sha256": expected_hash,
+                         "actual_sha256": actual_hash})
         compared = sum(r["state"] in ("match", "diff") for r in rows)
         return {"source_inputs": len(inputs), "shadow_results": len(results),
                 "compared": compared, "matches": sum(r["state"] == "match" for r in rows),
                 "differences": sum(r["state"] == "diff" for r in rows),
-                "pending": sum(r["state"] == "awaiting_result" for r in rows),
+                "pending": sum(r["state"] in ("awaiting_result", "awaiting_baseline") for r in rows),
                 "rows": rows}
 
 
@@ -148,7 +175,7 @@ def handler_for(store: ShadowStore):
                 self._json(404, {"error": "not found"})
 
         def do_POST(self):
-            if self.path not in ("/shadow/input", "/shadow/result"):
+            if self.path not in ("/shadow/input", "/shadow/result", "/shadow/baseline"):
                 self._json(404, {"error": "not found; upstream claim/write routes are absent"})
                 return
             try:
@@ -158,7 +185,13 @@ def handler_for(store: ShadowStore):
                 item = json.loads(self.rfile.read(length))
                 if not isinstance(item, dict):
                     raise ValueError("body must be a JSON object")
-                value = store.mirror_input(item) if self.path == "/shadow/input" else store.discard_result(item)
+                if self.path == "/shadow/input":
+                    value = store.mirror_input(item)
+                elif self.path == "/shadow/result":
+                    value = store.discard_result(item)
+                else:
+                    store.record_baseline(item)
+                    value = {"task_id": item["task_id"]}
                 self._json(202, value)
             except (ValueError, json.JSONDecodeError) as exc:
                 self._json(400, {"error": str(exc)})

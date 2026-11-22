@@ -147,6 +147,49 @@ class ShadowOpsTest(unittest.TestCase):
             thread.join()
             server.server_close()
 
+    def test_compares_independently_arriving_baseline_and_shadow_results(self):
+        with create_server("127.0.0.1", 0, self.store) as server:
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_port}"
+
+            def post(path, task_id, **fields):
+                request = Request(base + path, data=json.dumps({"task_id": task_id, **fields}).encode())
+                with urlopen(request, timeout=5) as response:
+                    self.assertEqual(202, response.status)
+
+            def report():
+                with urlopen(base + "/api/report", timeout=5) as response:
+                    return json.load(response)
+
+            try:
+                with self.assertRaises(HTTPError) as err:
+                    post("/shadow/baseline", "unknown", output=None)
+                self.assertEqual(400, err.exception.code)
+
+                post("/shadow/input", "same")
+                post("/shadow/result", "same", output=None)
+                self.assertEqual("awaiting_baseline", report()["rows"][0]["state"])
+                self.assertEqual(0, report()["compared"])
+                post("/shadow/baseline", "same", output=None)
+                post("/shadow/baseline", "same", output=None)
+                with self.assertRaises(HTTPError) as err:
+                    post("/shadow/baseline", "same", output="changed")
+                self.assertEqual(400, err.exception.code)
+
+                post("/shadow/input", "different")
+                post("/shadow/baseline", "different", output=True)
+                post("/shadow/result", "different", output=1)
+                result = report()
+                self.assertEqual((2, 1, 1, 0), tuple(
+                    result[key] for key in ("compared", "matches", "differences", "pending")
+                ))
+                self.assertEqual(["diff", "match"], [row["state"] for row in result["rows"]])
+                self.assertEqual(2, len(read_rows(self.store.baselines)))
+            finally:
+                server.shutdown()
+                thread.join()
+
     def test_ipv6_loopback_server_binds_and_serves(self):
         server = create_server("::1", 0, self.store)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

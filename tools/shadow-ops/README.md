@@ -13,9 +13,13 @@ The receiver only accepts loopback IP bind addresses (`127.0.0.1` or `::1`);
 non-loopback binds are rejected because its HTTP endpoints do not authenticate.
 Open `http://127.0.0.1:8765`. Send shadow outputs to `/shadow/result`. Inputs
 and results are persisted as separate JSONL files in the chosen data directory;
-results are never forwarded to the source service. `/api/report` compares
-`expected_output` from each input with the matching shadow output and presents
-per-task match/diff/pending state and hashes.
+results are never forwarded to the source service. A separate read-only results
+export can submit the source output to the receiver's `POST /shadow/baseline`
+as `{"task_id":"task-1","output":null}` after the input has been mirrored. Use the
+same task ID for both outputs. The receiver accepts identical baseline retries
+and rejects conflicting replacements. `/api/report` compares canonical JSON
+hashes, uses an inline `expected_output` when no separate baseline exists, and
+keeps tasks pending until both outputs exist. An explicit JSON null is an output.
 
 Run a one-shot mirror after starting the receiver:
 
