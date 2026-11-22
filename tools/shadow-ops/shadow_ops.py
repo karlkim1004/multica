@@ -53,9 +53,9 @@ class ShadowStore:
         clone["shadow"] = True
         clone["claim_allowed"] = False
         with self.lock:
-            existing = {r["task_id"] for r in read_rows(self.inputs)}
+            existing = {r["task_id"]: r for r in read_rows(self.inputs)}
             if task_id in existing:
-                raise ValueError("task_id already mirrored")
+                return existing[task_id]
             append_row(self.inputs, clone)
         return clone
 

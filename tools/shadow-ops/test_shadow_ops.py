@@ -2,11 +2,13 @@ import json
 import tempfile
 import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from shadow_ops import ShadowStore, create_server, loopback_host
+from shadow_ops import ShadowStore, create_server, loopback_host, read_rows
+from exporter import export_once, get_config, queued_only
 
 
 class ShadowOpsTest(unittest.TestCase):
@@ -45,10 +47,83 @@ class ShadowOpsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.mirror_input({"prompt": "missing id"})
         self.store.mirror_input({"task_id": "one"})
-        with self.assertRaises(ValueError):
-            self.store.mirror_input({"task_id": "one"})
+        self.assertEqual(self.store.mirror_input({"task_id": "one"})["task_id"], "one")
         with self.assertRaises(ValueError):
             self.store.discard_result({"task_id": "two"})
+
+    def test_exporter_only_selects_unrestricted_queued_tasks(self):
+        tasks = [
+            {"id": "queued", "status": "queued", "execution_policy": "unrestricted"},
+            {"id": "dispatched", "status": "dispatched", "execution_policy": "unrestricted"},
+            {"id": "restricted", "status": "queued", "execution_policy": "restricted"},
+        ]
+        selected = queued_only(tasks)
+        self.assertEqual(["queued"], [row["task_id"] for row in selected])
+        self.assertEqual("queued", selected[0]["source_status"])
+        self.assertEqual("pending", selected[0]["shadow_worker"])
+
+    def test_exporter_requires_https_source_and_loopback_receiver(self):
+        config = get_config({
+            "MULTICA_API_BASE_URL": "https://multica.example",
+            "MULTICA_RUNTIME_ID": "runtime-id",
+            "MULTICA_DAEMON_TOKEN": "secret",
+            "SHADOW_RECEIVER_URL": "http://[::1]:8765",
+        })
+        self.assertEqual("secret", config[2])
+        for bad in (
+            {"MULTICA_API_BASE_URL": "http://multica.example", "MULTICA_RUNTIME_ID": "r", "MULTICA_DAEMON_TOKEN": "t"},
+            {"MULTICA_API_BASE_URL": "https://multica.example", "MULTICA_RUNTIME_ID": "r", "MULTICA_DAEMON_TOKEN": "t", "SHADOW_RECEIVER_URL": "http://0.0.0.0:8765"},
+        ):
+            with self.assertRaises(ValueError):
+                get_config(bad)
+
+    def test_exporter_gets_snapshot_and_posts_queued_rows_only(self):
+        source_state = {"methods": [], "authorization": None}
+
+        class SourceHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                source_state["methods"].append("GET")
+                source_state["authorization"] = self.headers.get("Authorization")
+                body = json.dumps([
+                    {"id": "queued-task", "status": "queued", "execution_policy": "unrestricted"},
+                    {"id": "owned-task", "status": "dispatched", "execution_policy": "unrestricted"},
+                ]).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                source_state["methods"].append("POST")
+                self.send_response(500)
+                self.end_headers()
+
+            def log_message(self, *_args):
+                pass
+
+        source = ThreadingHTTPServer(("127.0.0.1", 0), SourceHandler)
+        source_thread = threading.Thread(target=source.serve_forever, daemon=True)
+        source_thread.start()
+        receiver = create_server("127.0.0.1", 0, self.store)
+        receiver_thread = threading.Thread(target=receiver.serve_forever, daemon=True)
+        receiver_thread.start()
+        try:
+            counts = export_once(
+                f"http://127.0.0.1:{source.server_port}", "runtime", "test-secret",
+                f"http://127.0.0.1:{receiver.server_port}",
+            )
+            self.assertEqual({"snapshot_rows": 2, "queued_candidates": 1,
+                              "posted_or_already_mirrored": 1}, counts)
+            self.assertEqual(["GET"], source_state["methods"])
+            self.assertEqual("Bearer test-secret", source_state["authorization"])
+            self.assertEqual(["queued-task"], [r["task_id"] for r in read_rows(self.store.inputs)])
+        finally:
+            receiver.shutdown()
+            receiver_thread.join()
+            receiver.server_close()
+            source.shutdown()
+            source_thread.join()
+            source.server_close()
 
     def test_http_exposes_only_shadow_routes_and_dashboard(self):
         server = create_server("127.0.0.1", 0, self.store)

@@ -1,9 +1,12 @@
 # Shadow operations
 
-Offline shadow-run receiver and comparison dashboard. It has no upstream URL,
-credentials, daemon runtime identity, or route for claiming/completing source tasks.
-The source-side exporter must use a read-only queue snapshot API and POST each
-task payload to `/shadow/input`; do not export by calling the daemon claim API.
+Offline shadow-run receiver and comparison dashboard. The receiver has no
+upstream URL, credentials, daemon runtime identity, or route for
+claiming/completing source tasks. `exporter.py` polls the authenticated,
+read-only pending endpoint using GET, copies only `queued` unrestricted rows,
+and ignores `dispatched` rows because those are already owned. It never invokes
+claim, start, complete, or other source write routes. Repeated polls are
+idempotent by task ID.
 
 Run with `python3 tools/shadow-ops/shadow_ops.py --data-dir /path/to/shadow-data`.
 The receiver only accepts loopback IP bind addresses (`127.0.0.1` or `::1`);
@@ -14,6 +17,17 @@ results are never forwarded to the source service. `/api/report` compares
 `expected_output` from each input with the matching shadow output and presents
 per-task match/diff/pending state and hashes.
 
-The source read-only exporter and production-like runtime have not been wired in
-this issue. Until they are, this tool proves sink isolation and the comparison
-path locally, not that production task payloads are being mirrored.
+Run a one-shot mirror after starting the receiver:
+
+```sh
+MULTICA_API_BASE_URL=https://multica.example \
+MULTICA_RUNTIME_ID=<runtime-id> \
+MULTICA_DAEMON_TOKEN=<daemon-token> \
+python3 tools/shadow-ops/exporter.py --interval 0
+```
+
+For continuous snapshots use `--interval 30` (seconds). Credentials are read
+from the environment and are never printed. The exporter is read-only against
+the source; it sends records only to the loopback receiver. The current worker
+boundary is the local input/result sink: task execution still must be provided
+by an isolated shadow runtime before operational comparisons can be claimed.
