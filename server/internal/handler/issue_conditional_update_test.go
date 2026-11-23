@@ -10,7 +10,7 @@ import (
 )
 
 func TestUpdateIssueConditionalRace(t *testing.T) {
-	issueID := createMetadataTestIssue(t, "conditional issue update")
+	issueID := createMetadataTestIssue(t, "conditional issue update "+time.Now().Format(time.RFC3339Nano))
 	update := func(body map[string]any) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		r := withURLParam(newRequest(http.MethodPut, "/api/issues/"+issueID+"/conditional-update", body), "id", issueID)
@@ -116,6 +116,9 @@ func TestUpdateIssueConditionalRace(t *testing.T) {
 		if _, exists := final.Metadata[key]; exists {
 			t.Errorf("losing metadata leaked: %s", key)
 		}
+	}
+	if _, hasWarning := final.Metadata[waitingMetadataWarningKey]; hasWarning != (winner == 1) {
+		t.Errorf("unexpected waiting metadata warning for winner %d: %v", winner, final.Metadata)
 	}
 	if winner == 0 && (final.AssigneeID == nil || *final.AssigneeID != testUserID) ||
 		winner == 1 && final.AssigneeID != nil {
