@@ -1241,15 +1241,35 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 	)
 }
 
-// StartTask transitions a dispatched task to running.
-// Issue status is NOT changed here — the agent manages it via the CLI.
+// StartTask transitions a dispatched task to running. Starting assigned work
+// on a todo autopilot issue also starts the issue, for both assignment and
+// comment-triggered tasks.
 func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
-	task, err := s.Queries.StartAgentTask(ctx, db.StartAgentTaskParams{
-		ID:               taskID,
-		RunningLeaseSecs: runningLeaseDuration.Seconds(),
+	var task db.AgentTaskQueue
+	var startedIssue db.Issue
+	err := s.runInTx(ctx, func(q *db.Queries) error {
+		var err error
+		task, err = q.StartAgentTask(ctx, db.StartAgentTaskParams{
+			ID:               taskID,
+			RunningLeaseSecs: runningLeaseDuration.Seconds(),
+		})
+		if err != nil || !task.IssueID.Valid {
+			return err
+		}
+		startedIssue, err = q.StartAssignedAutopilotIssue(ctx, db.StartAssignedAutopilotIssueParams{
+			IssueID: task.IssueID,
+			AgentID: task.AgentID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start task: %w", err)
+	}
+	if startedIssue.ID.Valid && s.Bus != nil {
+		s.broadcastIssueUpdated(startedIssue)
 	}
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
