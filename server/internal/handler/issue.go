@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -2328,6 +2329,9 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateIssueRequest struct {
+	ExpectedUpdatedAt *time.Time                 `json:"expected_updated_at"`
+	MetadataPatch     map[string]json.RawMessage `json:"metadata_patch"` // null values delete keys
+
 	Title                      *string  `json:"title"`
 	Description                *string  `json:"description"`
 	Status                     *string  `json:"status"`
@@ -2364,6 +2368,14 @@ type UpdateIssueRequest struct {
 }
 
 func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
+	h.updateIssue(w, r, false)
+}
+
+func (h *Handler) UpdateIssueConditional(w http.ResponseWriter, r *http.Request) {
+	h.updateIssue(w, r, true)
+}
+
+func (h *Handler) updateIssue(w http.ResponseWriter, r *http.Request, requireVersion bool) {
 	id := chi.URLParam(r, "id")
 	prevIssue, ok := h.loadIssueForUser(w, r, id)
 	if !ok {
@@ -2438,6 +2450,44 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		CurrentRef:               prevIssue.CurrentRef,
 		AutoCloseCriteriaVersion: prevIssue.AutoCloseCriteriaVersion,
 	}
+	if req.ExpectedUpdatedAt != nil {
+		if !req.ExpectedUpdatedAt.Equal(prevIssue.UpdatedAt.Time) {
+			writeError(w, http.StatusConflict, "issue updated_at conflict")
+			return
+		}
+		params.ExpectedUpdatedAt = pgtype.Timestamptz{Time: *req.ExpectedUpdatedAt, Valid: true}
+	} else if requireVersion || len(req.MetadataPatch) > 0 {
+		writeError(w, http.StatusBadRequest, "expected_updated_at is required")
+		return
+	}
+
+	existingWaitingMeta := parseIssueMetadata(prevIssue.Metadata)
+	originalMetadataKeys := len(existingWaitingMeta)
+	metadataSet := make(map[string]json.RawMessage, len(req.MetadataPatch))
+	for key, value := range req.MetadataPatch {
+		if err := validateIssueMetadataKey(key); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if string(value) == "null" {
+			delete(existingWaitingMeta, key)
+			params.MetadataDelete = append(params.MetadataDelete, key)
+			continue
+		}
+		if err := validateIssueMetadataValue(value); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var decoded any
+		_ = json.Unmarshal(value, &decoded)
+		existingWaitingMeta[key] = decoded
+		metadataSet[key] = value
+	}
+	if len(existingWaitingMeta) > maxIssueMetadataKeys && len(existingWaitingMeta) > originalMetadataKeys {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("metadata cannot exceed %d keys", maxIssueMetadataKeys))
+		return
+	}
+
 	if req.AutoCloseAllowed != nil {
 		params.AutoCloseAllowed = pgtype.Bool{Bool: *req.AutoCloseAllowed, Valid: true}
 	}
@@ -2488,7 +2538,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		if !validateIssueEnum(w, "status", *req.Status, validIssueStatuses) {
 			return
 		}
-		existingWaitingMeta := parseIssueMetadata(prevIssue.Metadata)
 		if missing := missingWaitingMetadataKeys(*req.Status, existingWaitingMeta); len(missing) > 0 {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf(
 				"cannot transition to %q: missing required metadata key(s) %s (set via `issue metadata set`, e.g. waiting_on=ceo|agent:<id>|external|event, unblock_condition=<one observable sentence>, waiting_since=<RFC3339>)",
@@ -2648,30 +2697,36 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if waitingWarningNote != "" {
+		metadataSet[waitingMetadataWarningKey], _ = json.Marshal(waitingWarningNote)
+	} else if clearWaitingWarning {
+		delete(metadataSet, waitingMetadataWarningKey)
+		params.MetadataDelete = append(params.MetadataDelete, waitingMetadataWarningKey)
+	}
+	if len(metadataSet) > 0 {
+		params.MetadataSet, _ = json.Marshal(metadataSet)
+	}
+
 	issue, err := h.Queries.UpdateIssue(r.Context(), params)
+	if !params.ExpectedUpdatedAt.Valid && waitingWarningNote != "" && isCheckViolation(err) {
+		// Legacy in_review transitions are warn-only even when the warning
+		// cannot fit in the issue's metadata. The first write was rolled back.
+		slog.Warn("failed to record waiting-metadata warning", append(logger.RequestAttrs(r), "error", err, "issue_id", id)...)
+		params.MetadataSet = nil
+		issue, err = h.Queries.UpdateIssue(r.Context(), params)
+	}
 	if err != nil {
+		if params.ExpectedUpdatedAt.Valid && errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "issue updated_at conflict")
+			return
+		}
+		if len(req.MetadataPatch) > 0 && isCheckViolation(err) {
+			writeError(w, http.StatusBadRequest, "metadata exceeds the 8KB size limit")
+			return
+		}
 		slog.Warn("update issue failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to update issue: "+err.Error())
 		return
-	}
-
-	if waitingWarningNote != "" {
-		noteJSON, _ := json.Marshal(waitingWarningNote)
-		if updated, werr := h.Queries.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
-			ID: issue.ID, WorkspaceID: issue.WorkspaceID, Key: waitingMetadataWarningKey, Value: noteJSON,
-		}); werr != nil {
-			slog.Warn("failed to record waiting-metadata warning", append(logger.RequestAttrs(r), "error", werr, "issue_id", id)...)
-		} else {
-			issue = updated
-		}
-	} else if clearWaitingWarning {
-		if updated, werr := h.Queries.DeleteIssueMetadataKey(r.Context(), db.DeleteIssueMetadataKeyParams{
-			ID: issue.ID, WorkspaceID: issue.WorkspaceID, Key: waitingMetadataWarningKey,
-		}); werr != nil {
-			slog.Warn("failed to clear waiting-metadata warning", append(logger.RequestAttrs(r), "error", werr, "issue_id", id)...)
-		} else {
-			issue = updated
-		}
 	}
 
 	if len(attachmentIDs) > 0 {

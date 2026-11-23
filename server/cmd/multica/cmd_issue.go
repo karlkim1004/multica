@@ -365,6 +365,8 @@ func init() {
 	issueUpdateCmd.Flags().Bool("description-stdin", false, "Read new description from stdin (preserves multi-line content verbatim)")
 	issueUpdateCmd.Flags().String("description-file", "", "Read new description from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes)")
 	issueUpdateCmd.Flags().String("status", "", "New status")
+	issueUpdateCmd.Flags().String("expected-updated-at", "", "Only update if the issue has this RFC3339 updated_at value")
+	issueUpdateCmd.Flags().String("metadata-patch", "", "JSON object of metadata changes (null deletes a key); requires --expected-updated-at")
 	issueUpdateCmd.Flags().String("priority", "", "New priority")
 	issueUpdateCmd.Flags().String("assignee", "", "New assignee name (member, agent, or squad; fuzzy match)")
 	issueUpdateCmd.Flags().String("assignee-id", "", "New assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
@@ -1201,12 +1203,39 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		body["stage"] = stage
 	}
 
+	expected, _ := cmd.Flags().GetString("expected-updated-at")
+	if cmd.Flags().Changed("metadata-patch") {
+		if expected == "" {
+			return fmt.Errorf("--metadata-patch requires --expected-updated-at")
+		}
+		raw, _ := cmd.Flags().GetString("metadata-patch")
+		var patch map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(raw), &patch); err != nil || len(patch) == 0 {
+			return fmt.Errorf("--metadata-patch must be a nonempty JSON object")
+		}
+		body["metadata_patch"] = patch
+	}
+
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, etc.")
 	}
 
+	path := "/api/issues/" + issueRef.ID
+	if cmd.Flags().Changed("expected-updated-at") {
+		if _, err := time.Parse(time.RFC3339Nano, expected); err != nil {
+			return fmt.Errorf("--expected-updated-at must be RFC3339")
+		}
+		body["expected_updated_at"] = expected
+		// A legacy server would ignore the new fields on the ordinary PUT.
+		path += "/conditional-update"
+	}
+
 	var result map[string]any
-	if err := client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result); err != nil {
+	if err := client.PutJSON(ctx, path, body, &result); err != nil {
+		var httpErr *cli.HTTPError
+		if expected != "" && errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
+			return cli.WithUserMessage("ISSUE_VERSION_CONFLICT: issue changed; read its current version before retrying", err)
+		}
 		return fmt.Errorf("update issue: %w", err)
 	}
 
