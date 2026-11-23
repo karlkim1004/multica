@@ -347,7 +347,7 @@ func TestTextUUIDPhoneRedaction(t *testing.T) {
 		{"adjacent phone", uuid + " 010-5555-0123", uuid + " *******0123"},
 		{"uppercase UUID", "이벤트 C21586FA-DB6A-407E-8B9A-AB0101234567 완료", "이벤트 C21586FA-DB6A-407E-8B9A-AB0101234567 완료"},
 		{"invalid UUID", "z21586fa-db6a-407e-8b9a-ab0101234567", "z21586fa-db6a-407e-8b9a-ab******4567"},
-		{"UUID as password", "password: " + uuid, "password: ***"},
+		{"UUID as password", "password: " + uuid, "[REDACTED CREDENTIAL]"},
 		{"UUID as bearer token", "Bearer " + uuid, "Bearer [REDACTED]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
