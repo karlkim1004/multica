@@ -9,7 +9,7 @@ import (
 )
 
 func TestIssueResponseUpdatedAtPreservesSameSecondVersions(t *testing.T) {
-	before := time.Date(2026, time.November, 24, 0, 0, 0, 123456000, time.UTC)
+	before := time.Date(2026, time.November, 24, 0, 0, 0, 123450000, time.UTC)
 	after := before.Add(500*time.Millisecond + time.Microsecond)
 	timestamp := func(value time.Time) pgtype.Timestamptz {
 		return pgtype.Timestamptz{Time: value, Valid: true}
@@ -27,11 +27,22 @@ func TestIssueResponseUpdatedAtPreservesSameSecondVersions(t *testing.T) {
 	}
 	for name, serialize := range serializers {
 		t.Run(name, func(t *testing.T) {
-			for _, value := range []time.Time{before, after, before.Truncate(time.Second)} {
-				response := serialize(timestamp(value))
+			for _, version := range []struct {
+				value time.Time
+				want  string
+			}{
+				{before, "2026-11-24T00:00:00.123450Z"},
+				{after, "2026-11-24T00:00:00.623451Z"},
+				{before.Truncate(time.Second), "2026-11-24T00:00:00.000000Z"},
+				{before.In(time.FixedZone("KST", 9*60*60)), "2026-11-24T09:00:00.123450+09:00"},
+			} {
+				response := serialize(timestamp(version.value))
+				if response.UpdatedAt != version.want {
+					t.Errorf("updated_at = %q, want %q", response.UpdatedAt, version.want)
+				}
 				parsed, err := time.Parse(time.RFC3339, response.UpdatedAt)
-				if err != nil || !parsed.Equal(value) {
-					t.Fatalf("updated_at = %q, want %s (parse error: %v)", response.UpdatedAt, value.Format(time.RFC3339Nano), err)
+				if err != nil || !parsed.Equal(version.value) {
+					t.Fatalf("updated_at = %q, want %s (parse error: %v)", response.UpdatedAt, version.value, err)
 				}
 				if response.CreatedAt != before.Format(time.RFC3339) {
 					t.Fatalf("created_at = %q, want %s", response.CreatedAt, before.Format(time.RFC3339))

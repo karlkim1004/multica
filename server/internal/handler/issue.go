@@ -89,12 +89,12 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 	return false
 }
 
-// Preserve the stored precision for clients that compare issue versions.
+// Use fixed-width microseconds for version comparisons and RFC3339 clients.
 func issueUpdatedAtToString(t pgtype.Timestamptz) string {
 	if !t.Valid {
 		return ""
 	}
-	return t.Time.Format(time.RFC3339Nano)
+	return t.Time.Format("2006-01-02T15:04:05.000000Z07:00")
 }
 
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
