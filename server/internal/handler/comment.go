@@ -1640,6 +1640,8 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Content = rewriteHumanMentions(req.Content, actorType == "agent", routeUUID, routeLabel, routeReason)
 
+	req.Content = redact.Text(req.Content)
+
 	// NOTE: See CreateComment — Markdown is sanitized at render/edit time, not here.
 
 	oldContent := existing.Content
