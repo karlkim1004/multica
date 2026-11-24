@@ -17,7 +17,11 @@ import (
 // against is not specific to any one provider or host (MUL-2904, #4182).
 func BuildPrompt(task Task, provider string) string {
 	prompt := buildPrompt(task, provider)
-	prompt += BuildSharedMemoryContext(task)
+	if status, handled := positionResultsContext(task); handled {
+		prompt += status
+	} else {
+		prompt += BuildSharedMemoryContext(task)
+	}
 	return redact.Text(prompt)
 }
 
