@@ -30,6 +30,7 @@ var cardCandidate = regexp.MustCompile(`\b(?:\d[ -]){12,18}\d\b`)
 var labeledCard = regexp.MustCompile(`(?i)((?:카드|card)(?:\s*(?:번호|number|no\.?))?\s*[:=]?\s*)((?:\d[ -]?){13,19})`)
 var residentID = regexp.MustCompile(`\b(\d{2})(\d{2})(\d{2})[- ][1-4]\d{6}\b`)
 var koreanPhone = regexp.MustCompile(`(^|[^0-9])((?:\+82[- ]?)?0?1[016789][ -]?\d{3,4}[ -]?\d{4})([^0-9]|$)`)
+var canonicalUUID = regexp.MustCompile(`(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b`)
 var labeledAccount = regexp.MustCompile(`(?i)((?:계좌|account)(?:\s*(?:번호|number|no\.?))?\s*[:=]?\s*)([0-9][0-9 -]{5,28}[0-9])`)
 var labeledPassport = regexp.MustCompile(`(?i)((?:여권|passport)(?:\s*(?:번호|number|no\.?))?\s*[:=]?\s*)([A-Z0-9][A-Z0-9 -]{5,14})`)
 var operationalID = regexp.MustCompile(`\b[A-Z]{2,}-\d{4}-[A-Z0-9]+(?:-[A-Z0-9]+)*\b`)
@@ -213,17 +214,7 @@ func Personal(s string) string {
 		}
 		return "******-*******"
 	})
-	s = koreanPhone.ReplaceAllStringFunc(s, func(value string) string {
-		parts := koreanPhone.FindStringSubmatch(value)
-		digits := digitsOnly(parts[2])
-		if containsAllowed(allow, digits) {
-			return value
-		}
-		if len(digits) < 4 {
-			return parts[1] + "***" + parts[3]
-		}
-		return parts[1] + strings.Repeat("*", len(digits)-4) + digits[len(digits)-4:] + parts[3]
-	})
+	s = maskKoreanPhones(s, allow)
 	maskCard := func(value string) string {
 		digits := digitsOnly(value)
 		if len(digits) < 13 || len(digits) > 19 || !luhn(digits) {
@@ -280,6 +271,44 @@ func Personal(s string) string {
 		s = strings.ReplaceAll(s, token, value)
 	}
 	return s
+}
+
+// Only the phone rule ignores matches contained in a UUID. Credential
+// and explicitly labeled PII rules still inspect the original UUID text.
+func maskKoreanPhones(s string, allow []string) string {
+	var uuids [][]int
+	var result strings.Builder
+	offset, written := 0, 0
+	for {
+		match := koreanPhone.FindStringSubmatchIndex(s[offset:])
+		if match == nil {
+			break
+		}
+		if offset == 0 {
+			uuids = canonicalUUID.FindAllStringIndex(s, -1)
+		}
+		start, end := offset+match[4], offset+match[5]
+		// Keep the right delimiter available as the next match's left delimiter.
+		offset = end
+		for len(uuids) > 0 && uuids[0][1] <= start {
+			uuids = uuids[1:]
+		}
+		if len(uuids) > 0 && uuids[0][0] <= start && end <= uuids[0][1] {
+			continue
+		}
+		digits := digitsOnly(s[start:end])
+		if containsAllowed(allow, digits) {
+			continue
+		}
+		result.WriteString(s[written:start])
+		result.WriteString(maskKeepLastFour(digits))
+		written = end
+	}
+	if written == 0 {
+		return s
+	}
+	result.WriteString(s[written:])
+	return result.String()
 }
 
 func loadPIIMapping() map[string]string {
