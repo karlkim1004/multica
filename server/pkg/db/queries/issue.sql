@@ -104,8 +104,12 @@ UPDATE issue SET
     current_ref = sqlc.narg('current_ref'),
     external_validation_required = COALESCE(sqlc.narg('external_validation_required'), external_validation_required),
     auto_close_criteria_version = sqlc.narg('auto_close_criteria_version'),
-    updated_at = now()
+    metadata = (metadata - COALESCE(sqlc.narg('metadata_delete')::text[], ARRAY[]::text[]))
+               || COALESCE(sqlc.narg('metadata_set')::jsonb, '{}'::jsonb),
+    updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
 WHERE id = $1
+  AND (sqlc.narg('expected_updated_at')::timestamptz IS NULL
+       OR updated_at = sqlc.narg('expected_updated_at')::timestamptz)
 RETURNING *;
 
 -- name: UnclaimTodoIssueForPoolAgent :one
