@@ -27,7 +27,7 @@ The chain is: trigger fires (`schedule`, `webhook`, or `manual`) -> `autopilot_r
 
 Execution modes:
 
-- `create_issue` creates a Multica issue, making the run visible as issue state.
+- `create_issue` creates a Multica issue in `todo`. When the current assignee or assigned squad leader starts a task, the issue moves to `in_progress` in the same transaction. This applies to assignment and comment-triggered tasks.
 - `run_only` creates an agent task directly. No issue is created; any durable
   report location has to come from other task context or instructions.
 

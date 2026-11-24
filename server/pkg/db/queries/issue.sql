@@ -131,6 +131,26 @@ UPDATE issue SET
 WHERE id = $1 AND workspace_id = $3
 RETURNING *;
 
+-- name: StartAssignedAutopilotIssue :one
+-- A comment can call an agent other than the assignee. Only the current
+-- assignee (or the current leader of the assigned squad) can start the issue.
+UPDATE issue AS i
+SET status = 'in_progress', updated_at = clock_timestamp()
+WHERE i.id = sqlc.arg('issue_id')
+  AND i.origin_type = 'autopilot'
+  AND i.status = 'todo'
+  AND (
+      (i.assignee_type = 'agent' AND i.assignee_id = sqlc.arg('agent_id'))
+      OR (i.assignee_type = 'squad' AND EXISTS (
+          SELECT 1 FROM squad AS s
+          WHERE s.id = i.assignee_id
+            AND s.workspace_id = i.workspace_id
+            AND s.leader_id = sqlc.arg('agent_id')
+            AND s.archived_at IS NULL
+      ))
+  )
+RETURNING i.*;
+
 -- name: AutoCloseIssueAfterValidation :one
 -- This is the sole automatic finalizer. Every eligibility gate lives in this
 -- conditional UPDATE: a PASS comment is evidence, never authority by itself.
