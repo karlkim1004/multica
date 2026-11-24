@@ -1371,6 +1371,70 @@ func (q *Queries) SetIssueMetadataKey(ctx context.Context, arg SetIssueMetadataK
 	return i, err
 }
 
+const startAssignedAutopilotIssue = `-- name: StartAssignedAutopilotIssue :one
+UPDATE issue AS i
+SET status = 'in_progress', updated_at = clock_timestamp()
+WHERE i.id = $1
+  AND i.origin_type = 'autopilot'
+  AND i.status = 'todo'
+  AND (
+      (i.assignee_type = 'agent' AND i.assignee_id = $2)
+      OR (i.assignee_type = 'squad' AND EXISTS (
+          SELECT 1 FROM squad AS s
+          WHERE s.id = i.assignee_id
+            AND s.workspace_id = i.workspace_id
+            AND s.leader_id = $2
+            AND s.archived_at IS NULL
+      ))
+  )
+RETURNING i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.auto_close_allowed, i.implementation_agent_id, i.current_ref, i.external_validation_required, i.auto_close_criteria_version
+`
+
+type StartAssignedAutopilotIssueParams struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID pgtype.UUID `json:"agent_id"`
+}
+
+// A comment can call an agent other than the assignee. Only the current
+// assignee (or the current leader of the assigned squad) can start the issue.
+func (q *Queries) StartAssignedAutopilotIssue(ctx context.Context, arg StartAssignedAutopilotIssueParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, startAssignedAutopilotIssue, arg.IssueID, arg.AgentID)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.AutoCloseAllowed,
+		&i.ImplementationAgentID,
+		&i.CurrentRef,
+		&i.ExternalValidationRequired,
+		&i.AutoCloseCriteriaVersion,
+	)
+	return i, err
+}
+
 const unclaimTodoIssueForPoolAgent = `-- name: UnclaimTodoIssueForPoolAgent :one
 UPDATE issue
 SET assignee_type = NULL, assignee_id = NULL, updated_at = now()

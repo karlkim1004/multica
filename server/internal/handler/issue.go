@@ -89,6 +89,14 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 	return false
 }
 
+// Use fixed-width microseconds for version comparisons and RFC3339 clients.
+func issueUpdatedAtToString(t pgtype.Timestamptz) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.Time.Format("2006-01-02T15:04:05.000000Z07:00")
+}
+
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
@@ -111,7 +119,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		StartDate:                  dateToPtr(i.StartDate),
 		DueDate:                    dateToPtr(i.DueDate),
 		CreatedAt:                  timestampToString(i.CreatedAt),
-		UpdatedAt:                  timestampToString(i.UpdatedAt),
+		UpdatedAt:                  issueUpdatedAtToString(i.UpdatedAt),
 		Metadata:                   parseIssueMetadata(i.Metadata),
 		AutoCloseAllowed:           i.AutoCloseAllowed,
 		ImplementationAgentID:      uuidToPtr(i.ImplementationAgentID),
@@ -144,7 +152,7 @@ func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueRespons
 		StartDate:                  dateToPtr(i.StartDate),
 		DueDate:                    dateToPtr(i.DueDate),
 		CreatedAt:                  timestampToString(i.CreatedAt),
-		UpdatedAt:                  timestampToString(i.UpdatedAt),
+		UpdatedAt:                  issueUpdatedAtToString(i.UpdatedAt),
 		Metadata:                   parseIssueMetadata(i.Metadata),
 		AutoCloseAllowed:           i.AutoCloseAllowed,
 		ImplementationAgentID:      uuidToPtr(i.ImplementationAgentID),
@@ -207,7 +215,7 @@ func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueRes
 		StartDate:     dateToPtr(i.StartDate),
 		DueDate:       dateToPtr(i.DueDate),
 		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
+		UpdatedAt:     issueUpdatedAtToString(i.UpdatedAt),
 		Metadata:      parseIssueMetadata(i.Metadata),
 	}
 }
