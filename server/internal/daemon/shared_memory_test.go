@@ -151,3 +151,53 @@ def bm25(docs, query, top_n): return []
 		t.Fatalf("search query was not delivered over stdin without argv exposure: %s", got)
 	}
 }
+
+func TestBoundedChatMemorySearchUsesCurrentMessage(t *testing.T) {
+	task := Task{
+		BoundedChatContext: true,
+		ThreadName:         "older chat title",
+		ChatHistory:        "Assistant: earlier topic",
+		ChatMessage:        "What did we decide yesterday?",
+	}
+	if got := sharedMemoryQuery(task); got != task.ChatMessage {
+		t.Fatalf("memory query = %q, want %q", got, task.ChatMessage)
+	}
+}
+
+func TestBoundedChatPromptRetrievesMemoryAcrossTiers(t *testing.T) {
+	root := t.TempDir()
+	facts := filepath.Join(root, "facts")
+	if err := os.Mkdir(facts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MULTICA_SHARED_MEMORY", "1")
+	t.Setenv("MULTICA_MEMORY_ROOT", root)
+	t.Setenv("MULTICA_MEMORY_SEARCH_SCRIPT", filepath.Join(root, "missing.py"))
+
+	tests := []struct{ tier, question, fact string }{
+		{"long", "어제 정한 단풍 프로젝트의 출시 요일 기억해?", "단풍 프로젝트의 출시 요일은 목요일이다."},
+		{"mid", "어제 정한 오로라 프로젝트의 검토 담당 기억해?", "오로라 프로젝트의 검토 담당은 민서다."},
+		{"short", "어제 정한 모래 프로젝트의 회의 시각 기억해?", "모래 프로젝트의 회의 시각은 14:20이다."},
+	}
+	for _, tt := range tests {
+		body := "---\ntier: " + tt.tier + "\n---\n" + tt.fact
+		if err := os.WriteFile(filepath.Join(facts, tt.tier+".md"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tt := range tests {
+		t.Run(tt.tier, func(t *testing.T) {
+			prompt := BuildPrompt(Task{
+				ChatSessionID:      "chat",
+				BoundedChatContext: true,
+				ChatHistory:        "Assistant: 별개 주제로 대화했습니다.",
+				ChatMessage:        tt.question,
+			}, "claude")
+			if !strings.Contains(prompt, "Recent conversation from before this turn:") ||
+				!strings.Contains(prompt, "<untrusted_shared_memory>") ||
+				!strings.Contains(prompt, tt.fact) {
+				t.Fatalf("expected bounded history and relevant memory in prompt, got %q", prompt)
+			}
+		})
+	}
+}

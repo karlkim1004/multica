@@ -233,7 +233,11 @@ func buildChatPrompt(task Task) string {
 	// of this conversation, so replay the stored transcript before the
 	// new message (NEX-964).
 	if task.ChatHistory != "" {
-		b.WriteString("Conversation history from before this turn. Your session's native memory does not include this — likely because the runtime changed since the last message — so it is reconstructed here from the stored transcript:\n\n")
+		if task.BoundedChatContext {
+			b.WriteString("Recent conversation from before this turn:\n\n")
+		} else {
+			b.WriteString("Conversation history from before this turn. Your session's native memory does not include this — likely because the runtime changed since the last message — so it is reconstructed here from the stored transcript:\n\n")
+		}
 		b.WriteString(task.ChatHistory)
 		b.WriteString("\n\n")
 	}

@@ -3144,6 +3144,7 @@ func TestCompleteTask_AssignmentTriggered_DoesNotSuppressTrivialDoneOutput(t *te
 }
 
 type claimRuntimeGuardTask struct {
+	BoundedChatContext       bool     `json:"bounded_chat_context"`
 	PriorSessionID           string   `json:"prior_session_id"`
 	PriorWorkDir             string   `json:"prior_work_dir"`
 	ChatMessage              string   `json:"chat_message"`
@@ -3942,6 +3943,15 @@ func TestClaimTask_QuickCreatePopulatesThreadName(t *testing.T) {
 }
 
 func TestClaimTask_ChatForceFreshSessionSkipsPriorSession(t *testing.T) {
+	for _, bounded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bounded=%t", bounded), func(t *testing.T) {
+			testClaimTaskFreshChat(t, bounded)
+		})
+	}
+}
+
+func testClaimTaskFreshChat(t *testing.T, bounded bool) {
+	t.Helper()
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -3949,6 +3959,13 @@ func TestClaimTask_ChatForceFreshSessionSkipsPriorSession(t *testing.T) {
 	ctx := context.Background()
 
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+
+	if bounded {
+		t.Setenv("MULTICA_BOUNDED_CLAUDE_CHAT_AGENT_ID", agentID)
+		if _, err := testPool.Exec(ctx, `UPDATE agent_runtime SET provider = 'claude' WHERE id = $1`, runtimeID); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	var chatSessionID string
 	if err := testPool.QueryRow(ctx, `
@@ -3974,21 +3991,41 @@ func TestClaimTask_ChatForceFreshSessionSkipsPriorSession(t *testing.T) {
 		t.Fatalf("setup: create prior chat task: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, created_at)
+		SELECT $1, role, role || i, now() + (2 * i + offset_seconds) * interval '1 second'
+		FROM generate_series(1, 5) AS i
+		CROSS JOIN (VALUES ('user', 0), ('assistant', 1)) AS roles(role, offset_seconds)
+		WHERE role = 'user' OR i < 5
+	`, chatSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, chat_session_id,
 			status, priority, force_fresh_session
 		)
-		VALUES ($1, $2, $3, 'queued', 0, TRUE)
-	`, agentID, runtimeID, chatSessionID); err != nil {
+		VALUES ($1, $2, $3, 'queued', 0, $4)
+	`, agentID, runtimeID, chatSessionID, !bounded); err != nil {
 		t.Fatalf("setup: create force-fresh chat task: %v", err)
 	}
 
 	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
+	wantHistory := "User: user2\nAssistant: assistant2\nUser: user3\nAssistant: assistant3\nUser: user4\nAssistant: assistant4"
+	if !bounded {
+		wantHistory = "User: user1\nAssistant: assistant1\n" + wantHistory
+	}
+	if task.BoundedChatContext != bounded || task.ChatHistory != wantHistory || task.ChatMessage != "user5" {
+		t.Fatalf("unexpected chat context: bounded=%t, history=%q, message=%q", task.BoundedChatContext, task.ChatHistory, task.ChatMessage)
+	}
 	if task.PriorSessionID != "" {
 		t.Fatalf("force fresh chat: expected empty PriorSessionID, got %q", task.PriorSessionID)
 	}
-	if task.PriorWorkDir != "" {
-		t.Fatalf("force fresh chat: expected empty PriorWorkDir, got %q", task.PriorWorkDir)
+	wantWorkDir := ""
+	if bounded {
+		wantWorkDir = "/tmp/chat-pointer-workdir"
+	}
+	if task.PriorWorkDir != wantWorkDir {
+		t.Fatalf("prior workdir = %q, want %q", task.PriorWorkDir, wantWorkDir)
 	}
 }
 

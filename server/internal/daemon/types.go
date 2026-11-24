@@ -78,6 +78,7 @@ type Task struct {
 	ChatMessage            string                `json:"chat_message,omitempty"`            // user message content for chat tasks
 	ChatSecrets            []ChatSecret          `json:"chat_secrets,omitempty"`
 	ChatMessageAttachments []ChatAttachmentMeta  `json:"chat_message_attachments,omitempty"` // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
+	BoundedChatContext     bool                  `json:"bounded_chat_context,omitempty"`
 	// ChatHistory is a provider-neutral transcript of this chat session's
 	// prior turns, populated only when PriorSessionID is empty (no native
 	// session to resume — e.g. the runtime changed since the last turn,
