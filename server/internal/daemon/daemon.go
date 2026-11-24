@@ -3678,6 +3678,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			agentEnv[k] = v
 		}
 	}
+	if task.BoundedChatContext && provider == "claude" {
+		agentEnv["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+	}
 	backend, err := agent.New(provider, agent.Config{
 		ExecutablePath: entry.Path,
 		Env:            agentEnv,
@@ -3794,6 +3797,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// and has triggered upstream safety filters on harmless tasks.
 	if providerNeedsInlineSystemPrompt(provider) {
 		execOpts.SystemPrompt = runtimeBrief
+	}
+	if task.BoundedChatContext && provider == "claude" {
+		execOpts.SystemPrompt = "For this chat turn, use the supplied recent conversation and retrieved shared-memory excerpts. Skip routine reads of full chat transcripts and the shared-memory index. If the excerpts do not answer a memory question, look up the specific fact directly and verify it at its source."
 	}
 
 	taskLog.Debug("invoking backend",

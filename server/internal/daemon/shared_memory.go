@@ -19,6 +19,7 @@ const (
 	sharedMemoryTopN        = 8
 	sharedMemoryMaxTokens   = 1400
 	sharedMemorySearchLimit = 2 * time.Second
+	sharedMemoryPythonLimit = time.Second
 )
 
 type sharedMemoryFact struct {
@@ -77,7 +78,11 @@ func BuildSharedMemoryContext(task Task) string {
 	if script == "" {
 		script = filepath.Join(filepath.Dir(sharedMemoryDefaultRoot), "..", "scripts", "memory_search.py")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), sharedMemorySearchLimit)
+	pythonLimit := sharedMemorySearchLimit
+	if task.BoundedChatContext {
+		pythonLimit = sharedMemoryPythonLimit
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), pythonLimit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, python, "-c", sharedMemorySearchPython, filepath.Clean(script), root, "8")
 	cmd.Stdin = strings.NewReader(query)
@@ -117,6 +122,9 @@ func sharedMemoryPython() string {
 }
 
 func sharedMemoryQuery(task Task) string {
+	if task.BoundedChatContext {
+		return truncateMemoryQuery(strings.TrimSpace(task.ChatMessage), 12000)
+	}
 	// For a comment-triggered run, the comment is the user's immediate intent.
 	// Including the full issue description here lets its repeated/background
 	// terms drown out a short, specific question in BM25 fallback retrieval.

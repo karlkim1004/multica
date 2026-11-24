@@ -284,6 +284,7 @@ type AgentTaskResponse struct {
 	ChatMessage            string               `json:"chat_message,omitempty"`             // user message for chat tasks
 	ChatMessageAttachments []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"` // attachments on the user message — agent calls `multica attachment download <id>` per entry
 	ChatSecrets            []ChatSecretPayload  `json:"chat_secrets,omitempty"`
+	BoundedChatContext     bool                 `json:"bounded_chat_context,omitempty"`
 	// ChatHistory is a provider-neutral transcript of this chat session's
 	// prior turns, populated only when PriorSessionID is empty (no native
 	// session to resume). See daemon.Task.ChatHistory (NEX-964).

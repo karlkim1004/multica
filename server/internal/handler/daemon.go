@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1750,6 +1752,8 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					resp.Repos = repos
 				}
 			}
+			resp.BoundedChatContext = runtime.Provider == "claude" &&
+				uuidToString(cs.AgentID) == strings.TrimSpace(os.Getenv("MULTICA_BOUNDED_CLAUDE_CHAT_AGENT_ID"))
 			if !task.ForceFreshSession {
 				// Resume chat sessions only when the stored pointer was produced
 				// by the same runtime as the claiming task. When the chat_session
@@ -1759,14 +1763,14 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				// otherwise a single failed turn would silently drop the entire
 				// conversation memory on the next message. The fallback also
 				// requires runtime to match.
-				if cs.SessionID.Valid && cs.RuntimeID.Valid && cs.RuntimeID == task.RuntimeID {
+				if !resp.BoundedChatContext && cs.SessionID.Valid && cs.RuntimeID.Valid && cs.RuntimeID == task.RuntimeID {
 					resp.PriorSessionID = cs.SessionID.String
 				}
 				if cs.WorkDir.Valid {
 					resp.PriorWorkDir = cs.WorkDir.String
 				}
 				if prior, err := h.Queries.GetLastChatTaskSession(r.Context(), cs.ID); err == nil && prior.SessionID.Valid {
-					if resp.PriorSessionID == "" && prior.RuntimeID == task.RuntimeID {
+					if !resp.BoundedChatContext && resp.PriorSessionID == "" && prior.RuntimeID == task.RuntimeID {
 						resp.PriorSessionID = prior.SessionID.String
 					}
 					if prior.WorkDir.Valid && resp.PriorWorkDir == "" {
@@ -1820,7 +1824,11 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				// messages already delivered via ChatMessage.
 				if resp.PriorSessionID == "" {
 					if priorCount := len(msgs) - len(unanswered); priorCount > 0 {
-						resp.ChatHistory = buildChatHistoryText(msgs[:priorCount])
+						history := msgs[:priorCount]
+						if resp.BoundedChatContext {
+							history = recentChatHistory(history)
+						}
+						resp.ChatHistory = buildChatHistoryText(history)
 					}
 				}
 			}
@@ -2228,6 +2236,28 @@ func trailingUserMessages(msgs []db.ChatMessage) []db.ChatMessage {
 		}
 	}
 	return msgs[start:]
+}
+
+// recentChatHistory selects up to three non-empty messages per role from
+// completed conversation history, preserving the original chronology.
+func recentChatHistory(history []db.ChatMessage) []db.ChatMessage {
+	const perRole = 3
+	counts := map[string]int{"user": 0, "assistant": 0}
+	recent := make([]db.ChatMessage, 0, perRole*len(counts))
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		count, known := counts[message.Role]
+		if !known || count >= perRole || strings.TrimSpace(message.Content) == "" {
+			continue
+		}
+		recent = append(recent, message)
+		counts[message.Role]++
+		if len(recent) == cap(recent) {
+			break
+		}
+	}
+	slices.Reverse(recent)
+	return recent
 }
 
 // chatHistoryCharBudget caps the reconstructed transcript injected into a
