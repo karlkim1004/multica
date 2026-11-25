@@ -1516,6 +1516,10 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--content, --content-stdin, or --content-file is required")
 	}
 
+	if err := checkCommentMemoryAction(cmd.Context(), content); err != nil {
+		return err
+	}
+
 	client, err := newAPIClient(cmd)
 	if err != nil {
 		return err
