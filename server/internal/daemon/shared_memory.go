@@ -71,7 +71,6 @@ func BuildSharedMemoryContext(task Task) string {
 		return ""
 	}
 
-	started := time.Now()
 	var facts []sharedMemoryFact
 	python := sharedMemoryPython()
 	script := strings.TrimSpace(os.Getenv("MULTICA_MEMORY_SEARCH_SCRIPT"))
@@ -93,9 +92,9 @@ func BuildSharedMemoryContext(task Task) string {
 		}
 	}
 	if len(facts) == 0 {
-		facts = searchSharedMemoryBM25(root, query, sharedMemoryTopN)
+		facts = searchSharedMemoryBM25(ctx, root, query, sharedMemoryTopN)
 	}
-	if time.Since(started) > sharedMemorySearchLimit {
+	if ctx.Err() != nil {
 		return ""
 	}
 	return renderSharedMemoryContext(facts)
@@ -198,7 +197,10 @@ func truncateMemoryQuery(query string, maxBytes int) string {
 	return query
 }
 
-func searchSharedMemoryBM25(root, query string, limit int) []sharedMemoryFact {
+func searchSharedMemoryBM25(ctx context.Context, root, query string, limit int) []sharedMemoryFact {
+	if ctx.Err() != nil {
+		return nil
+	}
 	paths, _ := filepath.Glob(filepath.Join(root, "facts", "*.md"))
 	paths = append(paths, filepath.Join(root, "MEMORY.md"), filepath.Join(root, "state", "current-state.json"))
 	statePath := filepath.Join(root, "state", "current-state.json")
@@ -211,6 +213,9 @@ func searchSharedMemoryBM25(root, query string, limit int) []sharedMemoryFact {
 	}
 	all := make([]sharedMemoryFact, 0, len(paths))
 	for _, path := range paths {
+		if ctx.Err() != nil {
+			return nil
+		}
 		var content []byte
 		var err error
 		if strings.Contains(path, "#") {

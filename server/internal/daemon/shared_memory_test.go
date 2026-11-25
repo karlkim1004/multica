@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildPromptInjectsRelevantSharedMemoryFromIssueDescription(t *testing.T) {
@@ -199,5 +200,28 @@ func TestBoundedChatPromptRetrievesMemoryAcrossTiers(t *testing.T) {
 				t.Fatalf("expected bounded history and relevant memory in prompt, got %q", prompt)
 			}
 		})
+	}
+}
+
+func TestSharedMemorySearchDeadlineSkipsFallback(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "slow_search.py")
+	if err := os.WriteFile(script, []byte("import time\ndef documents(root): time.sleep(10)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "MEMORY.md"), []byte("deadline fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MULTICA_MEMORY_ROOT", root)
+	t.Setenv("MULTICA_MEMORY_SEARCH_SCRIPT", script)
+	t.Setenv("MULTICA_SHARED_MEMORY", "1")
+	t.Setenv("MULTICA_MEMORY_PYTHON", "python3")
+
+	started := time.Now()
+	if got := BuildSharedMemoryContext(Task{TriggerCommentContent: "deadline fixture"}); got != "" {
+		t.Fatalf("memory context after deadline: %s", got)
+	}
+	if elapsed := time.Since(started); elapsed > sharedMemorySearchLimit+time.Second {
+		t.Fatalf("search did not return promptly: %s", elapsed)
 	}
 }
