@@ -47,7 +47,7 @@ import {
   useUpdateChatSession,
 } from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
-import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
+import { ChatMessageList, ChatMessageSkeleton, isVisibleChatMessage } from "./chat-message-list";
 import { ChatInput } from "./chat-input";
 import { ChatResizeHandles } from "./chat-resize-handles";
 import { useChatContextItems } from "./use-chat-context-items";
@@ -214,7 +214,7 @@ export function ChatWindow() {
   // prepended rows, so concurrent server inserts cannot drift the scroll anchor.
   const messagePages = activeSessionId ? rawMessagePages?.pages ?? [] : [];
   const messages = [...messagePages].reverse().flatMap((page) => page.messages);
-  const olderMessageCount = messagePages.slice(1).reduce((sum, page) => sum + page.messages.length, 0);
+  const olderMessageCount = messagePages.slice(1).reduce((sum, page) => sum + page.messages.filter(isVisibleChatMessage).length, 0);
   const firstItemIndex = messages.length > 0
     ? CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX - olderMessageCount
     : 0;
