@@ -1814,6 +1814,9 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 	sync := func() {
 		want := make(map[string]struct{})
 		for _, rid := range d.allRuntimeIDs() {
+			if !d.qaAllowsPoller(rid) {
+				continue
+			}
 			want[rid] = struct{}{}
 		}
 		for rid, cancel := range cancels {
@@ -3339,6 +3342,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, fmt.Errorf("refusing to spawn agent: task has no workspace_id (task_id=%s)", task.ID)
 	}
 
+	beforeCodexTurn := d.cfg.qaTurnGate(task, provider)
+	if d.cfg.QATurnCapture != nil && beforeCodexTurn == nil {
+		return TaskResult{}, errors.New("task is outside the configured QA capture scope")
+	}
+
 	// task.Repos is the authoritative repo list for this task — when the
 	// claimed task belongs to a project with github_repo resources the server
 	// has already narrowed it to project repos only. Make sure those URLs are
@@ -3761,6 +3769,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	execOpts := agent.ExecOptions{
+		BeforeCodexTurn:           beforeCodexTurn,
 		ExecutionPolicy:           task.ExecutionPolicy,
 		Cwd:                       env.WorkDir,
 		Model:                     model,
@@ -3822,7 +3831,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Fallback: if session resume failed before establishing a session, retry
 	// with a fresh session. We check SessionID == "" to distinguish a resume
 	// failure (no session established) from a failure during actual execution.
-	if result.Status == "failed" && task.PriorSessionID != "" && result.SessionID == "" {
+	if execOpts.BeforeCodexTurn == nil && result.Status == "failed" && task.PriorSessionID != "" && result.SessionID == "" {
 		firstUsage := result.Usage
 		taskLog.Warn("session resume failed, retrying with fresh session", "error", result.Error)
 		execOpts.ResumeSessionID = ""
