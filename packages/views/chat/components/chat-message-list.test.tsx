@@ -110,6 +110,45 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
   };
 }
 
+describe("ChatMessageList user bubbles", () => {
+  it("omits whitespace and comment-only messages but keeps visible Markdown", () => {
+    renderMessages([
+      message({ id: "blank", role: "user", content: " \t " }),
+      message({ id: "comment", role: "user", content: "<!-- first -->\n<!-- second -->" }),
+      message({ id: "visible", role: "user", content: "<!-- first -->\n\nvisible\n\n<!-- second -->" }),
+      message({ id: "code", role: "user", content: "    <!-- example -->" }),
+    ]);
+
+    expect(lastVirtuosoProps?.data).toHaveLength(2);
+    expect(screen.getByText("visible")).toBeInTheDocument();
+    expect(screen.getByText("<!-- example -->")).toBeInTheDocument();
+  });
+
+  it("retains the row for an attachment-only user message", () => {
+    const attachment = {
+      id: "file-1",
+      workspace_id: "workspace-1",
+      issue_id: null,
+      comment_id: null,
+      chat_session_id: "session-1",
+      chat_message_id: "msg-1",
+      uploader_id: "member-1",
+      uploader_type: "member",
+      filename: "report.pdf",
+      content_type: "application/pdf",
+      url: "/attachments/file-1",
+      download_url: "/attachments/file-1",
+      markdown_url: "/attachments/file-1",
+      size_bytes: 42,
+      created_at: "2026-06-23T13:31:02.000Z",
+    };
+    renderMessages([message({ role: "user", content: "", attachments: [attachment] })]);
+
+    expect(lastVirtuosoProps?.data).toHaveLength(1);
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+  });
+});
+
 describe("ChatMessageList load-older pagination — NEX-881", () => {
   beforeEach(() => {
     vi.useRealTimers();

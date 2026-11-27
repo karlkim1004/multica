@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { Virtuoso } from "react-virtuoso";
@@ -61,6 +61,12 @@ function findKoreanVoice(): SpeechSynthesisVoice | null {
   );
 }
 
+export function isVisibleChatMessage(message: ChatMessage): boolean {
+  return message.role !== "user" ||
+    Boolean(message.attachments?.length) ||
+    Boolean(message.content.replace(/^ {0,3}(?:<!--(?:(?!-->)[\s\S])*-->[ \t]*)+\r?$/gm, "").trim());
+}
+
 export function ChatMessageList({
   messages,
   pendingTask,
@@ -94,7 +100,8 @@ export function ChatMessageList({
   // when the *last* message actually changed — a prepend never changes
   // the tail, an append always does, so this is a deterministic
   // (non-timing-based) way to tell the two apart.
-  const lastMessageId = messages[messages.length - 1]?.id ?? null;
+  const visibleMessages = useMemo(() => messages.filter(isVisibleChatMessage), [messages]);
+  const lastMessageId = visibleMessages.at(-1)?.id ?? null;
   const prevLastMessageIdRef = useRef(lastMessageId);
   const isNewMessageAtTail = lastMessageId !== prevLastMessageIdRef.current;
   useEffect(() => {
@@ -143,7 +150,7 @@ export function ChatMessageList({
     window.speechSynthesis.speak(utterance);
   }, [messages, voiceOutputEnabled]);
 
-  const totalCount = messages.length + (hasLive || showStatusPill ? 1 : 0);
+  const totalCount = visibleMessages.length + (hasLive || showStatusPill ? 1 : 0);
   const firstIndex = totalCount > 0 ? firstItemIndex : 0;
 
   return (
@@ -160,7 +167,7 @@ export function ChatMessageList({
       ) : (
       <Virtuoso
         customScrollParent={scrollContainerEl}
-        data={messages}
+        data={visibleMessages}
         firstItemIndex={firstIndex}
         increaseViewportBy={{ top: 400, bottom: 600 }}
         atBottomThreshold={120}
