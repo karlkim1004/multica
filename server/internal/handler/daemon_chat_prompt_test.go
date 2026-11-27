@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -31,16 +32,28 @@ func eq(a, b []string) bool {
 	return true
 }
 
-// TestTrailingUserMessages pins the message-selection logic behind the daemon
+// TestSplitChatMessages pins the message-selection logic behind the daemon
 // chat prompt: the agent must receive every user message since its last reply
 // (the MUL-2968 debounce can land several before one run fires), not just the
 // most recent one.
-func TestTrailingUserMessages(t *testing.T) {
+func TestSplitChatMessages(t *testing.T) {
+	report := msg("assistant", "scheduled report")
+	report.AutopilotRunID = pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 	cases := []struct {
-		name string
-		in   []db.ChatMessage
-		want []string
+		name        string
+		in          []db.ChatMessage
+		want        []string
+		wantHistory []string
 	}{
+		{
+			name: "a scheduled report does not answer pending user messages",
+			in: []db.ChatMessage{
+				msg("user", "previous question"), msg("assistant", "previous reply"),
+				msg("user", "queued question"), report, msg("user", "follow-up"), report,
+			},
+			want:        []string{"queued question", "follow-up"},
+			wantHistory: []string{"previous question", "previous reply", "scheduled report", "scheduled report"},
+		},
 		{
 			name: "debounced burst with no prior reply delivers all",
 			in:   []db.ChatMessage{msg("user", "看上海天气"), msg("user", "还有青岛")},
@@ -80,9 +93,13 @@ func TestTrailingUserMessages(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := contents(trailingUserMessages(tc.in))
+			history, unanswered := splitChatMessages(tc.in)
+			got := contents(unanswered)
 			if !eq(got, tc.want) {
-				t.Fatalf("trailingUserMessages = %v, want %v", got, tc.want)
+				t.Fatalf("unanswered messages = %v, want %v", got, tc.want)
+			}
+			if tc.wantHistory != nil && !eq(contents(history), tc.wantHistory) {
+				t.Fatalf("history = %v, want %v", contents(history), tc.wantHistory)
 			}
 		})
 	}

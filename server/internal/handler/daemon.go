@@ -1786,13 +1786,13 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			// delivering just the latest message would silently drop the
 			// earlier ones (e.g. "看上海天气" then "还有青岛" → only Qingdao
 			// answered). The unanswered set is the trailing run of user
-			// messages after the last assistant message (every completed or
-			// failed run writes an assistant row, so that anchor advances each
-			// turn). Attachments are collected from each included message so
+			// messages after the last chat reply. Scheduled reports can arrive
+			// while a chat task is queued and do not answer those messages.
+			// Attachments are collected from each included message so
 			// the agent can `multica attachment download <id>` — the markdown
 			// URL alone is signed and 30-min expiring on the private CDN.
 			if msgs, err := h.Queries.ListChatMessages(r.Context(), cs.ID); err == nil && len(msgs) > 0 {
-				unanswered := trailingUserMessages(msgs)
+				history, unanswered := splitChatMessages(msgs)
 				parts := make([]string, 0, len(unanswered))
 				for _, m := range unanswered {
 					if strings.TrimSpace(m.Content) != "" {
@@ -1823,8 +1823,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				// Reconstruct it from the stored transcript, excluding the
 				// messages already delivered via ChatMessage.
 				if resp.PriorSessionID == "" {
-					if priorCount := len(msgs) - len(unanswered); priorCount > 0 {
-						history := msgs[:priorCount]
+					if len(history) > 0 {
 						if resp.BoundedChatContext {
 							history = recentChatHistory(history)
 						}
@@ -2219,23 +2218,26 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"bundles": resolved})
 }
 
-// trailingUserMessages returns the run of user messages after the last
-// assistant message in a chronologically-ordered chat history — the set the
-// agent has NOT yet replied to. The agent resumes its prior session and only
-// learns of new input through the claim response's chat_message, so a single
-// run that covers a debounced burst (MUL-2968) must deliver every one of
-// these, not just the latest. Every completed or failed run writes an
-// assistant row, so the anchor advances one turn at a time; the result is the
-// whole slice on the first turn and exactly the new message(s) thereafter.
-func trailingUserMessages(msgs []db.ChatMessage) []db.ChatMessage {
+// splitChatMessages keeps scheduled reports in history so they cannot
+// consume unanswered user messages. A debounced burst can contain several
+// unanswered messages, all of which belong in the next chat prompt.
+func splitChatMessages(msgs []db.ChatMessage) (history, unanswered []db.ChatMessage) {
 	start := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role != "user" {
+		if msgs[i].Role != "user" && !msgs[i].AutopilotRunID.Valid {
 			start = i + 1
 			break
 		}
 	}
-	return msgs[start:]
+	history = msgs[:start:start]
+	for _, message := range msgs[start:] {
+		if message.Role == "user" {
+			unanswered = append(unanswered, message)
+		} else {
+			history = append(history, message)
+		}
+	}
+	return history, unanswered
 }
 
 // recentChatHistory selects up to three non-empty messages per role from
