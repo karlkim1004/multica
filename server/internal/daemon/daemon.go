@@ -2386,7 +2386,7 @@ func (d *Daemon) triggerRestart() {
 	}
 }
 
-// pollLoop supervises one runtimePoller goroutine per registered runtime,
+// pollLoop supervises one runtimePoller goroutine per eligible registered runtime,
 // fans wake-up signals out to all of them, and waits for in-flight tasks to
 // drain on shutdown. Per-runtime workers replace the previous round-robin
 // loop so that a slow ClaimTask call (HTTP 30s timeout) for one runtime no
@@ -2409,7 +2409,9 @@ func (d *Daemon) pollLoop(ctx context.Context, taskWakeups <-chan taskWakeup) er
 	syncPollers := func() {
 		want := make(map[string]struct{})
 		for _, rid := range d.allRuntimeIDs() {
-			want[rid] = struct{}{}
+			if d.qaAllowsPoller(rid) {
+				want[rid] = struct{}{}
+			}
 		}
 		for rid, h := range pollers {
 			if _, ok := want[rid]; !ok {
