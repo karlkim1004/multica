@@ -24,9 +24,11 @@ type Backend interface {
 type ExecOptions struct {
 	// BeforeCodexTurn is a synchronous QA-only gate for the final text input.
 	BeforeCodexTurn func(context.Context, string) error
-	ExecutionPolicy *ExecutionPolicy
-	Cwd             string
-	Model           string
+	// CodexIsolatedLauncher owns the process cwd and environment when set.
+	CodexIsolatedLauncher bool
+	ExecutionPolicy       *ExecutionPolicy
+	Cwd                   string
+	Model                 string
 	// SystemPrompt is consumed only by providers that can pass or safely inline
 	// developer/system instructions. Hermes ACP intentionally ignores it and
 	// relies on cwd-scoped context files such as AGENTS.md instead.

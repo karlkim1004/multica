@@ -21,8 +21,9 @@ func configureQATurnCapture(cfg *daemon.Config) error {
 	dir := os.Getenv("MULTICA_QA_CAPTURE_DIR")
 	ws := os.Getenv("MULTICA_QA_CAPTURE_WORKSPACE_ID")
 	runtime := os.Getenv("MULTICA_QA_CAPTURE_RUNTIME_ID")
-	if !filepath.IsAbs(dir) || !canonicalQAID(ws) || !canonicalQAID(runtime) {
-		return errors.New("QA capture requires an absolute sink path and canonical workspace/runtime IDs")
+	issue := os.Getenv("MULTICA_QA_SYNTHETIC_ISSUE_ID")
+	if !filepath.IsAbs(dir) || !canonicalQAID(ws) || !canonicalQAID(runtime) || !canonicalQAID(issue) {
+		return errors.New("QA capture requires an absolute sink path and canonical workspace/runtime/synthetic issue IDs")
 	}
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
@@ -30,7 +31,7 @@ func configureQATurnCapture(cfg *daemon.Config) error {
 	}
 	cfg.AutoUpdateEnabled = false
 	cfg.QATurnCapture = &daemon.QATurnCaptureConfig{
-		WorkspaceID: ws, RuntimeID: runtime, Timeout: 5 * time.Second,
+		WorkspaceID: ws, RuntimeID: runtime, SyntheticIssueID: issue, Timeout: 5 * time.Second,
 		Sink: daemon.QAFileTurnSink(dir),
 	}
 	return nil

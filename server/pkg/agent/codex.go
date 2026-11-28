@@ -552,10 +552,15 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	// the other long-lived backends (claude, copilot, cursor, …).
 	cmd.WaitDelay = 10 * time.Second
 	b.cfg.Logger.Info("agent command", "exec", execPath, "args", codexArgs)
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
+	if opts.CodexIsolatedLauncher {
+		cmd.Dir = "/"
+		cmd.Env = []string{}
+	} else {
+		if opts.Cwd != "" {
+			cmd.Dir = opts.Cwd
+		}
+		cmd.Env = buildEnv(b.cfg.Env)
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -717,12 +722,37 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		// MUL-2339 — Trump's constraint that the three injection points
 		// must not drift independently).
 		applyCodexReasoningEffort(turnParams, opts.ThinkingLevel)
+		if opts.CodexIsolatedLauncher {
+			// This fixed, read-only probe tests the outer OS boundary directly.
+			// The synthetic model turn still uses read-only/never.
+			raw, probeErr := c.request(runCtx, "command/exec", map[string]any{
+				"command":   []string{"/usr/bin/python3", "-I", "/qa/probe.py"},
+				"cwd":       opts.Cwd,
+				"timeoutMs": 15000,
+				"sandboxPolicy": map[string]string{
+					"type": "externalSandbox", "networkAccess": "enabled",
+				},
+			})
+			var probe struct {
+				ExitCode *int   `json:"exitCode"`
+				Stdout   string `json:"stdout"`
+			}
+			if probeErr != nil || json.Unmarshal(raw, &probe) != nil || probe.ExitCode == nil ||
+				*probe.ExitCode != 0 || !strings.HasSuffix(probe.Stdout, "\nNEX2859_BOUNDARY_PASS\n") {
+				resCh <- Result{Status: "failed", Error: "synthetic QA boundary probe failed"}
+				return
+			}
+			b.cfg.Logger.Info("synthetic QA boundary probe passed", "evidence", strings.TrimSpace(probe.Stdout))
+		}
 		if opts.BeforeCodexTurn != nil {
 			if err := opts.BeforeCodexTurn(runCtx, prompt); err != nil {
 				// Sink errors may contain private input or paths.
 				resCh <- Result{Status: "failed", Error: "QA turn input commit was not verified", DurationMs: time.Since(startTime).Milliseconds()}
 				return
 			}
+		}
+		if opts.CodexIsolatedLauncher {
+			b.cfg.Logger.Info("synthetic QA dispatching first turn", "send_at_utc", time.Now().UTC().Format(time.RFC3339Nano))
 		}
 		_, err = c.request(runCtx, "turn/start", turnParams)
 		if err != nil {
@@ -884,7 +914,9 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			finalError = withAgentStderr(processExitErr.Error(), "codex", stderrBuf.Tail())
 		}
 		if timeoutDiagnostic.Kind != codexTimeoutNone {
-			timeoutDiagnostic.CodexVersion = detectCodexVersionForDiagnostics(context.Background(), execPath, cmd.Env, b.cfg.Logger)
+			if !opts.CodexIsolatedLauncher {
+				timeoutDiagnostic.CodexVersion = detectCodexVersionForDiagnostics(context.Background(), execPath, cmd.Env, b.cfg.Logger)
+			}
 			finalError = buildCodexTimeoutDiagnosticError(timeoutDiagnostic, stderrBuf.Tail())
 		}
 
@@ -984,6 +1016,10 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		"includeApplyPatchTool":  nil,
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": true,
+	}
+	if opts.CodexIsolatedLauncher {
+		startParams["approvalPolicy"] = "never"
+		startParams["sandbox"] = "read-only"
 	}
 	applyCodexReasoningEffort(startParams, opts.ThinkingLevel)
 	startResult, err := c.request(ctx, "thread/start", startParams)

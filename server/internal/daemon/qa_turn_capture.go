@@ -19,10 +19,11 @@ import (
 
 // QATurnCaptureConfig selects only the approved QA Codex runtime.
 type QATurnCaptureConfig struct {
-	WorkspaceID string
-	RuntimeID   string
-	Timeout     time.Duration
-	Sink        QATurnSink
+	WorkspaceID      string
+	RuntimeID        string
+	SyntheticIssueID string
+	Timeout          time.Duration
+	Sink             QATurnSink
 }
 
 type QATurnKey struct {

@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+[ "$#" = 3 ] && [ "$1" = app-server ] && [ "$2" = --listen ] && [ "$3" = stdio:// ] || exit 64
+exec /usr/bin/sudo -n -- /opt/nex1979-qa/isolate-codex
