@@ -3345,8 +3345,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	beforeCodexTurn := d.cfg.qaTurnGate(task, provider)
-	if d.cfg.QATurnCapture != nil && beforeCodexTurn == nil {
-		return TaskResult{}, errors.New("task is outside the configured QA capture scope")
+	if d.cfg.QATurnCapture != nil {
+		if beforeCodexTurn == nil || task.IssueID != d.cfg.QATurnCapture.SyntheticIssueID {
+			return TaskResult{}, errors.New("task is outside the configured synthetic QA scope")
+		}
+		return d.runIsolatedQATask(ctx, task, taskLog, beforeCodexTurn)
 	}
 
 	// task.Repos is the authoritative repo list for this task — when the
@@ -3771,7 +3774,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	execOpts := agent.ExecOptions{
-		BeforeCodexTurn:           beforeCodexTurn,
 		ExecutionPolicy:           task.ExecutionPolicy,
 		Cwd:                       env.WorkDir,
 		Model:                     model,
@@ -3833,7 +3835,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Fallback: if session resume failed before establishing a session, retry
 	// with a fresh session. We check SessionID == "" to distinguish a resume
 	// failure (no session established) from a failure during actual execution.
-	if execOpts.BeforeCodexTurn == nil && result.Status == "failed" && task.PriorSessionID != "" && result.SessionID == "" {
+	if result.Status == "failed" && task.PriorSessionID != "" && result.SessionID == "" {
 		firstUsage := result.Usage
 		taskLog.Warn("session resume failed, retrying with fresh session", "error", result.Error)
 		execOpts.ResumeSessionID = ""
@@ -3861,6 +3863,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"agent_error", result.Error,
 	)
 
+	return d.taskResultFromAgent(result, provider, env, taskLog)
+}
+
+func (d *Daemon) taskResultFromAgent(result agent.Result, provider string, env *execenv.Environment, taskLog *slog.Logger) (TaskResult, error) {
 	// Convert agent usage map to task usage entries.
 	var usageEntries []TaskUsageEntry
 	for model, u := range result.Usage {

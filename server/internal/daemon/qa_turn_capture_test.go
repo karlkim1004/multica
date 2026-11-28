@@ -166,7 +166,7 @@ done
 				}
 				return r, nil
 			})
-			config := Config{QATurnCapture: &QATurnCaptureConfig{task.WorkspaceID, task.RuntimeID, time.Second, sink}}
+			config := Config{QATurnCapture: &QATurnCaptureConfig{WorkspaceID: task.WorkspaceID, RuntimeID: task.RuntimeID, Timeout: time.Second, Sink: sink}}
 			if tc == "timeout" || tc == "late receipt" {
 				config.QATurnCapture.Timeout = time.Millisecond
 			}
