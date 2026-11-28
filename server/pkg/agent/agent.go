@@ -22,6 +22,8 @@ type Backend interface {
 
 // ExecOptions configures a single execution.
 type ExecOptions struct {
+	// BeforeCodexTurn is a synchronous QA-only gate for the final text input.
+	BeforeCodexTurn func(context.Context, string) error
 	ExecutionPolicy *ExecutionPolicy
 	Cwd             string
 	Model           string

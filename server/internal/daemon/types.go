@@ -47,6 +47,7 @@ type Task struct {
 	// ExecutionPolicy must come from authenticated server state, not metadata.
 	ExecutionPolicy  *agent.ExecutionPolicy `json:"execution_policy,omitempty"`
 	ID               string                 `json:"id"`
+	Attempt          int32                  `json:"attempt"`
 	AgentID          string                 `json:"agent_id"`
 	RuntimeID        string                 `json:"runtime_id"`
 	IssueID          string                 `json:"issue_id"`

@@ -717,6 +717,13 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		// MUL-2339 — Trump's constraint that the three injection points
 		// must not drift independently).
 		applyCodexReasoningEffort(turnParams, opts.ThinkingLevel)
+		if opts.BeforeCodexTurn != nil {
+			if err := opts.BeforeCodexTurn(runCtx, prompt); err != nil {
+				// Sink errors may contain private input or paths.
+				resCh <- Result{Status: "failed", Error: "QA turn input commit was not verified", DurationMs: time.Since(startTime).Milliseconds()}
+				return
+			}
+		}
 		_, err = c.request(runCtx, "turn/start", turnParams)
 		if err != nil {
 			drainAndWait() // flush os/exec stderr goroutine before sampling Tail

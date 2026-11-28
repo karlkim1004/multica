@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -9,8 +10,78 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
+
+type pollClaimTransport func(*http.Request) (*http.Response, error)
+
+func (transport pollClaimTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+func TestQAPollLoopClaimScope(t *testing.T) {
+	for _, qaEnabled := range []bool{true, false} {
+		name := "unconfigured"
+		if qaEnabled {
+			name = "qa_capture"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				cfg := Config{
+					ServerBaseURL:      "http://claim.test",
+					PollInterval:       time.Minute,
+					MaxConcurrentTasks: 3,
+				}
+				if qaEnabled {
+					cfg.Profile = "nex1979-qa"
+					cfg.QATurnCapture = &QATurnCaptureConfig{WorkspaceID: "qa", RuntimeID: "qa-codex"}
+				}
+				d := New(cfg, slog.New(slog.NewTextHandler(noopWriter{}, nil)))
+				d.workspaces["qa"] = &workspaceState{runtimeIDs: []string{"qa-codex", "qa-claude"}}
+				d.workspaces["prod"] = &workspaceState{runtimeIDs: []string{"prod-codex"}}
+				d.runtimeIndex["qa-codex"] = Runtime{Provider: "codex"}
+				d.runtimeIndex["qa-claude"] = Runtime{Provider: "claude"}
+				d.runtimeIndex["prod-codex"] = Runtime{Provider: "codex"}
+
+				var mu sync.Mutex
+				claims := make(map[string]int)
+				d.client.client.Transport = pollClaimTransport(func(request *http.Request) (*http.Response, error) {
+					mu.Lock()
+					claims[request.URL.Path]++
+					mu.Unlock()
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"task":null}`)),
+					}, nil
+				})
+
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					_ = d.pollLoop(ctx, nil)
+				}()
+				// Advance fake time beyond every runtime's initial poll offset.
+				time.Sleep(cfg.PollInterval)
+				synctest.Wait()
+				cancel()
+				<-done
+
+				for _, id := range []string{"qa-codex", "qa-claude", "prod-codex"} {
+					want := 1
+					if qaEnabled && id != "qa-codex" {
+						want = 0
+					}
+					path := "/api/daemon/runtimes/" + id + "/tasks/claim"
+					if got := claims[path]; got != want {
+						t.Errorf("ClaimTask(%q) calls = %d, want %d", id, got, want)
+					}
+				}
+			})
+		})
+	}
+}
 
 // TestRuntimeSetWatcherFanOut pins the multi-subscriber contract: every
 // subscribed channel must receive a nudge on each notify, and unsubscribed

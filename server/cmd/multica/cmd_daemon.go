@@ -470,6 +470,9 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	if err := configureQATurnCapture(&cfg); err != nil {
+		return err
+	}
 	cfg.CLIVersion = version
 	// Set by the Electron Desktop app when it spawns the CLI so the server
 	// can mark those runtimes as "managed" and hide CLI self-update UI.
